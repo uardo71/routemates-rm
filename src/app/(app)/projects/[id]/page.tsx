@@ -10,6 +10,8 @@ import {
   UserIcon,
   CalendarIcon,
   WalletIcon,
+  TagIcon,
+  FileTextIcon,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -23,9 +25,9 @@ import { InfoField } from "@/components/info-field";
 import { DonutChart, DONUT_COLORS } from "@/components/charts/donut-chart";
 import { MiniBarChart } from "@/components/charts/mini-bar-chart";
 import { prisma } from "@/lib/prisma";
-import { canManageProject, visibleProjectIds } from "@/lib/permissions";
+import { can, canManageProject, visibleProjectIds } from "@/lib/permissions";
 import { requirePermission } from "@/lib/session";
-import { formatMoney } from "@/lib/format";
+import { formatMoney, formatNumber } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { TimeEntriesTable } from "./time-entries-table";
 
@@ -50,7 +52,8 @@ const ASSIGNMENT_STATUS_TONE: Record<string, Tone> = {
 };
 const INVOICE_STATUS_TONE: Record<string, Tone> = {
   DRAFT: "secondary",
-  SENT: "default",
+  ISSUED: "default",
+  RECONCILED: "outline",
   PAID: "outline",
   VOID: "destructive",
 };
@@ -78,11 +81,17 @@ export default async function ProjectDetailPage({
         },
         orderBy: { createdAt: "asc" },
       },
+      // Present only when this project was created by converting a won Opportunity — drives the
+      // "View opportunity" link and the contract-terms (discount / PO / SoW) block below.
+      opportunity: { select: { id: true, name: true } },
     },
   });
   if (!project) notFound();
 
   const canManage = await canManageProject(user, project.id);
+  // Sales price / monetary value is rate-sensitive — hidden from users who can't view rates
+  // (e.g. an assignee viewing a project they're staffed on but don't manage).
+  const canViewRates = can(user, "rates:view:any") || canManage;
   const milestoneIds = project.milestones.map((m) => m.id);
 
   const [hoursByMilestone, assignments, hoursByAssignment, invoices, timeCards] = await Promise.all([
@@ -122,6 +131,23 @@ export default async function ProjectDetailPage({
   const usedHoursMap = new Map(hoursByMilestone.map((h) => [h.milestoneId, Number(h._sum.hours ?? 0)]));
   const usedByAssignment = new Map(hoursByAssignment.map((h) => [h.assignmentId, Number(h._sum.hours ?? 0)]));
 
+  // Planned (AssignmentPlan) hours rolled up per milestone, so the project surfaces what the
+  // resource planner has scheduled against each milestone's budget — and makes over-planning
+  // (planned > budget hours) visible here rather than only in the planner.
+  const planAssignmentIds = assignments.map((a) => a.id);
+  const plannedByAssignment = planAssignmentIds.length
+    ? await prisma.assignmentPlan.groupBy({
+        by: ["assignmentId"],
+        where: { assignmentId: { in: planAssignmentIds } },
+        _sum: { hours: true },
+      })
+    : [];
+  const plannedAsgMap = new Map(plannedByAssignment.map((x) => [x.assignmentId, Number(x._sum.hours ?? 0)]));
+  const plannedByMilestone = new Map<string, number>();
+  for (const a of assignments) {
+    plannedByMilestone.set(a.milestoneId, (plannedByMilestone.get(a.milestoneId) ?? 0) + (plannedAsgMap.get(a.id) ?? 0));
+  }
+
   const allocatedHours = project.milestones.reduce((sum, m) => sum + Number(m.budgetHours ?? 0), 0);
   const projectBudgetHours = project.budgetHours ? Number(project.budgetHours) : null;
   const assignmentsCount = project.milestones.reduce((sum, m) => sum + m._count.assignments, 0);
@@ -129,9 +155,32 @@ export default async function ProjectDetailPage({
   const totalLoggedHours = [...usedHoursMap.values()].reduce((sum, h) => sum + h, 0);
   const activeMilestonesCount = project.milestones.filter((m) => m.status === "ACTIVE").length;
   const invoicedTotal = invoices.reduce((sum, inv) => sum + inv.lines.reduce((s, l) => s + Number(l.amount), 0), 0);
-  const openInvoicesCount = invoices.filter((inv) => inv.status === "DRAFT" || inv.status === "SENT").length;
+  const openInvoicesCount = invoices.filter((inv) => inv.status !== "PAID" && inv.status !== "VOID").length;
   const daysRemaining = project.endDate ? differenceInCalendarDays(project.endDate, new Date()) : null;
   const hoursNearOrOverBudget = projectBudgetHours !== null && projectBudgetHours > 0 && totalLoggedHours / projectBudgetHours >= 0.8;
+
+  // Contract terms carried over from a won opportunity. `contractValue` is the net (post-discount)
+  // figure; back-compute the list total + discount amount for display so the negotiated discount is
+  // visible on the project, not just baked silently into the budget.
+  const contractNet = project.contractValue != null ? Number(project.contractValue) : null;
+  const discountVal = project.discountValue != null ? Number(project.discountValue) : null;
+  let listTotal: number | null = null;
+  let discountAmount = 0;
+  if (contractNet != null && project.discountType && discountVal != null && discountVal > 0) {
+    if (project.discountType === "ABSOLUTE") {
+      discountAmount = discountVal;
+      listTotal = contractNet + discountVal;
+    } else {
+      listTotal = discountVal < 100 ? contractNet / (1 - discountVal / 100) : contractNet;
+      discountAmount = listTotal - contractNet;
+    }
+  }
+  const hasContractTerms =
+    project.opportunity != null ||
+    contractNet != null ||
+    project.discountType != null ||
+    !!project.poNumber ||
+    !!project.sowNumber;
 
   const weeklyHoursMap = new Map<string, number>();
   for (const tc of timeCards) {
@@ -162,11 +211,18 @@ export default async function ProjectDetailPage({
             </p>
           </div>
         </div>
-        {canManage && (
-          <LinkButton href={`/projects/${project.id}/edit`} variant="outline" size="sm">
-            Edit
-          </LinkButton>
-        )}
+        <div className="flex items-center gap-2">
+          {project.opportunity && (
+            <LinkButton href={`/opportunities/${project.opportunity.id}`} variant="outline" size="sm">
+              View opportunity
+            </LinkButton>
+          )}
+          {canManage && (
+            <LinkButton href={`/projects/${project.id}/edit`} variant="outline" size="sm">
+              Edit
+            </LinkButton>
+          )}
+        </div>
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
@@ -220,6 +276,32 @@ export default async function ProjectDetailPage({
                     value={project.budgetAmount ? formatMoney(project.budgetAmount, project.company.currency) : "—"}
                   />
                 </div>
+                {hasContractTerms && (
+                  <div className="border-t pt-4 flex flex-col gap-4">
+                    <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                      Contract{project.opportunity ? " (from opportunity)" : ""}
+                    </span>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-5">
+                      {listTotal != null && (
+                        <InfoField icon={WalletIcon} label="List total" value={formatMoney(listTotal, project.company.currency)} />
+                      )}
+                      {discountAmount > 0 && (
+                        <InfoField
+                          icon={TagIcon}
+                          label="Discount"
+                          value={`−${formatMoney(discountAmount, project.company.currency)}${
+                            project.discountType === "PERCENT" ? ` (${discountVal}%)` : ""
+                          }`}
+                        />
+                      )}
+                      {contractNet != null && (
+                        <InfoField icon={WalletIcon} label="Contract value" value={formatMoney(contractNet, project.company.currency)} />
+                      )}
+                      {project.poNumber && <InfoField icon={FileTextIcon} label="PO number" value={project.poNumber} />}
+                      {project.sowNumber && <InfoField icon={FileTextIcon} label="SoW number" value={project.sowNumber} />}
+                    </div>
+                  </div>
+                )}
                 {projectBudgetHours !== null && (
                   <div className="border-t pt-4">
                     <HourProgress used={allocatedHours} cap={projectBudgetHours} label="Allocated to milestones" />
@@ -230,7 +312,8 @@ export default async function ProjectDetailPage({
 
             <Card className="lg:col-span-2">
               <CardHeader>
-                <CardTitle>Hours by milestone</CardTitle>
+                <CardTitle>Logged hours by milestone</CardTitle>
+                <p className="text-xs text-muted-foreground">Share of hours logged so far — not budget consumption.</p>
               </CardHeader>
               <CardContent>
                 {project.milestones.length === 0 ? (
@@ -269,6 +352,9 @@ export default async function ProjectDetailPage({
                     <TableHead>Status</TableHead>
                     <TableHead>Billable</TableHead>
                     <TableHead>Hours</TableHead>
+                    <TableHead className="text-right">Planned</TableHead>
+                    {canViewRates && <TableHead className="text-right">Sales price</TableHead>}
+                    {canViewRates && <TableHead className="text-right">Value</TableHead>}
                     <TableHead>People / Tasks</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -296,6 +382,45 @@ export default async function ProjectDetailPage({
                           cap={m.budgetHours ? Number(m.budgetHours) : null}
                         />
                       </TableCell>
+                      <TableCell className="text-right tabular-nums whitespace-nowrap">
+                        {(() => {
+                          const planned = plannedByMilestone.get(m.id) ?? 0;
+                          const budget = m.budgetHours ? Number(m.budgetHours) : null;
+                          const over = budget !== null && planned > budget;
+                          return (
+                            <span className={cn(over && "text-destructive font-medium")} title={over ? "Planned exceeds this milestone's budget hours" : undefined}>
+                              {formatNumber(planned)}h{budget !== null ? ` / ${formatNumber(budget)}h` : ""}
+                            </span>
+                          );
+                        })()}
+                      </TableCell>
+                      {canViewRates && (
+                        <TableCell className="text-right tabular-nums whitespace-nowrap">
+                          {(() => {
+                            // Per-hour figure: the billed rate for T&M/Retainer, or the effective rate
+                            // (lump sum ÷ budget hours) for fixed price — so it never just repeats Value.
+                            const bh = m.budgetHours ? Number(m.budgetHours) : null;
+                            const rate =
+                              project.billingType === "FIXED_PRICE"
+                                ? bh
+                                  ? Number(m.salesPrice) / bh
+                                  : null
+                                : Number(m.salesPrice);
+                            return rate != null
+                              ? `${formatMoney(rate, project.company.currency)}/h`
+                              : formatMoney(m.salesPrice, project.company.currency);
+                          })()}
+                        </TableCell>
+                      )}
+                      {canViewRates && (
+                        <TableCell className="text-right tabular-nums whitespace-nowrap">
+                          {project.billingType === "FIXED_PRICE"
+                            ? formatMoney(m.salesPrice, project.company.currency)
+                            : m.budgetHours
+                              ? formatMoney(Number(m.salesPrice) * Number(m.budgetHours), project.company.currency)
+                              : `${formatMoney(m.salesPrice, project.company.currency)}/h`}
+                        </TableCell>
+                      )}
                       <TableCell className="text-muted-foreground">
                         {m._count.assignments} people · {m._count.tasks} tasks
                       </TableCell>
@@ -303,7 +428,7 @@ export default async function ProjectDetailPage({
                   ))}
                   {project.milestones.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={5} className="text-center text-muted-foreground">
+                      <TableCell colSpan={canViewRates ? 8 : 6} className="text-center text-muted-foreground">
                         No milestones yet.
                       </TableCell>
                     </TableRow>
@@ -444,7 +569,9 @@ export default async function ProjectDetailPage({
                       </TableCell>
                       <TableCell className="text-muted-foreground">{format(inv.issueDate, "MMM d, yyyy")}</TableCell>
                       <TableCell className="text-muted-foreground">
-                        {format(inv.periodStart, "MMM d")} – {format(inv.periodEnd, "MMM d, yyyy")}
+                        {inv.periodStart && inv.periodEnd
+                          ? `${format(inv.periodStart, "MMM d")} – ${format(inv.periodEnd, "MMM d, yyyy")}`
+                          : "—"}
                       </TableCell>
                     </TableRow>
                   ))}

@@ -17,6 +17,8 @@ import {
   WalletIcon,
   TagIcon,
   CalendarDaysIcon,
+  TargetIcon,
+  TrendingUpIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -35,6 +37,8 @@ const ICONS = {
   expenses: WalletIcon,
   expenseCategories: TagIcon,
   myPlanning: CalendarDaysIcon,
+  opportunities: TargetIcon,
+  revenue: TrendingUpIcon,
 } as const;
 
 export type NavItem = { href: string; label: string; icon: keyof typeof ICONS };

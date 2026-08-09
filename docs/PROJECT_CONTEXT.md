@@ -369,3 +369,101 @@ setup notes" section above for the DB role/connection details. If you're reading
 from a *different* machine and don't have that database yet, you need a dump transferred
 from the original machine (pg_dump), not just a `git clone` — the schema comes from
 Prisma migrations in this repo, but the actual data doesn't.
+
+---
+
+## Session update — 2026-08-10 (fresh Windows PC bring-up + three new modules)
+
+Everything below was built in one session on a **new machine**, after standing the environment
+up from scratch, and is committed to `origin/main`. Same bootstrap caveat as above — treat as a
+one-time layer; when it conflicts with code, trust the code.
+
+### Environment stood up on this PC (repeat on the next one)
+- **nvm-windows 1.2.2** (winget `CoreyButler.NVMforWindows`), **Node 20.20.2** — active version
+  symlinked at `C:\nvm4w\nodejs` (default). **pnpm 9.15.9** installed globally (matches
+  `packageManager`). Fresh shells still need `C:\nvm4w\nodejs` prepended to PATH.
+- **PostgreSQL 17.10** native (winget `PostgreSQL.PostgreSQL.17`), superuser `postgres`/`postgres`,
+  service `postgresql-x64-17`. `psql` not on PATH — full path `C:\Program Files\PostgreSQL\17\bin`
+  (added to user PATH, preserving `%NVM_HOME%`/`%NVM_SYMLINK%` as REG_EXPAND_SZ).
+- App role **`erp_app` / `erp_dev_local_pw`** owns database **`erp_dev`** (CREATEDB). The dump was
+  restored **as `erp_app`** (not postgres) so erp_app owns every object — the app connects with full
+  access, no grants needed. `.env` has `DATABASE_URL` (erp_app→erp_dev) + a dev `AUTH_SECRET`.
+- **Migrating to a new PC**: install nvm/Node20/pnpm/PostgreSQL17 as above; `git clone`;
+  `pnpm install`; recreate `.env`; then get the data across — the DB lives outside git, so transfer
+  a fresh `pg_dump` of `erp_dev` and restore it **as erp_app**, OR run
+  `pnpm exec prisma migrate deploy` for an empty schema; copy `uploads/` (receipts, gitignored).
+  **DB data (opportunities, invoices, plan edits from this session) is NOT in git** — only the
+  schema (via `prisma/migrations`) is. Dump + restore to carry the data.
+
+### Opportunities / CRM module (NEW — `/opportunities`)
+Full sales pipeline → win → auto-create Project. Models **Opportunity / OpportunityLine /
+OpportunityRevision** (+ enums `OpportunityStage`, `DiscountType`); `src/lib/opportunity.ts` (pure
+quote math + stage metadata); actions in `src/app/(app)/opportunities/actions.ts`.
+- Access: **SALES (finally activated) + PM + Admin** manage; **Admin-only approve**; FINANCE view.
+  New perms `opportunities:view|manage|approve` in `src/lib/permissions.ts`.
+- Stages: QUALIFYING → PROPOSAL_SENT → NEGOTIATION → PENDING_APPROVAL → WON / LOST / CANCELLED.
+- Quote lines carry `quantityHours × unitPrice`; each becomes a **Milestone** on conversion.
+  **OpportunityRevision** = immutable JSON snapshot per issued proposal (the negotiation/discount
+  audit trail).
+- **Discount is deal-level and stays at the PROJECT level** (Project gained `discountType`,
+  `discountValue`, `contractValue`, `sowNumber`, `poNumber`) — **milestones keep LIST rates**, the
+  discount is not baked into them. Optional PO. SoW/PO carried onto the project on win.
+- **Fixed-price conversion**: `Milestone.salesPrice = line total (hours × unitPrice = lump sum)`.
+  T&M/RETAINER: `salesPrice = unit rate`. (This was a real bug first — see below.)
+
+### Revenue & forecast report (NEW — `/revenue`, perm `reports:view`)
+`src/lib/revenue.ts` (pure `computeProjectRevenue`). **Admin + Finance only — PM was explicitly
+removed** (owner-level financials). Per-project + company totals:
+- **Forecast** = planned hrs × rate (T&M/Retainer) or contract value (fixed price).
+- **Earned (accrued)** = approved hrs × rate, or **% completion** for fixed price.
+- **Recognized** = **net of ISSUED/RECONCILED/PAID invoices** in the register (credit notes
+  subtract) — replaced the earlier milestone/POC proxy per the "invoiced drives it" decision.
+- **Unplanned capacity** = budget hrs − planned hrs. **Cost** = Σ approved hrs × snapshot cost rate
+  (EUR). **Margin** + **Margin %** (against earned).
+
+### Invoicing register rework (NEW model — `/invoices`)
+**Not a document generator** — a **register + reconciliation ledger** against the user's external
+**fiscal app** (which issues the real invoices). **Fully manual, no auto-generation** (removed the
+old "Bill milestone" button + `billFixedPriceMilestoneAction` — user wants full control).
+`src/lib/invoice.ts` (totals/labels); actions in `src/app/(app)/invoices/actions.ts`.
+- Lifecycle **DRAFT → ISSUED → RECONCILED → PAID** (+ VOID). `InvoiceType` INVOICE / CREDIT_NOTE.
+  `selfBilled` flag (German self-billing / Gutschrift — recorded for revenue recognition, not sent
+  to the customer). **InvoicePayment** model = partial payments (outstanding = gross − Σ payments).
+  **VAT** captured (`vatRate`; net from lines, gross = net + net×rate).
+- **Reconciliation** fields: `fiscalNumber`, `fiscalReference`, `customerReference`. Register list
+  has a **"Needs reconciliation"** worklist (ISSUED without a fiscal number).
+- **Create bases**: from approved time (T&M), manual/partial amounts (the Pirelli "one FP rollout →
+  3 invoices of chosen amounts" case), full-contract prefill, milestone prefill, credit note (can
+  link the original it adjusts). `periodStart/End` now nullable (only time-based invoices set them).
+- Status enum changed `SENT`→`ISSUED` + added `RECONCILED` (migration
+  `20260810120000_invoicing_register`). Dashboard/project pages updated off `SENT`.
+
+### Bugs fixed this session
+- **Donut charts invisible app-wide**: ring colors were derived at runtime
+  (`colorClass.replaceAll("fill-","stroke-")`), producing class names Tailwind never compiled → no
+  stroke. Fixed with literal `FILL_TO_STROKE` / `FILL_TO_BG` maps in
+  `src/components/charts/donut-chart.tsx`. (Any future runtime-built Tailwind class = same trap.)
+- **Planner over-allocation**: an assignment's plan could exceed its `allocatedHours` if the
+  allocation was lowered *after* planning (the save-time guard only checks the allocation as it was
+  then). Added a guard in `updateAssignmentAction` (can't set allocation below already-planned).
+  Also added a per-milestone **Planned** column on the project (red when planned > budget hrs).
+- **FP milestone salesPrice** stored the rate, not the lump sum — fixed in the conversion and
+  retrofitted Pirelli (Colombia 7500, Romania 13000).
+
+### Project detail additions
+"View opportunity" button (converted projects); a **Contract** block (list total / discount /
+contract value + PO/SoW); Milestones tab gained **Planned** (vs budget, red if over), rate-gated
+**Sales price** (rate/h; FP shows effective rate = lump ÷ budget hrs), and **Value** (total) columns.
+
+### Deliberate decisions — do NOT re-litigate
+- List-rate-on-milestone + **discount at project level** (never baked into milestone rates).
+- **Fixed-price milestone salesPrice = lump sum** (line total).
+- **Recognized revenue = invoiced** (the register), not a milestone/POC proxy.
+- **Invoicing is fully manual** — nothing auto-creates an invoice (incl. project/milestone status).
+- SALES role activated (opportunities). `reports:view` = **Admin + Finance only**.
+
+### Open / next
+- Invoice **line editing after DRAFT** = delete + recreate (no in-place line editor yet).
+- Invoicing UI is functional but not design-polished (built fast).
+- **Pirelli** ("eFLOW AP …") projects/opportunities are **test data** created this session to
+  exercise the flow — safe to delete.

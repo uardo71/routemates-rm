@@ -131,15 +131,13 @@ async function ManagerStats({
 }
 
 async function FinanceStats({ companyId }: { companyId: string }) {
-  const [company, openInvoices, readyToBill] = await Promise.all([
+  const [company, openInvoices, needsReconcile] = await Promise.all([
     prisma.company.findUniqueOrThrow({ where: { id: companyId } }),
     prisma.invoice.findMany({
-      where: { companyId, status: { in: ["DRAFT", "SENT"] } },
+      where: { companyId, status: { in: ["DRAFT", "ISSUED", "RECONCILED"] } },
       include: { lines: true },
     }),
-    prisma.milestone.count({
-      where: { status: "COMPLETE", billable: true, project: { companyId, billingType: "FIXED_PRICE" } },
-    }),
+    prisma.invoice.count({ where: { companyId, status: "ISSUED", fiscalNumber: null } }),
   ]);
 
   const openValue = openInvoices.reduce(
@@ -152,10 +150,10 @@ async function FinanceStats({ companyId }: { companyId: string }) {
       <StatCard label="Open invoices" value={openInvoices.length} icon={ReceiptIcon} />
       <StatCard label="Open invoice value" value={formatMoney(openValue, company.currency)} icon={ReceiptIcon} />
       <StatCard
-        label="Milestones ready to bill"
-        value={readyToBill}
+        label="Needs reconciliation"
+        value={needsReconcile}
         icon={AlertTriangleIcon}
-        tone={readyToBill > 0 ? "warning" : "default"}
+        tone={needsReconcile > 0 ? "warning" : "default"}
       />
     </div>
   );

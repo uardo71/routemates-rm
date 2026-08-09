@@ -298,6 +298,18 @@ export async function updateAssignmentAction(_prevState: string | undefined, for
   if (!parsed.success) return parsed.error.issues[0]?.message ?? "Invalid input";
   const data = parsed.data;
 
+  // Guard: an assignment's allocation can't be lowered below what's already scheduled in the
+  // resource planner. The planner's own save-time cap only checks against the allocation as it was
+  // when each week was saved, so without this a plan could silently end up exceeding a
+  // later-reduced allocation (see AssignmentPlan roll-up on the project + revenue report).
+  if (data.allocatedHours != null) {
+    const planned = await prisma.assignmentPlan.aggregate({ where: { assignmentId }, _sum: { hours: true } });
+    const plannedTotal = Number(planned._sum.hours ?? 0);
+    if (data.allocatedHours < plannedTotal) {
+      return `This assignment already has ${plannedTotal}h scheduled in the resource planner. Reduce the plan first, or set the allocation to at least ${plannedTotal}h.`;
+    }
+  }
+
   await prisma.assignment.update({
     where: { id: assignmentId },
     data: {

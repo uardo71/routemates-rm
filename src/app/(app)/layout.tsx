@@ -12,6 +12,14 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
   const groups: NavGroup[] = [
     { label: "Overview", items: [{ href: "/", label: "Dashboard", icon: "dashboard" }] },
+    ...(can(user, "opportunities:view")
+      ? [
+          {
+            label: "Sales",
+            items: [{ href: "/opportunities", label: "Opportunities", icon: "opportunities" as const }],
+          },
+        ]
+      : []),
     {
       label: "Delivery",
       items: [
@@ -52,6 +60,14 @@ export default async function AppLayout({ children }: { children: React.ReactNod
                 ? [{ href: "/admin/expense-categories", label: "Expense categories", icon: "expenseCategories" as const }]
                 : []),
             ],
+          },
+        ]
+      : []),
+    ...(can(user, "reports:view")
+      ? [
+          {
+            label: "Reports",
+            items: [{ href: "/revenue", label: "Revenue & forecast", icon: "revenue" as const }],
           },
         ]
       : []),

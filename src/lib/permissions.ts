@@ -15,7 +15,11 @@ export type Action =
   | "salaries:manage"
   | "vacations:manage"
   | "vacations:view:any"
-  | "expenses:manage";
+  | "expenses:manage"
+  | "opportunities:view"
+  | "opportunities:manage"
+  | "opportunities:approve"
+  | "reports:view";
 
 // Employees and contractors are delivery staff, not delivery managers: for now they
 // only get the Dashboard, their own Time page (logging hours against assignments
@@ -37,10 +41,14 @@ const ROLE_PERMISSIONS: Record<SystemRole, Action[]> = {
     "vacations:manage",
     "vacations:view:any",
     "expenses:manage",
+    "opportunities:view",
+    "opportunities:manage",
+    "opportunities:approve",
+    "reports:view",
   ],
-  FINANCE: ["clients:view", "projects:view", "rates:view:any", "invoices:manage", "salaries:manage", "expenses:manage"],
-  SALES: ["clients:manage", "clients:view"],
-  PM: ["projects:view", "projects:create", "planning:view", "vacations:view:any"],
+  FINANCE: ["clients:view", "projects:view", "rates:view:any", "invoices:manage", "salaries:manage", "expenses:manage", "opportunities:view", "reports:view"],
+  SALES: ["clients:manage", "clients:view", "opportunities:view", "opportunities:manage"],
+  PM: ["projects:view", "projects:create", "planning:view", "vacations:view:any", "opportunities:view", "opportunities:manage"],
   EMPLOYEE: [],
   CONTRACTOR: [],
 };

@@ -63,11 +63,19 @@ enum TimeCardStatus {
   REJECTED
 }
 
+// Register/reconciliation lifecycle: recorded (DRAFT) -> finalized & revenue recognized (ISSUED)
+// -> matched to the fiscal app + customer document (RECONCILED) -> settled (PAID). VOID cancels.
 enum InvoiceStatus {
   DRAFT
-  SENT
+  ISSUED
+  RECONCILED
   PAID
   VOID
+}
+
+enum InvoiceType {
+  INVOICE
+  CREDIT_NOTE
 }
 
 enum VacationStatus {
@@ -75,6 +83,28 @@ enum VacationStatus {
   APPROVED
   REJECTED
   CANCELLED
+}
+
+// Sales pipeline position for an Opportunity. The open stages (QUALIFYING -> PROPOSAL_SENT ->
+// NEGOTIATION) are freely moved by anyone with opportunities:manage. PENDING_APPROVAL is the
+// deal-desk gate: a manager submits, and only an Admin (opportunities:approve) can move it to
+// WON (which auto-creates the Project + Milestones) or bounce it back to NEGOTIATION. LOST /
+// CANCELLED are terminal.
+enum OpportunityStage {
+  QUALIFYING
+  PROPOSAL_SENT
+  NEGOTIATION
+  PENDING_APPROVAL
+  WON
+  LOST
+  CANCELLED
+}
+
+// How a discount is expressed: PERCENT (discountValue is a 0-100 percentage of the list total)
+// or ABSOLUTE (discountValue is a fixed money amount in the deal currency).
+enum DiscountType {
+  PERCENT
+  ABSOLUTE
 }
 
 // ---------- Core / Foundation ----------
@@ -92,6 +122,7 @@ model Company {
   invoices          Invoice[]
   expenseCategories ExpenseCategory[]
   expenses          Expense[]
+  opportunities     Opportunity[]
 }
 
 model User {
@@ -123,6 +154,10 @@ model User {
   expensesOwned        Expense[] @relation("ExpenseOwner")
   expensesSubmitted    Expense[] @relation("ExpenseSubmittedBy")
   expensesDecided      Expense[] @relation("ExpenseDecidedBy")
+  opportunitiesOwned     Opportunity[] @relation("OpportunityOwner")
+  opportunitiesSubmitted Opportunity[] @relation("OpportunitySubmittedBy")
+  opportunitiesDecided   Opportunity[] @relation("OpportunityDecidedBy")
+  opportunityRevisions   OpportunityRevision[] @relation("OpportunityRevisionIssuedBy")
 
   @@index([companyId])
 }
@@ -182,6 +217,7 @@ model Client {
   contacts Contact[]
   projects Project[]
   invoices Invoice[]
+  opportunities Opportunity[]
 
   @@index([companyId])
 }
@@ -194,6 +230,8 @@ model Contact {
   email     String?
   phone     String?
   createdAt DateTime @default(now())
+
+  opportunities Opportunity[]
 
   @@index([clientId])
 }
@@ -220,10 +258,23 @@ model Project {
   // placeholder one); this flag just filters it into pickers like the vacation-approval
   // project selector instead of any structural difference.
   isInternal   Boolean            @default(false)
+  // Contract terms carried over when a Project is created from a won Opportunity. Milestones keep
+  // the list sales price; the negotiated discount lives here (type + value) alongside the resulting
+  // net `contractValue`, so the discount is always visible on the project without re-pricing every
+  // milestone. `sowNumber`/`poNumber` mirror the SoW/PO captured on the opportunity (poNumber also
+  // feeds invoice defaults). All nullable — a hand-created project (no opportunity) simply leaves
+  // them unset.
+  discountType   DiscountType?
+  discountValue  Decimal?           @db.Decimal(12, 2)
+  contractValue  Decimal?           @db.Decimal(12, 2)
+  sowNumber      String?
+  poNumber       String?
   createdAt    DateTime           @default(now())
   updatedAt    DateTime           @updatedAt
 
   milestones Milestone[]
+  opportunity Opportunity? @relation("OpportunityProject")
+  invoices    Invoice[]
 
   @@index([companyId])
   @@index([clientId])
@@ -475,28 +526,73 @@ model MilestoneReallocation {
 
 // ---------- Invoicing ----------
 
+// An entry in the invoice REGISTER — RM Ops does not generate fiscal documents (the external
+// fiscal app does); this records what was billed against a project, ties it to the fiscal app's
+// number and the customer's document, tracks revenue recognition, and reconciles the two.
 model Invoice {
   id              String        @id @default(cuid())
   companyId       String
   company         Company       @relation(fields: [companyId], references: [id])
   clientId        String
   client          Client        @relation(fields: [clientId], references: [id])
+  // What this invoice bills. Optional so a client-level or ad-hoc entry is still possible.
+  projectId       String?
+  project         Project?      @relation(fields: [projectId], references: [id])
+  // Our internal register number (e.g. INV-0001) — always ours, distinct from the fiscal number.
   invoiceNumber   String
+  type            InvoiceType   @default(INVOICE)
   status          InvoiceStatus @default(DRAFT)
+  // German self-billing (Gutschrift): the customer issued a credit note and we record a matching
+  // invoice for revenue recognition only — never sent to them.
+  selfBilled      Boolean       @default(false)
   issueDate       DateTime      @default(now())
   dueDate         DateTime?
-  periodStart     DateTime
-  periodEnd       DateTime
+  // Revenue-recognition date for month-end cutoff (falls back to issueDate when null).
+  recognitionDate DateTime?
+  // Service period — only meaningful for time-based invoices, hence optional.
+  periodStart     DateTime?
+  periodEnd       DateTime?
   currency        String        @default("USD")
+  // VAT percentage; net comes from the lines, gross = net + net*vatRate. The fiscal app is the
+  // source of truth for tax — this is captured for management totals only.
+  vatRate         Decimal?      @db.Decimal(5, 2)
+  // Reconciliation references.
+  fiscalNumber    String? // the external fiscal app's invoice number
+  fiscalReference String? // any extra fiscal-side reference
+  customerReference String? // customer PO / credit-note number / their document ref
   poNumber        String?
   referenceNumber String?
+  issuedAt        DateTime?
+  reconciledAt    DateTime?
+  notes           String?
+  // A credit note can point at the original invoice it adjusts.
+  creditNoteForId String?
+  creditNoteFor   Invoice?      @relation("InvoiceCreditNotes", fields: [creditNoteForId], references: [id])
+  creditNotes     Invoice[]     @relation("InvoiceCreditNotes")
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
 
-  lines InvoiceLine[]
+  lines    InvoiceLine[]
+  payments InvoicePayment[]
 
   @@unique([companyId, invoiceNumber])
   @@index([clientId])
+  @@index([projectId])
+  @@index([companyId, status])
+}
+
+// A partial (or full) payment recorded against an invoice. Outstanding = gross − Σ payments.
+model InvoicePayment {
+  id        String   @id @default(cuid())
+  invoiceId String
+  invoice   Invoice  @relation(fields: [invoiceId], references: [id])
+  amount    Decimal  @db.Decimal(12, 2)
+  date      DateTime
+  method    String?
+  reference String?
+  createdAt DateTime @default(now())
+
+  @@index([invoiceId])
 }
 
 model InvoiceLine {
@@ -609,4 +705,114 @@ model ExpenseReceipt {
   uploadedAt   DateTime @default(now())
 
   @@index([expenseId])
+}
+
+// ---------- Opportunities (sales pipeline) ----------
+
+// A sales opportunity / deal, worked by SALES/PM/Admin (opportunities:manage) through the
+// OpportunityStage pipeline. Owner/actor/decider triad mirrors Expense/LeaveRequest/TimeCard:
+// `owner` owns the deal, `submittedBy` submitted it for approval, `decidedBy` is the Admin who
+// approved/rejected. On WON approval the deal converts to a Project (one Milestone per line) in a
+// single transaction and `projectId` is stamped (see src/app/(app)/opportunities/actions.ts).
+// Discount is deal-level (not baked into line unit prices): the lines carry list prices, and the
+// net figure is computed from discountType/discountValue — that same discount is copied onto the
+// created Project.
+model Opportunity {
+  id                String             @id @default(cuid())
+  companyId         String
+  company           Company            @relation(fields: [companyId], references: [id])
+  clientId          String
+  client            Client             @relation(fields: [clientId], references: [id])
+  contactId         String?
+  contact           Contact?           @relation(fields: [contactId], references: [id])
+  name              String
+  // Free-text internal deal number / client RFQ or tender reference.
+  reference         String?
+  stage             OpportunityStage   @default(QUALIFYING)
+  billingType       ProjectBillingType @default(TIME_AND_MATERIALS)
+  currency          String
+  expectedCloseDate DateTime?
+  // 0-100 win likelihood, drives the weighted-pipeline forecast. Free-form judgement, not derived.
+  probability       Int?
+
+  // Deal-level discount off the list total (lines keep list unit prices).
+  discountType      DiscountType?
+  discountValue     Decimal?           @db.Decimal(12, 2)
+
+  // owner / actor / decider triad
+  ownerId           String
+  owner             User               @relation("OpportunityOwner", fields: [ownerId], references: [id])
+  submittedById     String?
+  submittedBy       User?              @relation("OpportunitySubmittedBy", fields: [submittedById], references: [id])
+  submittedAt       DateTime?
+  decidedById       String?
+  decidedBy         User?              @relation("OpportunityDecidedBy", fields: [decidedById], references: [id])
+  decidedAt         DateTime?
+  decisionComment   String?
+
+  // SoW / PO contract metadata (all optional — PO is not required to approve).
+  sowNumber         String?
+  sowSignedDate     DateTime?
+  poNumber          String?
+  poAmount          Decimal?           @db.Decimal(12, 2)
+  poDate            DateTime?
+
+  lostReason        String?
+
+  // Set once the opportunity is won and converted; unique so a deal maps to at most one project.
+  projectId         String?            @unique
+  project           Project?           @relation("OpportunityProject", fields: [projectId], references: [id])
+
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+
+  lines     OpportunityLine[]
+  revisions OpportunityRevision[]
+
+  @@index([companyId, stage])
+  @@index([clientId])
+}
+
+// One priced line of the current (live) quote. Becomes exactly one Milestone on conversion:
+// `unitPrice` -> Milestone.salesPrice (list rate/hr for T&M/RETAINER, lump sum for FIXED_PRICE),
+// `quantityHours` -> Milestone.budgetHours. Editable while the deal is open.
+model OpportunityLine {
+  id            String      @id @default(cuid())
+  opportunityId String
+  opportunity   Opportunity @relation(fields: [opportunityId], references: [id])
+  name          String
+  description   String?
+  quantityHours Decimal     @db.Decimal(10, 2)
+  unitPrice     Decimal     @db.Decimal(12, 4)
+  billable      Boolean     @default(true)
+  sortOrder     Int         @default(0)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  @@index([opportunityId])
+}
+
+// An immutable snapshot of the quote each time a proposal is "issued" to the client — the
+// negotiation audit trail (v1 initial, v2 after discount, v3 reduced scope, ...). `linesSnapshot`
+// is a JSON copy of the lines at issue time (name/quantityHours/unitPrice/billable) so later edits
+// to live lines never mutate history. gross/discount/net are frozen at issue time.
+model OpportunityRevision {
+  id             String        @id @default(cuid())
+  opportunityId  String
+  opportunity    Opportunity   @relation(fields: [opportunityId], references: [id])
+  version        Int
+  label          String?
+  linesSnapshot  Json
+  discountType   DiscountType?
+  discountValue  Decimal?      @db.Decimal(12, 2)
+  grossAmount    Decimal       @db.Decimal(12, 2)
+  discountAmount Decimal       @db.Decimal(12, 2)
+  netAmount      Decimal       @db.Decimal(12, 2)
+  note           String?
+  issuedById     String
+  issuedBy       User          @relation("OpportunityRevisionIssuedBy", fields: [issuedById], references: [id])
+  createdAt      DateTime      @default(now())
+
+  @@unique([opportunityId, version])
+  @@index([opportunityId])
 }

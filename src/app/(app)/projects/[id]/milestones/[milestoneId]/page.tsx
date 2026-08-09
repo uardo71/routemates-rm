@@ -17,7 +17,6 @@ import { formatMoney } from "@/lib/format";
 import { AssignmentStatusSelect } from "./assignment-status-select";
 import { MilestoneStatusSelect } from "./milestone-status-select";
 import { TimeEntryOpenToggle } from "./time-entry-open-toggle";
-import { BillMilestoneForm } from "./bill-milestone-form";
 import { TaskRow } from "./task-row";
 import { ReallocateHoursForm } from "../../reallocate-hours-form";
 
@@ -89,12 +88,6 @@ export default async function MilestoneDetailPage({
   const canReallocate = (await canManageProject(user, projectId)) && siblingMilestones.length >= 2;
 
   const priceLabel = milestone.project.billingType === "FIXED_PRICE" ? "Sales price (fixed)" : "Sales price / hr";
-
-  const canBill =
-    can(user, "invoices:manage") &&
-    milestone.project.billingType === "FIXED_PRICE" &&
-    milestone.billable &&
-    milestone.status === "COMPLETE";
 
   return (
     <div className="flex flex-col gap-6">
@@ -188,13 +181,6 @@ export default async function MilestoneDetailPage({
                 label="Hours logged"
               />
             </div>
-            {canBill && (
-              <BillMilestoneForm
-                milestoneId={milestone.id}
-                amount={milestone.salesPrice.toString()}
-                currency={milestone.project.company.currency}
-              />
-            )}
           </CardContent>
         </Card>
 
