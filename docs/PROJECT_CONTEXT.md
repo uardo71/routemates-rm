@@ -9,6 +9,38 @@ trust the code.
 
 ---
 
+## Original ask (verbatim, first message of the project)
+
+> i need to create an accounting system for my company, like an ERP
+> it's a small one with 10 employees
+>
+> basically we sell services across different clients
+> we have different roles within the company, we have developers, consultants, PM with
+> different sales prices
+> we have contractors
+>
+> we have opportunities, sales, projects, time entries, approval process, planning,
+> revenues, budgets, gantts, milestones, scheduled, actuals, invoicing, forecasting,
+> salaries and so on
+>
+> how can we do this, i need to manage my company, salesforce is too expensive, i need
+> something for my company, so everyone can access within company, having different
+> authorizations or limited things to view/edit and so on
+
+Status of each named item as of 2026-08-09, so nothing on that list gets silently
+dropped: **projects, time entries, approval process, planning, milestones,
+scheduled/actuals, invoicing, salaries** — built (see below). **budgets** — partially
+(milestone budget cost + hour reallocation; no company-wide budget rollup report).
+**gantts** — explicitly tried as a drag/resize Gantt, then explicitly rejected by the
+user in favor of the editable spreadsheet grid actually built for Planning. **revenues**
+— invoicing gives actuals; no dedicated revenue report. **opportunities, sales,
+forecasting** — never designed beyond this one-line mention. No fields, stages, or
+workflow have been discussed for a CRM/opportunities module at any point since — if
+picked up, it needs a real requirements conversation with the user first, not an assumed
+design.
+
+---
+
 ## RM Ops project — architecture, decisions, and gotchas
 
 Building "RM Ops" — a custom internal PSA (Professional Services Automation) system at
