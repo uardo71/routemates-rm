@@ -70,6 +70,13 @@ enum InvoiceStatus {
   VOID
 }
 
+enum VacationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
 // ---------- Core / Foundation ----------
 
 model Company {
@@ -79,10 +86,12 @@ model Company {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  users     User[]
-  clients   Client[]
-  projects  Project[]
-  invoices  Invoice[]
+  users             User[]
+  clients           Client[]
+  projects          Project[]
+  invoices          Invoice[]
+  expenseCategories ExpenseCategory[]
+  expenses          Expense[]
 }
 
 model User {
@@ -107,6 +116,13 @@ model User {
   timeCardApprovals     TimeCard[]             @relation("TimeCardApprover")
   timeCardSubmissions   TimeCard[]             @relation("TimeCardSubmitter")
   milestoneReallocations MilestoneReallocation[]
+  leaveRequests        LeaveRequest[] @relation("LeaveOwner")
+  leaveRequestsMade    LeaveRequest[] @relation("LeaveRequestedBy")
+  leaveRequestsDecided LeaveRequest[] @relation("LeaveDecidedBy")
+  leaveReturnsRecorded LeaveReturn[]
+  expensesOwned        Expense[] @relation("ExpenseOwner")
+  expensesSubmitted    Expense[] @relation("ExpenseSubmittedBy")
+  expensesDecided      Expense[] @relation("ExpenseDecidedBy")
 
   @@index([companyId])
 }
@@ -199,6 +215,11 @@ model Project {
   budgetHours  Decimal?           @db.Decimal(8, 2)
   managerId    String?
   manager      User?              @relation("ProjectManager", fields: [managerId], references: [id])
+  // Flags a project as company-internal (not billed to a real client) — e.g. an umbrella
+  // project for vacation tracking. Still requires a Client like any project (create a
+  // placeholder one); this flag just filters it into pickers like the vacation-approval
+  // project selector instead of any structural difference.
+  isInternal   Boolean            @default(false)
   createdAt    DateTime           @default(now())
   updatedAt    DateTime           @updatedAt
 
@@ -232,6 +253,7 @@ model Milestone {
   invoiceLines     InvoiceLine[]
   reallocationsFrom MilestoneReallocation[] @relation("ReallocFrom")
   reallocationsTo   MilestoneReallocation[] @relation("ReallocTo")
+  leaveRequests     LeaveRequest[]
 
   @@index([projectId])
 }
@@ -253,6 +275,7 @@ model Assignment {
   timeEntries TimeEntry[]
   timeCards   TimeCard[]
   planEntries AssignmentPlan[]
+  leaveRequests LeaveRequest[]
 
   @@unique([milestoneId, userId])
 }
@@ -356,6 +379,80 @@ model TimeEntry {
   @@index([timeCardId])
 }
 
+// ---------- Leave (vacation, sick, parental) ----------
+
+enum LeaveType {
+  VACATION
+  SICK
+  PATERNITY
+  MATERNITY
+}
+
+// A request for time off, of any LeaveType. `workingDays` is computed at request time (working
+// days in the range, excluding weekends and Albanian public holidays). Only VACATION has an
+// annual entitlement/balance (see computeVacationBalance) — SICK is uncapped/just tracked, and
+// PATERNITY/MATERNITY are one-time per-event periods with no preset duration, both without any
+// balance math. Admin-created requests are auto-approved for every type (no separate decision
+// step) — `requestedById` still distinguishes "who filed this" from `userId` ("whose leave it
+// is"), same pattern as TimeCard.submittedById.
+// On approval, `milestoneId`/`assignmentId` point at the auto-created (or reused) non-billable
+// milestone + assignment (named per type, e.g. "Sick Leave") under whichever internal project
+// the approver chose — see src/lib/vacation.ts#provisionLeave for how those get created and how
+// the days get mirrored into AssignmentPlan and pre-approved TimeCards.
+model LeaveRequest {
+  id            String         @id @default(cuid())
+  userId        String
+  user          User           @relation("LeaveOwner", fields: [userId], references: [id])
+  type          LeaveType      @default(VACATION)
+  startDate     DateTime
+  endDate       DateTime
+  workingDays   Decimal        @db.Decimal(5, 2)
+  status        VacationStatus @default(PENDING)
+  reason        String?
+  requestedById String
+  requestedBy   User           @relation("LeaveRequestedBy", fields: [requestedById], references: [id])
+  decidedById   String?
+  decidedBy     User?          @relation("LeaveDecidedBy", fields: [decidedById], references: [id])
+  decidedAt     DateTime?
+  comment       String?
+  milestoneId   String?
+  milestone     Milestone?     @relation(fields: [milestoneId], references: [id])
+  assignmentId  String?
+  assignment    Assignment?    @relation(fields: [assignmentId], references: [id])
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  returns LeaveReturn[]
+
+  @@index([userId, startDate])
+  @@index([status])
+  @@index([type])
+}
+
+// Records an early/partial return to work *within* an already-APPROVED LeaveRequest's date
+// range — e.g. someone comes back a week early from vacation and stays, or comes back for a
+// couple of days mid-sick-leave and then goes back out. A single LeaveRequest can have several
+// of these (handles the intermittent case, not just a single early end), each independently
+// validated to fall inside the request's range and not overlap another return. Recording one
+// un-provisions those specific days (see src/lib/vacation.ts#recordLeaveReturn): removes the
+// matching TimeEntry rows, decrements the affected AssignmentPlan weeks, and decrements the
+// parent LeaveRequest.workingDays — which is what actually gives the days back to
+// computeVacationBalance for VACATION (SICK/PATERNITY/MATERNITY have no balance to give back to,
+// but still get the same un-provisioning).
+model LeaveReturn {
+  id             String       @id @default(cuid())
+  leaveRequestId String
+  leaveRequest   LeaveRequest @relation(fields: [leaveRequestId], references: [id])
+  startDate      DateTime
+  endDate        DateTime
+  workingDays    Decimal      @db.Decimal(5, 2)
+  recordedById   String
+  recordedBy     User         @relation(fields: [recordedById], references: [id])
+  createdAt      DateTime     @default(now())
+
+  @@index([leaveRequestId])
+}
+
 // ---------- Milestone reallocation ----------
 
 model MilestoneReallocation {
@@ -418,4 +515,98 @@ model InvoiceLine {
 
   @@index([invoiceId])
   @@index([milestoneId])
+}
+
+// ---------- Expenses ----------
+
+enum ExpensePaidBy {
+  COMPANY  // paid directly from company funds (bank transfer, cash, company card) — nobody is owed money back
+  EMPLOYEE // the user paid personally and is owed reimbursement
+}
+
+enum ExpenseStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum ExpensePaymentMethod {
+  CASH
+  BANK_TRANSFER
+  CARD
+  OTHER
+}
+
+// Admin/Finance-managed list of spending types (Utilities, Travel, ...) — kept editable rather
+// than a fixed enum since the user was explicit this list isn't exhaustive ("and other stuff").
+model ExpenseCategory {
+  id        String   @id @default(cuid())
+  companyId String
+  company   Company  @relation(fields: [companyId], references: [id])
+  name      String
+  createdAt DateTime @default(now())
+
+  expenses Expense[]
+
+  @@unique([companyId, name])
+  @@index([companyId])
+}
+
+// A single expense line — the primary record accountants reconcile against bank statements at
+// year-end, hence the emphasis on always capturing date/amount/description even when there's no
+// receipt (e.g. a cash-paid recurring fee with no invoice issued, a real problem the user
+// flagged specifically). `userId` is whose expense this is (for EMPLOYEE: who gets reimbursed;
+// for COMPANY: who handled/paid it, e.g. with the company card) — distinct from `submittedById`
+// (who actually filed the record), same "owner vs actor" pattern used by TimeCard/LeaveRequest.
+// Auto-approval: whenever `submittedBy` has `expenses:manage` (Admin/Finance), the record lands
+// already APPROVED regardless of paidBy — anyone else's entry (of either paidBy type) goes to
+// PENDING for review, since the point of approval here isn't just authorizing a reimbursement
+// payout, it's confirming the record is accurate/correctly categorized before it hits the books.
+model Expense {
+  id            String               @id @default(cuid())
+  companyId     String
+  company       Company              @relation(fields: [companyId], references: [id])
+  categoryId    String
+  category      ExpenseCategory      @relation(fields: [categoryId], references: [id])
+  date          DateTime
+  amount        Decimal              @db.Decimal(12, 2)
+  currency      String
+  description   String
+  vendor        String?
+  paymentMethod ExpensePaymentMethod @default(OTHER)
+  paidBy        ExpensePaidBy        @default(COMPANY)
+  userId        String
+  user          User                 @relation("ExpenseOwner", fields: [userId], references: [id])
+  submittedById String
+  submittedBy   User                 @relation("ExpenseSubmittedBy", fields: [submittedById], references: [id])
+  status        ExpenseStatus        @default(PENDING)
+  decidedById   String?
+  decidedBy     User?                @relation("ExpenseDecidedBy", fields: [decidedById], references: [id])
+  decidedAt     DateTime?
+  comment       String?
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+
+  receipts ExpenseReceipt[]
+
+  @@index([companyId, date])
+  @@index([status])
+  @@index([categoryId])
+}
+
+// A single receipt can be several files (e.g. a hotel folio + a taxi slip both covering one
+// trip expense line) — stored on local disk under uploads/receipts (see src/lib/receipt-
+// storage.ts), never in git. `fileName` is the on-disk name (randomized, unrelated to
+// `originalName`) so two people's "receipt.jpg" never collide.
+model ExpenseReceipt {
+  id           String   @id @default(cuid())
+  expenseId    String
+  expense      Expense  @relation(fields: [expenseId], references: [id])
+  fileName     String
+  originalName String
+  mimeType     String
+  sizeBytes    Int
+  uploadedAt   DateTime @default(now())
+
+  @@index([expenseId])
 }

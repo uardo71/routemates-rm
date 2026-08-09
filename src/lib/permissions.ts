@@ -12,12 +12,15 @@ export type Action =
   | "rates:view:any"
   | "invoices:manage"
   | "planning:view"
-  | "salaries:manage";
+  | "salaries:manage"
+  | "vacations:manage"
+  | "vacations:view:any"
+  | "expenses:manage";
 
 // Employees and contractors are delivery staff, not delivery managers: for now they
-// only get the Dashboard and their own Time page (logging hours against assignments
-// they've been given). They have no visibility into projects/milestones/clients —
-// that's PM/Admin/Finance territory. (Time-off/PTO/holidays is a separate, later feature.)
+// only get the Dashboard, their own Time page (logging hours against assignments
+// they've been given), and their own Vacations page. They have no visibility into
+// projects/milestones/clients — that's PM/Admin/Finance territory.
 const ROLE_PERMISSIONS: Record<SystemRole, Action[]> = {
   ADMIN: [
     "users:manage",
@@ -31,10 +34,13 @@ const ROLE_PERMISSIONS: Record<SystemRole, Action[]> = {
     "invoices:manage",
     "planning:view",
     "salaries:manage",
+    "vacations:manage",
+    "vacations:view:any",
+    "expenses:manage",
   ],
-  FINANCE: ["clients:view", "projects:view", "rates:view:any", "invoices:manage", "salaries:manage"],
+  FINANCE: ["clients:view", "projects:view", "rates:view:any", "invoices:manage", "salaries:manage", "expenses:manage"],
   SALES: ["clients:manage", "clients:view"],
-  PM: ["projects:view", "projects:create", "planning:view"],
+  PM: ["projects:view", "projects:create", "planning:view", "vacations:view:any"],
   EMPLOYEE: [],
   CONTRACTOR: [],
 };

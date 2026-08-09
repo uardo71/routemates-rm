@@ -15,6 +15,7 @@ const CreateProjectSchema = z.object({
   budgetHours: z.coerce.number().positive().optional(),
   startDate: z.string().optional(),
   managerId: z.string().optional(),
+  isInternal: z.boolean(),
 });
 
 export async function createProjectAction(_prevState: string | undefined, formData: FormData) {
@@ -28,6 +29,7 @@ export async function createProjectAction(_prevState: string | undefined, formDa
     budgetHours: formData.get("budgetHours") || undefined,
     startDate: formData.get("startDate") || undefined,
     managerId: formData.get("managerId") || undefined,
+    isInternal: formData.get("isInternal") === "on",
   });
   if (!parsed.success) return parsed.error.issues[0]?.message ?? "Invalid input";
 
@@ -56,6 +58,7 @@ export async function createProjectAction(_prevState: string | undefined, formDa
       startDate: data.startDate ? new Date(data.startDate) : undefined,
       managerId: manager.id,
       status: "ACTIVE",
+      isInternal: data.isInternal,
     },
   });
 
@@ -74,6 +77,7 @@ const UpdateProjectSchema = z.object({
   startDate: z.string().optional(),
   endDate: z.string().optional(),
   managerId: z.string().optional(),
+  isInternal: z.boolean(),
 });
 
 export async function updateProjectAction(_prevState: string | undefined, formData: FormData) {
@@ -93,6 +97,7 @@ export async function updateProjectAction(_prevState: string | undefined, formDa
     startDate: formData.get("startDate") || undefined,
     endDate: formData.get("endDate") || undefined,
     managerId: formData.get("managerId") || undefined,
+    isInternal: formData.get("isInternal") === "on",
   });
   if (!parsed.success) return parsed.error.issues[0]?.message ?? "Invalid input";
   const data = parsed.data;
@@ -118,6 +123,7 @@ export async function updateProjectAction(_prevState: string | undefined, formDa
       budgetHours: data.budgetHours ?? null,
       startDate: data.startDate ? new Date(data.startDate) : null,
       endDate: data.endDate ? new Date(data.endDate) : null,
+      isInternal: data.isInternal,
       ...(managerId ? { managerId } : {}),
     },
   });

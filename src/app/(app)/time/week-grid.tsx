@@ -13,6 +13,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import { getPublicHoliday } from "@/lib/holidays";
 import {
   saveTimeGridAction,
   submitTimeCardsAction,
@@ -1001,12 +1002,20 @@ export function WeekGrid({
               <tr className="text-left text-muted-foreground bg-muted/50">
                 <th className="p-2 w-8" />
                 <th className="p-2 min-w-72">Project / Assignment</th>
-                {days.map((d) => (
-                  <th key={d.toISOString()} className="p-2 w-16 text-center border-l font-medium">
-                    {format(d, "EEE")}
-                    <div className="text-[11px] font-normal">{format(d, "M/d")}</div>
-                  </th>
-                ))}
+                {days.map((d) => {
+                  const holiday = getPublicHoliday(d);
+                  return (
+                    <th
+                      key={d.toISOString()}
+                      className={cn("p-2 w-16 text-center border-l font-medium", holiday && "bg-muted/70 text-muted-foreground")}
+                      title={holiday ? `Albanian public holiday — ${holiday}. Time entry is still allowed.` : undefined}
+                    >
+                      {format(d, "EEE")}
+                      <div className="text-[11px] font-normal">{format(d, "M/d")}</div>
+                      {holiday && <div className="truncate text-[9px] font-normal normal-case">🇦🇱 holiday</div>}
+                    </th>
+                  );
+                })}
                 <th className="p-2 w-14 text-center border-l">Sum</th>
                 <th className="p-2 w-28 text-center border-l">Status</th>
                 <th className="p-2 w-16 text-center border-l">Notes</th>

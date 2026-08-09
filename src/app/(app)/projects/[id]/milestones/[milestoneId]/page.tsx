@@ -1,12 +1,17 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { ClockIcon, UsersIcon, CheckSquareIcon, WalletIcon, Building2Icon, ReceiptIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { HourProgress } from "@/components/hour-progress";
 import { LinkButton } from "@/components/link-button";
+import { StatCard } from "@/components/stat-card";
+import { InitialsAvatar } from "@/components/initials-avatar";
+import { InfoField } from "@/components/info-field";
+import { DonutChart, DONUT_COLORS } from "@/components/charts/donut-chart";
 import { prisma } from "@/lib/prisma";
-import { can, canManageMilestone, canViewMilestoneRates, visibleProjectIds } from "@/lib/permissions";
+import { can, canManageMilestone, canManageProject, canViewMilestoneRates, visibleProjectIds } from "@/lib/permissions";
 import { requirePermission } from "@/lib/session";
 import { formatMoney } from "@/lib/format";
 import { AssignmentStatusSelect } from "./assignment-status-select";
@@ -14,6 +19,11 @@ import { MilestoneStatusSelect } from "./milestone-status-select";
 import { TimeEntryOpenToggle } from "./time-entry-open-toggle";
 import { BillMilestoneForm } from "./bill-milestone-form";
 import { TaskRow } from "./task-row";
+import { ReallocateHoursForm } from "../../reallocate-hours-form";
+
+type Tone = "secondary" | "default" | "outline" | "destructive";
+const ASSIGNMENT_STATUS_TONE: Record<string, Tone> = { ACTIVE: "default", PAUSED: "secondary", CLOSED: "outline" };
+const TASK_STATUS_TONE: Record<string, Tone> = { TODO: "secondary", IN_PROGRESS: "default", DONE: "outline" };
 
 export default async function MilestoneDetailPage({
   params,
@@ -44,7 +54,7 @@ export default async function MilestoneDetailPage({
   // price/budget (which PMs need to run their project), it's HR-sensitive and Admin/Finance-only.
   const canViewCostRate = can(user, "rates:view:any");
 
-  const [hoursByAssignment, hoursByTask] = await Promise.all([
+  const [hoursByAssignment, hoursByTask, siblingMilestones, reallocations] = await Promise.all([
     prisma.timeEntry.groupBy({
       by: ["assignmentId"],
       where: { milestoneId: milestone.id, timeCard: { status: "APPROVED" } },
@@ -54,6 +64,13 @@ export default async function MilestoneDetailPage({
       by: ["taskId"],
       where: { milestoneId: milestone.id, taskId: { not: null }, timeCard: { status: "APPROVED" } },
       _sum: { hours: true },
+    }),
+    prisma.milestone.findMany({ where: { projectId }, select: { id: true, name: true }, orderBy: { createdAt: "asc" } }),
+    prisma.milestoneReallocation.findMany({
+      where: { OR: [{ fromMilestoneId: milestone.id }, { toMilestoneId: milestone.id }] },
+      include: { fromMilestone: true, toMilestone: true, byUser: true },
+      orderBy: { createdAt: "desc" },
+      take: 10,
     }),
   ]);
   const usedByAssignment = new Map(hoursByAssignment.map((h) => [h.assignmentId, Number(h._sum.hours ?? 0)]));
@@ -68,8 +85,16 @@ export default async function MilestoneDetailPage({
     0
   );
   const staffedAssignments = milestone.assignments.filter((a) => a.allocatedHours !== null).length;
+  const doneTasks = milestone.tasks.filter((t) => t.status === "DONE").length;
+  const canReallocate = (await canManageProject(user, projectId)) && siblingMilestones.length >= 2;
 
   const priceLabel = milestone.project.billingType === "FIXED_PRICE" ? "Sales price (fixed)" : "Sales price / hr";
+
+  const canBill =
+    can(user, "invoices:manage") &&
+    milestone.project.billingType === "FIXED_PRICE" &&
+    milestone.billable &&
+    milestone.status === "COMPLETE";
 
   return (
     <div className="flex flex-col gap-6">
@@ -77,8 +102,11 @@ export default async function MilestoneDetailPage({
         <Link href={`/projects/${projectId}`} className="text-sm text-muted-foreground hover:underline">
           ← {milestone.project.name}
         </Link>
-        <div className="flex items-center justify-between mt-1">
-          <h1 className="text-2xl font-semibold">{milestone.name}</h1>
+        <div className="flex items-center justify-between mt-1 flex-wrap gap-2">
+          <div className="flex items-center gap-3">
+            <InitialsAvatar name={milestone.project.client.name} className="size-10" />
+            <h1 className="text-2xl font-semibold">{milestone.name}</h1>
+          </div>
           <div className="flex items-center gap-2">
             {canManage && <TimeEntryOpenToggle milestoneId={milestone.id} open={milestone.timeEntryOpen} />}
             {canManage ? (
@@ -96,57 +124,129 @@ export default async function MilestoneDetailPage({
         {milestone.description && <p className="text-sm text-muted-foreground mt-1">{milestone.description}</p>}
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Overview</CardTitle>
-        </CardHeader>
-        <CardContent className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
-          <div>
-            <div className="text-muted-foreground">Client</div>
-            <div>{milestone.project.client.name}</div>
-          </div>
-          <div>
-            <div className="text-muted-foreground">Billable</div>
-            <div>{milestone.billable ? "Yes" : "No"}</div>
-          </div>
-          {canViewRates && (
-            <div>
-              <div className="text-muted-foreground">{priceLabel}</div>
-              <div>{formatMoney(milestone.salesPrice, milestone.project.company.currency)}</div>
-            </div>
-          )}
-          {canViewRates && (
-            <div>
-              <div className="text-muted-foreground">Budgeted cost</div>
-              <div>{formatMoney(milestone.cost, milestone.project.company.currency)}</div>
-              <div className="text-xs text-muted-foreground">
-                {staffedAssignments > 0
-                  ? `${formatMoney(impliedCost, "EUR")} implied from ${staffedAssignments} assignment${staffedAssignments === 1 ? "" : "s"}`
-                  : "No staffed assignments yet"}
-              </div>
-            </div>
-          )}
-          <div className="col-span-2 sm:col-span-4">
-            <HourProgress
-              used={totalUsed}
-              cap={milestone.budgetHours ? Number(milestone.budgetHours) : null}
-              label="Hours logged"
-            />
-          </div>
-          {can(user, "invoices:manage") &&
-            milestone.project.billingType === "FIXED_PRICE" &&
-            milestone.billable &&
-            milestone.status === "COMPLETE" && (
-              <div className="col-span-2 sm:col-span-4">
-                <BillMilestoneForm
-                  milestoneId={milestone.id}
-                  amount={milestone.salesPrice.toString()}
-                  currency={milestone.project.company.currency}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        <StatCard
+          label="Hours logged"
+          value={totalUsed}
+          icon={ClockIcon}
+          tone={milestone.budgetHours && totalUsed / Number(milestone.budgetHours) >= 0.8 ? "warning" : "default"}
+          sublabel={milestone.budgetHours ? `of ${milestone.budgetHours}h budgeted` : "no cap"}
+        />
+        <StatCard
+          label="Team"
+          value={milestone.assignments.length}
+          icon={UsersIcon}
+          sublabel={`${staffedAssignments} staffed`}
+        />
+        <StatCard
+          label="Tasks"
+          value={`${doneTasks}/${milestone.tasks.length}`}
+          icon={CheckSquareIcon}
+          sublabel={milestone.tasks.length > 0 ? "done" : "none yet"}
+        />
+        {canViewRates ? (
+          <StatCard
+            label={priceLabel}
+            value={formatMoney(milestone.salesPrice, milestone.project.company.currency)}
+            icon={WalletIcon}
+          />
+        ) : (
+          <StatCard label="Billable" value={milestone.billable ? "Yes" : "No"} icon={ReceiptIcon} />
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+        <Card className="lg:col-span-3">
+          <CardHeader>
+            <CardTitle>Information</CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-6">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-5">
+              <InfoField icon={Building2Icon} label="Client" value={milestone.project.client.name} />
+              <InfoField icon={ReceiptIcon} label="Billable" value={milestone.billable ? "Yes" : "No"} />
+              {canViewRates && (
+                <InfoField
+                  icon={WalletIcon}
+                  label="Budgeted cost"
+                  value={
+                    <>
+                      {formatMoney(milestone.cost, milestone.project.company.currency)}
+                      <span className="block text-xs font-normal text-muted-foreground">
+                        {staffedAssignments > 0
+                          ? `${formatMoney(impliedCost, "EUR")} implied from ${staffedAssignments} assignment${staffedAssignments === 1 ? "" : "s"}`
+                          : "No staffed assignments yet"}
+                      </span>
+                    </>
+                  }
                 />
+              )}
+            </div>
+            <div className="border-t pt-4">
+              <HourProgress
+                used={totalUsed}
+                cap={milestone.budgetHours ? Number(milestone.budgetHours) : null}
+                label="Hours logged"
+              />
+            </div>
+            {canBill && (
+              <BillMilestoneForm
+                milestoneId={milestone.id}
+                amount={milestone.salesPrice.toString()}
+                currency={milestone.project.company.currency}
+              />
+            )}
+          </CardContent>
+        </Card>
+
+        <Card className="lg:col-span-2">
+          <CardHeader>
+            <CardTitle>Hours by assignee</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {milestone.assignments.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No one assigned yet.</p>
+            ) : (
+              <DonutChart
+                centerLabel={`${totalUsed}h`}
+                centerSublabel="logged"
+                segments={milestone.assignments.map((a, i) => ({
+                  label: a.user.name,
+                  value: usedByAssignment.get(a.id) ?? 0,
+                  colorClass: DONUT_COLORS[i % DONUT_COLORS.length],
+                }))}
+              />
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {canReallocate && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Reallocate hours with another milestone</CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-4">
+            <ReallocateHoursForm milestones={siblingMilestones} />
+            {reallocations.length > 0 && (
+              <div className="flex flex-col gap-3 text-sm border-t pt-4">
+                {reallocations.map((r) => (
+                  <div key={r.id} className="flex items-start gap-2.5">
+                    <div className="mt-1.5 size-1.5 shrink-0 rounded-full bg-primary" />
+                    <div className="text-muted-foreground">
+                      <span className="font-medium text-foreground">{r.byUser.name}</span> moved{" "}
+                      <span className="font-medium text-foreground">{r.hours.toString()}h</span> from{" "}
+                      <span className="font-medium text-foreground">{r.fromMilestone.name}</span> to{" "}
+                      <span className="font-medium text-foreground">{r.toMilestone.name}</span> (
+                      {r.hoursReceived.toString()}h received, {formatMoney(r.costMoved, milestone.project.company.currency)} cost moved)
+                      {r.reason ? ` — "${r.reason}"` : ""}
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
@@ -176,7 +276,12 @@ export default async function MilestoneDetailPage({
             <TableBody>
               {milestone.assignments.map((a) => (
                 <TableRow key={a.id}>
-                  <TableCell>{a.user.name}</TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-2.5 font-medium">
+                      <InitialsAvatar name={a.user.name} className="size-6 text-[10px]" />
+                      {a.user.name}
+                    </div>
+                  </TableCell>
                   <TableCell>
                     <Badge variant="secondary">{a.user.role}</Badge>
                   </TableCell>
@@ -191,7 +296,7 @@ export default async function MilestoneDetailPage({
                     {canManage ? (
                       <AssignmentStatusSelect assignmentId={a.id} status={a.status} />
                     ) : (
-                      <Badge variant="secondary">{a.status}</Badge>
+                      <Badge variant={ASSIGNMENT_STATUS_TONE[a.status] ?? "secondary"}>{a.status}</Badge>
                     )}
                   </TableCell>
                   {canManage && (
@@ -275,7 +380,7 @@ export default async function MilestoneDetailPage({
                     <TableCell>{t.name}</TableCell>
                     <TableCell>{t.assignee?.name ?? "—"}</TableCell>
                     <TableCell>
-                      <Badge variant="secondary">{t.status.replaceAll("_", " ")}</Badge>
+                      <Badge variant={TASK_STATUS_TONE[t.status] ?? "secondary"}>{t.status.replaceAll("_", " ")}</Badge>
                     </TableCell>
                     <TableCell>
                       <HourProgress

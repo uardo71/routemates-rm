@@ -7,6 +7,8 @@ import { prisma } from "@/lib/prisma";
 import { can } from "@/lib/permissions";
 import { requireUser } from "@/lib/session";
 import { parseDateParam, startOfWeek, toDateParam } from "@/lib/week";
+import { parseList } from "@/lib/utils";
+import { ActualsFilters } from "./actuals-filters";
 import { ActualsGrid, type ActualsCellInit, type ActualsResourceRow, type WeekColumn } from "./actuals-grid";
 
 const WEEKS_VISIBLE = 8;
@@ -14,7 +16,7 @@ const WEEKS_VISIBLE = 8;
 export default async function ScheduledVsActualsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ start?: string }>;
+  searchParams: Promise<{ start?: string; projects?: string; roles?: string }>;
 }) {
   const user = await requireUser();
   // Same audience as Planning (which is already company-wide for PMs, not scoped to projects they
@@ -22,15 +24,36 @@ export default async function ScheduledVsActualsPage({
   // does, not a narrower slice.
   if (!can(user, "planning:view")) notFound();
 
-  const { start } = await searchParams;
+  const { start, projects: projectsParam, roles: rolesParam } = await searchParams;
   const timelineStart = parseDateParam(start);
   const timelineEnd = addWeeks(timelineStart, WEEKS_VISIBLE);
 
-  const [plans, entries] = await Promise.all([
+  const selectedProjectIds = parseList(projectsParam);
+  const selectedRoles = parseList(rolesParam);
+
+  const [allUsers, plans, entries, allProjects] = await Promise.all([
+    // Every active person shows up, not just people who already have a plan or actual in this
+    // window — a role filter narrows this list; a project filter only narrows which
+    // plans/actuals show under each person, not who's listed at all.
+    prisma.user.findMany({
+      where: {
+        companyId: user.companyId,
+        active: true,
+        ...(selectedRoles.length > 0 ? { role: { in: selectedRoles as never[] } } : {}),
+      },
+      orderBy: { name: "asc" },
+    }),
     prisma.assignmentPlan.findMany({
       where: {
         weekStartDate: { gte: timelineStart, lt: timelineEnd },
-        assignment: { milestone: { project: { companyId: user.companyId } } },
+        assignment: {
+          milestone: {
+            project: {
+              companyId: user.companyId,
+              ...(selectedProjectIds.length > 0 ? { id: { in: selectedProjectIds } } : {}),
+            },
+          },
+        },
       },
       include: { assignment: { include: { user: true, milestone: { include: { project: true } } } } },
     }),
@@ -40,17 +63,35 @@ export default async function ScheduledVsActualsPage({
       where: {
         date: { gte: timelineStart, lt: timelineEnd },
         timeCard: { status: { not: "DRAFT" } },
-        assignment: { milestone: { project: { companyId: user.companyId } } },
+        assignment: {
+          milestone: {
+            project: {
+              companyId: user.companyId,
+              ...(selectedProjectIds.length > 0 ? { id: { in: selectedProjectIds } } : {}),
+            },
+          },
+        },
       },
       include: { assignment: { include: { user: true, milestone: { include: { project: true } } } } },
     }),
+    prisma.project.findMany({
+      where: {
+        companyId: user.companyId,
+        milestones: { some: { assignments: { some: { status: { not: "CLOSED" } } } } },
+      },
+      orderBy: { name: "asc" },
+      select: { id: true, name: true },
+    }),
   ]);
+
+  const allowedUserIds = new Set(allUsers.map((u) => u.id));
 
   type AssignmentInfo = { id: string; label: string; userId: string; userName: string; role: string };
   const assignmentsById = new Map<string, AssignmentInfo>();
   const cellTotals = new Map<string, { planned: number; actual: number }>();
 
   function ensureAssignment(a: { id: string; user: { id: string; name: string; role: string }; milestone: { name: string; project: { name: string } } }) {
+    if (!allowedUserIds.has(a.user.id)) return; // excluded by the role filter
     if (!assignmentsById.has(a.id)) {
       assignmentsById.set(a.id, {
         id: a.id,
@@ -64,6 +105,7 @@ export default async function ScheduledVsActualsPage({
 
   for (const p of plans) {
     ensureAssignment(p.assignment);
+    if (!assignmentsById.has(p.assignmentId)) continue;
     const weekKey = toDateParam(p.weekStartDate);
     const key = `${p.assignmentId}|${weekKey}`;
     const existing = cellTotals.get(key) ?? { planned: 0, actual: 0 };
@@ -72,6 +114,7 @@ export default async function ScheduledVsActualsPage({
   }
   for (const e of entries) {
     ensureAssignment(e.assignment);
+    if (!assignmentsById.has(e.assignmentId)) continue;
     const weekKey = toDateParam(startOfWeek(e.date));
     const key = `${e.assignmentId}|${weekKey}`;
     const existing = cellTotals.get(key) ?? { planned: 0, actual: 0 };
@@ -85,11 +128,11 @@ export default async function ScheduledVsActualsPage({
   });
 
   const resourcesMap = new Map<string, ActualsResourceRow>();
+  for (const u of allUsers) {
+    resourcesMap.set(u.id, { userId: u.id, userName: u.name, role: u.role, assignments: [] });
+  }
   for (const a of assignmentsById.values()) {
-    if (!resourcesMap.has(a.userId)) {
-      resourcesMap.set(a.userId, { userId: a.userId, userName: a.userName, role: a.role, assignments: [] });
-    }
-    resourcesMap.get(a.userId)!.assignments.push({ id: a.id, label: a.label });
+    resourcesMap.get(a.userId)?.assignments.push({ id: a.id, label: a.label });
   }
   const resources = [...resourcesMap.values()].sort((a, b) => a.userName.localeCompare(b.userName));
 
@@ -100,6 +143,13 @@ export default async function ScheduledVsActualsPage({
     dateLabel: format(w, "MMM d"),
   }));
 
+  const qs = (s: string) => {
+    const params = new URLSearchParams();
+    params.set("start", s);
+    if (selectedProjectIds.length > 0) params.set("projects", selectedProjectIds.join(","));
+    if (selectedRoles.length > 0) params.set("roles", selectedRoles.join(","));
+    return `/admin/scheduled-vs-actuals?${params.toString()}`;
+  };
   const prevStart = toDateParam(addWeeks(timelineStart, -WEEKS_VISIBLE));
   const nextStart = toDateParam(addWeeks(timelineStart, WEEKS_VISIBLE));
 
@@ -113,18 +163,25 @@ export default async function ScheduledVsActualsPage({
           </p>
         </div>
         <div className="flex items-center gap-3 text-sm">
-          <Link href={`/admin/scheduled-vs-actuals?start=${prevStart}`} className="hover:underline">
+          <Link href={qs(prevStart)} className="hover:underline">
             ← Prev
           </Link>
           <span className="font-medium">
             {format(timelineStart, "MMM d")} – {format(addWeeks(timelineStart, WEEKS_VISIBLE - 1), "MMM d, yyyy")}
           </span>
-          <Link href={`/admin/scheduled-vs-actuals?start=${nextStart}`} className="hover:underline">
+          <Link href={qs(nextStart)} className="hover:underline">
             Next →
           </Link>
-          <WeekJump currentDate={toDateParam(timelineStart)} basePath="/admin/scheduled-vs-actuals" dateParam="start" extraParams={{}} />
+          <WeekJump
+            currentDate={toDateParam(timelineStart)}
+            basePath="/admin/scheduled-vs-actuals"
+            dateParam="start"
+            extraParams={{ projects: projectsParam, roles: rolesParam }}
+          />
         </div>
       </div>
+
+      <ActualsFilters projects={allProjects} currentProjects={selectedProjectIds} currentRoles={selectedRoles} />
 
       <Card>
         <CardHeader>

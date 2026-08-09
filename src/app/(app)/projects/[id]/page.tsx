@@ -1,18 +1,59 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { format } from "date-fns";
+import { format, differenceInCalendarDays, parseISO } from "date-fns";
+import {
+  UsersIcon,
+  FolderKanbanIcon,
+  ClockIcon,
+  ReceiptIcon,
+  Building2Icon,
+  UserIcon,
+  CalendarIcon,
+  WalletIcon,
+} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { HourProgress } from "@/components/hour-progress";
 import { LinkButton } from "@/components/link-button";
+import { StatCard } from "@/components/stat-card";
+import { InitialsAvatar } from "@/components/initials-avatar";
+import { InfoField } from "@/components/info-field";
+import { DonutChart, DONUT_COLORS } from "@/components/charts/donut-chart";
+import { MiniBarChart } from "@/components/charts/mini-bar-chart";
 import { prisma } from "@/lib/prisma";
 import { canManageProject, visibleProjectIds } from "@/lib/permissions";
 import { requirePermission } from "@/lib/session";
 import { formatMoney } from "@/lib/format";
-import { ReallocateHoursForm } from "./reallocate-hours-form";
+import { cn } from "@/lib/utils";
 import { TimeEntriesTable } from "./time-entries-table";
+
+type Tone = "secondary" | "default" | "outline" | "destructive";
+const STATUS_TONE: Record<string, Tone> = {
+  ACTIVE: "default",
+  PLANNED: "secondary",
+  ON_HOLD: "outline",
+  COMPLETED: "secondary",
+  CANCELLED: "destructive",
+};
+const MILESTONE_STATUS_TONE: Record<string, Tone> = {
+  PLANNED: "secondary",
+  ACTIVE: "default",
+  COMPLETE: "outline",
+  INVOICED: "secondary",
+};
+const ASSIGNMENT_STATUS_TONE: Record<string, Tone> = {
+  ACTIVE: "default",
+  PAUSED: "secondary",
+  CLOSED: "outline",
+};
+const INVOICE_STATUS_TONE: Record<string, Tone> = {
+  DRAFT: "secondary",
+  SENT: "default",
+  PAID: "outline",
+  VOID: "destructive",
+};
 
 export default async function ProjectDetailPage({
   params,
@@ -44,17 +85,11 @@ export default async function ProjectDetailPage({
   const canManage = await canManageProject(user, project.id);
   const milestoneIds = project.milestones.map((m) => m.id);
 
-  const [hoursByMilestone, reallocations, assignments, hoursByAssignment, invoices, timeCards] = await Promise.all([
+  const [hoursByMilestone, assignments, hoursByAssignment, invoices, timeCards] = await Promise.all([
     prisma.timeEntry.groupBy({
       by: ["milestoneId"],
       where: { milestoneId: { in: milestoneIds }, timeCard: { status: "APPROVED" } },
       _sum: { hours: true },
-    }),
-    prisma.milestoneReallocation.findMany({
-      where: { OR: [{ fromMilestone: { projectId: project.id } }, { toMilestone: { projectId: project.id } }] },
-      include: { fromMilestone: true, toMilestone: true, byUser: true },
-      orderBy: { createdAt: "desc" },
-      take: 10,
     }),
     prisma.assignment.findMany({
       where: { milestoneId: { in: milestoneIds } },
@@ -69,6 +104,7 @@ export default async function ProjectDetailPage({
     }),
     prisma.invoice.findMany({
       where: { lines: { some: { milestoneId: { in: milestoneIds } } } },
+      include: { lines: true },
       orderBy: { issueDate: "desc" },
     }),
     prisma.timeCard.findMany({
@@ -89,26 +125,71 @@ export default async function ProjectDetailPage({
   const allocatedHours = project.milestones.reduce((sum, m) => sum + Number(m.budgetHours ?? 0), 0);
   const projectBudgetHours = project.budgetHours ? Number(project.budgetHours) : null;
   const assignmentsCount = project.milestones.reduce((sum, m) => sum + m._count.assignments, 0);
+  const teamSize = new Set(assignments.map((a) => a.userId)).size;
+  const totalLoggedHours = [...usedHoursMap.values()].reduce((sum, h) => sum + h, 0);
+  const activeMilestonesCount = project.milestones.filter((m) => m.status === "ACTIVE").length;
+  const invoicedTotal = invoices.reduce((sum, inv) => sum + inv.lines.reduce((s, l) => s + Number(l.amount), 0), 0);
+  const openInvoicesCount = invoices.filter((inv) => inv.status === "DRAFT" || inv.status === "SENT").length;
+  const daysRemaining = project.endDate ? differenceInCalendarDays(project.endDate, new Date()) : null;
+  const hoursNearOrOverBudget = projectBudgetHours !== null && projectBudgetHours > 0 && totalLoggedHours / projectBudgetHours >= 0.8;
+
+  const weeklyHoursMap = new Map<string, number>();
+  for (const tc of timeCards) {
+    const key = tc.weekStartDate.toISOString().slice(0, 10);
+    const hours = tc.entries.reduce((s, e) => s + Number(e.hours), 0);
+    weeklyHoursMap.set(key, (weeklyHoursMap.get(key) ?? 0) + hours);
+  }
+  const weeklyHoursData = [...weeklyHoursMap.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .slice(-8)
+    .map(([week, hours]) => ({ label: format(parseISO(week), "MMM d"), value: Math.round(hours * 10) / 10 }));
 
   return (
     <div className="flex flex-col gap-6">
       <div className="flex items-start justify-between flex-wrap gap-3">
-        <div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <h1 className="text-2xl font-semibold">{project.name}</h1>
-            <Badge variant="secondary">{project.status}</Badge>
-            <Badge variant="outline">{project.billingType.replaceAll("_", " ")}</Badge>
+        <div className="flex items-center gap-3">
+          <InitialsAvatar name={project.client.name} className="size-11 text-sm" />
+          <div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <h1 className="text-2xl font-semibold">{project.name}</h1>
+              <Badge variant={STATUS_TONE[project.status] ?? "secondary"}>{project.status.replaceAll("_", " ")}</Badge>
+              <Badge variant="outline">{project.billingType.replaceAll("_", " ")}</Badge>
+            </div>
+            <p className="text-sm text-muted-foreground mt-1">
+              {project.client.name} · Managed by {project.manager?.name ?? "unassigned"}
+              {project.endDate &&
+                ` · ${daysRemaining !== null && daysRemaining >= 0 ? `${daysRemaining}d left` : "Ended"} (${format(project.endDate, "MMM d, yyyy")})`}
+            </p>
           </div>
-          <p className="text-sm text-muted-foreground mt-1">
-            {project.client.name} · Managed by {project.manager?.name ?? "unassigned"}
-            {project.endDate && ` · Ends ${format(project.endDate, "MMM d, yyyy")}`}
-          </p>
         </div>
         {canManage && (
           <LinkButton href={`/projects/${project.id}/edit`} variant="outline" size="sm">
             Edit
           </LinkButton>
         )}
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        <StatCard
+          label="Milestones"
+          value={project.milestones.length}
+          icon={FolderKanbanIcon}
+          sublabel={`${activeMilestonesCount} active`}
+        />
+        <StatCard label="Team" value={teamSize} icon={UsersIcon} sublabel={`${assignmentsCount} assignment${assignmentsCount === 1 ? "" : "s"}`} />
+        <StatCard
+          label="Hours logged"
+          value={totalLoggedHours}
+          icon={ClockIcon}
+          tone={hoursNearOrOverBudget ? "warning" : "default"}
+          sublabel={projectBudgetHours !== null ? `of ${projectBudgetHours}h budgeted` : `${allocatedHours}h allocated`}
+        />
+        <StatCard
+          label="Invoiced"
+          value={formatMoney(invoicedTotal, project.company.currency)}
+          icon={ReceiptIcon}
+          sublabel={`${invoices.length} invoice${invoices.length === 1 ? "" : "s"}${openInvoicesCount > 0 ? ` · ${openInvoicesCount} open` : ""}`}
+        />
       </div>
 
       <Tabs defaultValue="overview">
@@ -121,69 +202,53 @@ export default async function ProjectDetailPage({
         </TabsList>
 
         <TabsContent value="overview" className="flex flex-col gap-6 pt-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Information</CardTitle>
-            </CardHeader>
-            <CardContent className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
-              <div>
-                <div className="text-muted-foreground">Client</div>
-                <div>{project.client.name}</div>
-              </div>
-              <div>
-                <div className="text-muted-foreground">Manager</div>
-                <div>{project.manager?.name ?? "—"}</div>
-              </div>
-              <div>
-                <div className="text-muted-foreground">Start date</div>
-                <div>{project.startDate ? format(project.startDate, "MMM d, yyyy") : "—"}</div>
-              </div>
-              <div>
-                <div className="text-muted-foreground">End date</div>
-                <div>{project.endDate ? format(project.endDate, "MMM d, yyyy") : "—"}</div>
-              </div>
-              <div>
-                <div className="text-muted-foreground">Billing type</div>
-                <div>{project.billingType.replaceAll("_", " ")}</div>
-              </div>
-              <div>
-                <div className="text-muted-foreground">Budget pool</div>
-                <div>
-                  {project.budgetAmount ? formatMoney(project.budgetAmount, project.company.currency) : "—"}
-                  {projectBudgetHours !== null && ` · ${projectBudgetHours}h`}
-                </div>
-              </div>
-              {projectBudgetHours !== null && (
-                <div className="col-span-2 sm:col-span-4">
-                  <HourProgress used={allocatedHours} cap={projectBudgetHours} label="Allocated to milestones" />
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          {canManage && project.milestones.length >= 2 && (
-            <Card>
+          <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+            <Card className="lg:col-span-3">
               <CardHeader>
-                <CardTitle>Reallocate hours between milestones</CardTitle>
+                <CardTitle>Information</CardTitle>
               </CardHeader>
-              <CardContent className="flex flex-col gap-4">
-                <ReallocateHoursForm milestones={project.milestones.map((m) => ({ id: m.id, name: m.name }))} />
-                {reallocations.length > 0 && (
-                  <div className="flex flex-col gap-1.5 text-sm text-muted-foreground border-t pt-3">
-                    {reallocations.map((r) => (
-                      <div key={r.id}>
-                        {r.byUser.name} moved {r.hours.toString()}h from{" "}
-                        <span className="font-medium">{r.fromMilestone.name}</span> to{" "}
-                        <span className="font-medium">{r.toMilestone.name}</span> ({r.hoursReceived.toString()}h
-                        received, {formatMoney(r.costMoved, project.company.currency)} cost moved)
-                        {r.reason ? ` — "${r.reason}"` : ""}
-                      </div>
-                    ))}
+              <CardContent className="flex flex-col gap-6">
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-5">
+                  <InfoField icon={Building2Icon} label="Client" value={project.client.name} />
+                  <InfoField icon={UserIcon} label="Manager" value={project.manager?.name ?? "—"} />
+                  <InfoField icon={CalendarIcon} label="Start date" value={project.startDate ? format(project.startDate, "MMM d, yyyy") : "—"} />
+                  <InfoField icon={CalendarIcon} label="End date" value={project.endDate ? format(project.endDate, "MMM d, yyyy") : "—"} />
+                  <InfoField icon={ReceiptIcon} label="Billing type" value={project.billingType.replaceAll("_", " ")} />
+                  <InfoField
+                    icon={WalletIcon}
+                    label="Budget pool"
+                    value={project.budgetAmount ? formatMoney(project.budgetAmount, project.company.currency) : "—"}
+                  />
+                </div>
+                {projectBudgetHours !== null && (
+                  <div className="border-t pt-4">
+                    <HourProgress used={allocatedHours} cap={projectBudgetHours} label="Allocated to milestones" />
                   </div>
                 )}
               </CardContent>
             </Card>
-          )}
+
+            <Card className="lg:col-span-2">
+              <CardHeader>
+                <CardTitle>Hours by milestone</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {project.milestones.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No milestones yet.</p>
+                ) : (
+                  <DonutChart
+                    centerLabel={`${totalLoggedHours}h`}
+                    centerSublabel="logged"
+                    segments={project.milestones.map((m, i) => ({
+                      label: m.name,
+                      value: usedHoursMap.get(m.id) ?? 0,
+                      colorClass: DONUT_COLORS[i % DONUT_COLORS.length],
+                    }))}
+                  />
+                )}
+              </CardContent>
+            </Card>
+          </div>
         </TabsContent>
 
         <TabsContent value="milestones" className="pt-4">
@@ -208,27 +273,30 @@ export default async function ProjectDetailPage({
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {project.milestones.map((m) => (
+                  {project.milestones.map((m, i) => (
                     <TableRow key={m.id}>
                       <TableCell>
                         <Link
                           href={`/projects/${project.id}/milestones/${m.id}`}
-                          className="font-medium hover:underline"
+                          className="flex items-center gap-2.5 font-medium hover:underline"
                         >
+                          <span className={cn("size-2 shrink-0 rounded-full", DONUT_COLORS[i % DONUT_COLORS.length].replaceAll("fill-", "bg-"))} />
                           {m.name}
                         </Link>
                       </TableCell>
                       <TableCell>
-                        <Badge variant="secondary">{m.status}</Badge>
+                        <Badge variant={MILESTONE_STATUS_TONE[m.status] ?? "secondary"}>{m.status}</Badge>
                       </TableCell>
-                      <TableCell>{m.billable ? "Yes" : "No"}</TableCell>
+                      <TableCell>
+                        <Badge variant={m.billable ? "outline" : "secondary"}>{m.billable ? "Billable" : "Internal"}</Badge>
+                      </TableCell>
                       <TableCell>
                         <HourProgress
                           used={usedHoursMap.get(m.id) ?? 0}
                           cap={m.budgetHours ? Number(m.budgetHours) : null}
                         />
                       </TableCell>
-                      <TableCell>
+                      <TableCell className="text-muted-foreground">
                         {m._count.assignments} people · {m._count.tasks} tasks
                       </TableCell>
                     </TableRow>
@@ -271,8 +339,9 @@ export default async function ProjectDetailPage({
                       <TableCell>
                         <Link
                           href={`/projects/${project.id}/milestones/${a.milestoneId}/assignments/${a.id}/edit`}
-                          className="font-medium hover:underline"
+                          className="flex items-center gap-2.5 font-medium hover:underline"
                         >
+                          <InitialsAvatar name={a.user.name} className="size-6 text-[10px]" />
                           {a.user.name}
                         </Link>
                       </TableCell>
@@ -282,13 +351,15 @@ export default async function ProjectDetailPage({
                         </Link>
                       </TableCell>
                       <TableCell>
-                        <Badge variant="secondary">{a.status}</Badge>
+                        <Badge variant={ASSIGNMENT_STATUS_TONE[a.status] ?? "secondary"}>{a.status}</Badge>
                       </TableCell>
-                      <TableCell>{a.startDate ? format(a.startDate, "MMM d, yyyy") : "—"}</TableCell>
-                      <TableCell>{a.endDate ? format(a.endDate, "MMM d, yyyy") : "—"}</TableCell>
+                      <TableCell className="text-muted-foreground">{a.startDate ? format(a.startDate, "MMM d, yyyy") : "—"}</TableCell>
+                      <TableCell className="text-muted-foreground">{a.endDate ? format(a.endDate, "MMM d, yyyy") : "—"}</TableCell>
                       <TableCell>{a.allocatedHours ? `${a.allocatedHours}h` : "—"}</TableCell>
                       <TableCell>{usedByAssignment.get(a.id) ?? 0}h</TableCell>
-                      <TableCell>{a.milestone.billable ? "Yes" : "No"}</TableCell>
+                      <TableCell>
+                        <Badge variant={a.milestone.billable ? "outline" : "secondary"}>{a.milestone.billable ? "Billable" : "Internal"}</Badge>
+                      </TableCell>
                     </TableRow>
                   ))}
                   {assignments.length === 0 && (
@@ -304,7 +375,17 @@ export default async function ProjectDetailPage({
           </Card>
         </TabsContent>
 
-        <TabsContent value="time" className="pt-4">
+        <TabsContent value="time" className="flex flex-col gap-6 pt-4">
+          {weeklyHoursData.length > 1 && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Hours logged per week</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <MiniBarChart data={weeklyHoursData} valueFormatter={(v) => `${v}h`} />
+              </CardContent>
+            </Card>
+          )}
           <Card>
             <CardHeader>
               <CardTitle>Time entries</CardTitle>
@@ -359,10 +440,10 @@ export default async function ProjectDetailPage({
                         </Link>
                       </TableCell>
                       <TableCell>
-                        <Badge variant="secondary">{inv.status}</Badge>
+                        <Badge variant={INVOICE_STATUS_TONE[inv.status] ?? "secondary"}>{inv.status}</Badge>
                       </TableCell>
-                      <TableCell>{format(inv.issueDate, "MMM d, yyyy")}</TableCell>
-                      <TableCell>
+                      <TableCell className="text-muted-foreground">{format(inv.issueDate, "MMM d, yyyy")}</TableCell>
+                      <TableCell className="text-muted-foreground">
                         {format(inv.periodStart, "MMM d")} – {format(inv.periodEnd, "MMM d, yyyy")}
                       </TableCell>
                     </TableRow>

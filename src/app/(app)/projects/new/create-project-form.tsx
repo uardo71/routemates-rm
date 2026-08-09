@@ -101,6 +101,10 @@ export function CreateProjectForm({
           </Select>
         </div>
       )}
+      <div className="flex items-center gap-2">
+        <input id="isInternal" name="isInternal" type="checkbox" className="size-4" />
+        <Label htmlFor="isInternal">Internal (not billed to the client — e.g. for tracking vacations)</Label>
+      </div>
       {error && <p className="text-sm text-destructive">{error}</p>}
       <Button type="submit" disabled={pending} className="w-fit">
         {pending ? "Creating..." : "Create project"}

@@ -19,6 +19,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           ? [{ href: "/projects", label: "Projects", icon: "projects" as const }]
           : []),
         { href: "/time", label: "Time", icon: "time" as const },
+        { href: "/my-planning", label: "My planning", icon: "myPlanning" as const },
+        { href: "/vacations", label: "Vacations", icon: "vacations" as const },
+        { href: "/expenses", label: "Expenses", icon: "expenses" as const },
         ...(user.role === "ADMIN" || user.role === "PM"
           ? [{ href: "/approvals", label: "Approvals", icon: "approvals" as const }]
           : []),
@@ -44,6 +47,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
                 : []),
               ...(can(user, "salaries:manage")
                 ? [{ href: "/admin/exchange-rates", label: "Exchange rates", icon: "exchangeRates" as const }]
+                : []),
+              ...(can(user, "expenses:manage")
+                ? [{ href: "/admin/expense-categories", label: "Expense categories", icon: "expenseCategories" as const }]
                 : []),
             ],
           },

@@ -21,6 +21,7 @@ import { quickUpdateTaskAction } from "../../../milestone-actions";
 const STATUSES = ["TODO", "IN_PROGRESS", "DONE"] as const;
 type Status = (typeof STATUSES)[number];
 type Option = { id: string; name: string };
+const STATUS_TONE: Record<Status, "secondary" | "default" | "outline"> = { TODO: "secondary", IN_PROGRESS: "default", DONE: "outline" };
 
 export function TaskRow({
   task,
@@ -85,7 +86,7 @@ export function TaskRow({
         <TableCell>{task.name}</TableCell>
         <TableCell>{task.assigneeName ?? "—"}</TableCell>
         <TableCell>
-          <Badge variant="secondary">{task.status.replaceAll("_", " ")}</Badge>
+          <Badge variant={STATUS_TONE[task.status]}>{task.status.replaceAll("_", " ")}</Badge>
         </TableCell>
         <TableCell>
           <HourProgress used={usedHours} cap={task.estimatedHours ? Number(task.estimatedHours) : null} />

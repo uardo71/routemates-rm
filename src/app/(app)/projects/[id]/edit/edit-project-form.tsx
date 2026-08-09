@@ -36,6 +36,7 @@ export function EditProjectForm({
     startDate: string | null;
     endDate: string | null;
     managerId: string | null;
+    isInternal: boolean;
   };
   clients: Option[];
   managers: Option[] | null;
@@ -136,6 +137,10 @@ export function EditProjectForm({
           </Select>
         </div>
       )}
+      <div className="flex items-center gap-2">
+        <input id="isInternal" name="isInternal" type="checkbox" className="size-4" defaultChecked={project.isInternal} />
+        <Label htmlFor="isInternal">Internal (not billed to the client — e.g. for tracking vacations)</Label>
+      </div>
       {error && <p className="text-sm text-destructive">{error}</p>}
       <div className="flex items-center gap-2">
         <Button type="submit" disabled={pending} className="w-fit">

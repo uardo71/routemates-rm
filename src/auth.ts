@@ -3,8 +3,26 @@ import Credentials from "next-auth/providers/credentials";
 import { prisma } from "@/lib/prisma";
 import { verifyPassword } from "@/lib/password";
 
+const ONE_DAY = 60 * 60 * 24;
+
 export const { handlers, signIn, signOut, auth } = NextAuth({
-  session: { strategy: "jwt" },
+  session: { strategy: "jwt", maxAge: ONE_DAY },
+  // No `maxAge` on the cookie itself (only on the JWT above) makes this a browser
+  // session cookie — cleared on browser close, capped at 1 day server-side either way.
+  cookies: {
+    sessionToken: {
+      name:
+        process.env.NODE_ENV === "production"
+          ? "__Secure-authjs.session-token"
+          : "authjs.session-token",
+      options: {
+        httpOnly: true,
+        sameSite: "lax",
+        path: "/",
+        secure: process.env.NODE_ENV === "production",
+      },
+    },
+  },
   pages: { signIn: "/login" },
   providers: [
     Credentials({

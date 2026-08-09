@@ -3,6 +3,7 @@ import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/session";
 import { startOfWeek, parseDateParam, toDateParam } from "@/lib/week";
+import { parseList } from "@/lib/utils";
 import { WeekJump } from "@/components/week-jump";
 import { PlannerFilters } from "./planner-filters";
 import { PlannerGrid, type PlanAssignmentRow, type PlanCellInit, type PlanResourceRow } from "./planner-grid";
@@ -12,9 +13,9 @@ const WEEKS_VISIBLE = 8;
 export default async function PlanningPage({
   searchParams,
 }: {
-  searchParams: Promise<{ start?: string; project?: string; role?: string }>;
+  searchParams: Promise<{ start?: string; projects?: string; roles?: string }>;
 }) {
-  const { start, project, role } = await searchParams;
+  const { start, projects: projectsParam, roles: rolesParam } = await searchParams;
   const user = await requirePermission("planning:view");
 
   const timelineStart = parseDateParam(start);
@@ -24,20 +25,34 @@ export default async function PlanningPage({
   const isAdmin = user.role === "ADMIN";
   const canManage = isAdmin || user.role === "PM";
 
-  // A PM plans capacity for the whole company, not just people on projects they personally
-  // manage — matching proxy time entry's scope. What differs by project is only whether an
-  // entered/submitted line auto-approves, not who's visible here or who can be planned for.
-  const [assignments, projects] = await Promise.all([
+  const selectedProjectIds = parseList(projectsParam ?? null);
+  const selectedRoles = parseList(rolesParam ?? null);
+
+  // Every active person shows up here, not just people who already have an assignment — you
+  // can't plan someone with nothing assigned yet, but you still need to see that they exist (a
+  // role filter narrows this list; a project filter only narrows which assignments show under
+  // each person, not who's listed at all).
+  const [allUsers, assignments, projects] = await Promise.all([
+    prisma.user.findMany({
+      where: {
+        companyId: user.companyId,
+        active: true,
+        ...(selectedRoles.length > 0 ? { role: { in: selectedRoles as never[] } } : {}),
+      },
+      orderBy: { name: "asc" },
+    }),
+    // A PM plans capacity for the whole company, not just people on projects they personally
+    // manage — matching proxy time entry's scope. What differs by project is only whether an
+    // entered/submitted line auto-approves, not who's visible here or who can be planned for.
     prisma.assignment.findMany({
       where: {
         status: { not: "CLOSED" },
         milestone: {
           project: {
             companyId: user.companyId,
-            ...(project ? { id: project } : {}),
+            ...(selectedProjectIds.length > 0 ? { id: { in: selectedProjectIds } } : {}),
           },
         },
-        ...(role ? { user: { role: role as never } } : {}),
       },
       include: {
         user: true,
@@ -69,15 +84,19 @@ export default async function PlanningPage({
     hours: Number(p.hours),
   }));
 
+  const allowedUserIds = new Set(allUsers.map((u) => u.id));
   const resourcesMap = new Map<string, PlanResourceRow>();
+  for (const u of allUsers) {
+    resourcesMap.set(u.id, { userId: u.id, userName: u.name, role: u.role, assignments: [] });
+  }
   for (const a of assignments) {
-    if (!resourcesMap.has(a.userId)) {
-      resourcesMap.set(a.userId, { userId: a.userId, userName: a.user.name, role: a.user.role, assignments: [] });
-    }
+    if (!allowedUserIds.has(a.userId)) continue; // excluded by the role filter
     const row: PlanAssignmentRow = {
       id: a.id,
       label: `${a.milestone.project.name} — ${a.milestone.name}`,
       allocatedHours: a.allocatedHours ? Number(a.allocatedHours) : null,
+      startDate: toDateParam(a.startDate),
+      endDate: toDateParam(a.endDate),
     };
     resourcesMap.get(a.userId)!.assignments.push(row);
   }
@@ -88,8 +107,8 @@ export default async function PlanningPage({
   const qs = (s: string) => {
     const params = new URLSearchParams();
     params.set("start", s);
-    if (project) params.set("project", project);
-    if (role) params.set("role", role);
+    if (selectedProjectIds.length > 0) params.set("projects", selectedProjectIds.join(","));
+    if (selectedRoles.length > 0) params.set("roles", selectedRoles.join(","));
     return `/planning?${params.toString()}`;
   };
 
@@ -117,12 +136,12 @@ export default async function PlanningPage({
             currentDate={toDateParam(timelineStart)}
             basePath="/planning"
             dateParam="start"
-            extraParams={{ project, role }}
+            extraParams={{ projects: projectsParam, roles: rolesParam }}
           />
         </div>
       </div>
 
-      <PlannerFilters projects={projects} currentProject={project} currentRole={role} />
+      <PlannerFilters projects={projects} currentProjects={selectedProjectIds} currentRoles={selectedRoles} />
 
       <PlannerGrid
         weeks={weeks.map((w) => ({ key: toDateParam(startOfWeek(w)), label: format(w, "MMM d") }))}

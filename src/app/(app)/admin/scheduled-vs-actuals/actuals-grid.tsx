@@ -26,15 +26,15 @@ function statusTone(planned: number, actual: number): string {
 function Cell({ planned, actual, todayCol }: { planned: number; actual: number; todayCol: boolean }) {
   return (
     <td
-      className={cn("p-1.5 text-center tabular-nums", statusTone(planned, actual), todayCol ? "border-l-2 border-l-primary" : "border-l")}
+      className={cn("p-2 text-center tabular-nums", statusTone(planned, actual), todayCol ? "border-l-2 border-l-primary" : "border-l")}
       title={`Planned: ${planned}h · Actual: ${actual}h`}
     >
-      <div className="flex flex-col items-center leading-tight text-[11px]">
+      <div className="flex flex-col items-center leading-tight text-base">
         <span>
-          <span className="text-[9px] font-normal opacity-60">P</span> {planned}
+          <span className="text-xs font-normal opacity-60">P</span> {planned}
         </span>
         <span>
-          <span className="text-[9px] font-normal opacity-60">A</span> {actual}
+          <span className="text-xs font-normal opacity-60">A</span> {actual}
         </span>
       </div>
     </td>
@@ -85,7 +85,7 @@ export function ActualsGrid({
               {weeks.map((w) => (
                 <th
                   key={w.key}
-                  className={cn("p-2 w-24 text-center font-medium", w.key === todayWeekKey ? "border-l-2 border-l-primary" : "border-l")}
+                  className={cn("p-2 w-28 text-center font-medium", w.key === todayWeekKey ? "border-l-2 border-l-primary" : "border-l")}
                 >
                   {w.key === todayWeekKey && (
                     <div className="mb-1 flex justify-center">

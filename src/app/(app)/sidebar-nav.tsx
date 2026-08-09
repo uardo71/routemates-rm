@@ -13,6 +13,10 @@ import {
   CalendarRangeIcon,
   ArrowLeftRightIcon,
   GaugeIcon,
+  PalmtreeIcon,
+  WalletIcon,
+  TagIcon,
+  CalendarDaysIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -20,6 +24,7 @@ const ICONS = {
   dashboard: LayoutDashboardIcon,
   projects: FolderKanbanIcon,
   time: ClockIcon,
+  vacations: PalmtreeIcon,
   approvals: CheckSquareIcon,
   invoices: ReceiptIcon,
   users: UsersIcon,
@@ -27,6 +32,9 @@ const ICONS = {
   planning: CalendarRangeIcon,
   exchangeRates: ArrowLeftRightIcon,
   scheduledVsActuals: GaugeIcon,
+  expenses: WalletIcon,
+  expenseCategories: TagIcon,
+  myPlanning: CalendarDaysIcon,
 } as const;
 
 export type NavItem = { href: string; label: string; icon: keyof typeof ICONS };

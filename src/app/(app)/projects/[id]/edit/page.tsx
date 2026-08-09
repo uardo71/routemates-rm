@@ -54,6 +54,7 @@ export default async function EditProjectPage({ params }: { params: Promise<{ id
               startDate: project.startDate?.toISOString().slice(0, 10) ?? null,
               endDate: project.endDate?.toISOString().slice(0, 10) ?? null,
               managerId: project.managerId,
+              isInternal: project.isInternal,
             }}
             clients={clients.map((c) => ({ id: c.id, name: c.name }))}
             managers={managers ? managers.map((m) => ({ id: m.id, name: m.name })) : null}
