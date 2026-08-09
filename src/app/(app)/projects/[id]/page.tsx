@@ -1,0 +1,385 @@
+import Link from "next/link";
+import { notFound } from "next/navigation";
+import { format } from "date-fns";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { HourProgress } from "@/components/hour-progress";
+import { LinkButton } from "@/components/link-button";
+import { prisma } from "@/lib/prisma";
+import { canManageProject, visibleProjectIds } from "@/lib/permissions";
+import { requirePermission } from "@/lib/session";
+import { formatMoney } from "@/lib/format";
+import { ReallocateHoursForm } from "./reallocate-hours-form";
+import { TimeEntriesTable } from "./time-entries-table";
+
+export default async function ProjectDetailPage({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
+  const { id } = await params;
+  const user = await requirePermission("projects:view");
+
+  const projectIds = await visibleProjectIds(user);
+  if (projectIds !== "ALL" && !projectIds.includes(id)) notFound();
+
+  const project = await prisma.project.findFirst({
+    where: { id, companyId: user.companyId },
+    include: {
+      client: true,
+      manager: true,
+      company: true,
+      milestones: {
+        include: {
+          _count: { select: { assignments: true, tasks: true } },
+        },
+        orderBy: { createdAt: "asc" },
+      },
+    },
+  });
+  if (!project) notFound();
+
+  const canManage = await canManageProject(user, project.id);
+  const milestoneIds = project.milestones.map((m) => m.id);
+
+  const [hoursByMilestone, reallocations, assignments, hoursByAssignment, invoices, timeCards] = await Promise.all([
+    prisma.timeEntry.groupBy({
+      by: ["milestoneId"],
+      where: { milestoneId: { in: milestoneIds }, timeCard: { status: "APPROVED" } },
+      _sum: { hours: true },
+    }),
+    prisma.milestoneReallocation.findMany({
+      where: { OR: [{ fromMilestone: { projectId: project.id } }, { toMilestone: { projectId: project.id } }] },
+      include: { fromMilestone: true, toMilestone: true, byUser: true },
+      orderBy: { createdAt: "desc" },
+      take: 10,
+    }),
+    prisma.assignment.findMany({
+      where: { milestoneId: { in: milestoneIds } },
+      include: { user: true, milestone: true },
+      orderBy: [{ milestone: { name: "asc" } }, { user: { name: "asc" } }],
+    }),
+    prisma.timeEntry.groupBy({
+      by: ["assignmentId"],
+      where: { milestoneId: { in: milestoneIds }, timeCard: { status: "APPROVED" } },
+      _sum: { hours: true },
+      _max: { date: true },
+    }),
+    prisma.invoice.findMany({
+      where: { lines: { some: { milestoneId: { in: milestoneIds } } } },
+      orderBy: { issueDate: "desc" },
+    }),
+    prisma.timeCard.findMany({
+      where: { milestoneId: { in: milestoneIds } },
+      include: {
+        user: true,
+        submittedBy: true,
+        milestone: true,
+        entries: { include: { task: true }, orderBy: { date: "asc" } },
+      },
+      orderBy: [{ weekStartDate: "desc" }, { createdAt: "desc" }],
+    }),
+  ]);
+
+  const usedHoursMap = new Map(hoursByMilestone.map((h) => [h.milestoneId, Number(h._sum.hours ?? 0)]));
+  const usedByAssignment = new Map(hoursByAssignment.map((h) => [h.assignmentId, Number(h._sum.hours ?? 0)]));
+
+  const allocatedHours = project.milestones.reduce((sum, m) => sum + Number(m.budgetHours ?? 0), 0);
+  const projectBudgetHours = project.budgetHours ? Number(project.budgetHours) : null;
+  const assignmentsCount = project.milestones.reduce((sum, m) => sum + m._count.assignments, 0);
+
+  return (
+    <div className="flex flex-col gap-6">
+      <div className="flex items-start justify-between flex-wrap gap-3">
+        <div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <h1 className="text-2xl font-semibold">{project.name}</h1>
+            <Badge variant="secondary">{project.status}</Badge>
+            <Badge variant="outline">{project.billingType.replaceAll("_", " ")}</Badge>
+          </div>
+          <p className="text-sm text-muted-foreground mt-1">
+            {project.client.name} · Managed by {project.manager?.name ?? "unassigned"}
+            {project.endDate && ` · Ends ${format(project.endDate, "MMM d, yyyy")}`}
+          </p>
+        </div>
+        {canManage && (
+          <LinkButton href={`/projects/${project.id}/edit`} variant="outline" size="sm">
+            Edit
+          </LinkButton>
+        )}
+      </div>
+
+      <Tabs defaultValue="overview">
+        <TabsList className="h-auto flex-wrap">
+          <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="milestones">Milestones ({project.milestones.length})</TabsTrigger>
+          <TabsTrigger value="assignments">Assignments ({assignmentsCount})</TabsTrigger>
+          <TabsTrigger value="time">Time entries ({timeCards.length})</TabsTrigger>
+          <TabsTrigger value="invoices">Invoices ({invoices.length})</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="overview" className="flex flex-col gap-6 pt-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Information</CardTitle>
+            </CardHeader>
+            <CardContent className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
+              <div>
+                <div className="text-muted-foreground">Client</div>
+                <div>{project.client.name}</div>
+              </div>
+              <div>
+                <div className="text-muted-foreground">Manager</div>
+                <div>{project.manager?.name ?? "—"}</div>
+              </div>
+              <div>
+                <div className="text-muted-foreground">Start date</div>
+                <div>{project.startDate ? format(project.startDate, "MMM d, yyyy") : "—"}</div>
+              </div>
+              <div>
+                <div className="text-muted-foreground">End date</div>
+                <div>{project.endDate ? format(project.endDate, "MMM d, yyyy") : "—"}</div>
+              </div>
+              <div>
+                <div className="text-muted-foreground">Billing type</div>
+                <div>{project.billingType.replaceAll("_", " ")}</div>
+              </div>
+              <div>
+                <div className="text-muted-foreground">Budget pool</div>
+                <div>
+                  {project.budgetAmount ? formatMoney(project.budgetAmount, project.company.currency) : "—"}
+                  {projectBudgetHours !== null && ` · ${projectBudgetHours}h`}
+                </div>
+              </div>
+              {projectBudgetHours !== null && (
+                <div className="col-span-2 sm:col-span-4">
+                  <HourProgress used={allocatedHours} cap={projectBudgetHours} label="Allocated to milestones" />
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {canManage && project.milestones.length >= 2 && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Reallocate hours between milestones</CardTitle>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-4">
+                <ReallocateHoursForm milestones={project.milestones.map((m) => ({ id: m.id, name: m.name }))} />
+                {reallocations.length > 0 && (
+                  <div className="flex flex-col gap-1.5 text-sm text-muted-foreground border-t pt-3">
+                    {reallocations.map((r) => (
+                      <div key={r.id}>
+                        {r.byUser.name} moved {r.hours.toString()}h from{" "}
+                        <span className="font-medium">{r.fromMilestone.name}</span> to{" "}
+                        <span className="font-medium">{r.toMilestone.name}</span> ({r.hoursReceived.toString()}h
+                        received, {formatMoney(r.costMoved, project.company.currency)} cost moved)
+                        {r.reason ? ` — "${r.reason}"` : ""}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
+
+        <TabsContent value="milestones" className="pt-4">
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between">
+              <CardTitle>Milestones</CardTitle>
+              {canManage && (
+                <LinkButton href={`/projects/${project.id}/milestones/new`} variant="outline" size="sm">
+                  New milestone
+                </LinkButton>
+              )}
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Name</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Billable</TableHead>
+                    <TableHead>Hours</TableHead>
+                    <TableHead>People / Tasks</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {project.milestones.map((m) => (
+                    <TableRow key={m.id}>
+                      <TableCell>
+                        <Link
+                          href={`/projects/${project.id}/milestones/${m.id}`}
+                          className="font-medium hover:underline"
+                        >
+                          {m.name}
+                        </Link>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="secondary">{m.status}</Badge>
+                      </TableCell>
+                      <TableCell>{m.billable ? "Yes" : "No"}</TableCell>
+                      <TableCell>
+                        <HourProgress
+                          used={usedHoursMap.get(m.id) ?? 0}
+                          cap={m.budgetHours ? Number(m.budgetHours) : null}
+                        />
+                      </TableCell>
+                      <TableCell>
+                        {m._count.assignments} people · {m._count.tasks} tasks
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {project.milestones.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={5} className="text-center text-muted-foreground">
+                        No milestones yet.
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="assignments" className="pt-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Assignments</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Resource</TableHead>
+                    <TableHead>Milestone</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Start</TableHead>
+                    <TableHead>End</TableHead>
+                    <TableHead>Allocated</TableHead>
+                    <TableHead>Logged</TableHead>
+                    <TableHead>Billable</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {assignments.map((a) => (
+                    <TableRow key={a.id}>
+                      <TableCell>
+                        <Link
+                          href={`/projects/${project.id}/milestones/${a.milestoneId}/assignments/${a.id}/edit`}
+                          className="font-medium hover:underline"
+                        >
+                          {a.user.name}
+                        </Link>
+                      </TableCell>
+                      <TableCell>
+                        <Link href={`/projects/${project.id}/milestones/${a.milestoneId}`} className="hover:underline">
+                          {a.milestone.name}
+                        </Link>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="secondary">{a.status}</Badge>
+                      </TableCell>
+                      <TableCell>{a.startDate ? format(a.startDate, "MMM d, yyyy") : "—"}</TableCell>
+                      <TableCell>{a.endDate ? format(a.endDate, "MMM d, yyyy") : "—"}</TableCell>
+                      <TableCell>{a.allocatedHours ? `${a.allocatedHours}h` : "—"}</TableCell>
+                      <TableCell>{usedByAssignment.get(a.id) ?? 0}h</TableCell>
+                      <TableCell>{a.milestone.billable ? "Yes" : "No"}</TableCell>
+                    </TableRow>
+                  ))}
+                  {assignments.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={8} className="text-center text-muted-foreground">
+                        No assignments yet.
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="time" className="pt-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Time entries</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <TimeEntriesTable
+                cards={timeCards.map((tc) => ({
+                  id: tc.id,
+                  userName: tc.user.name,
+                  milestoneName: tc.milestone.name,
+                  weekStartDate: tc.weekStartDate.toISOString().slice(0, 10),
+                  status: tc.status,
+                  totalHours: tc.entries.reduce((s, e) => s + Number(e.hours), 0),
+                  submittedAt: tc.submittedAt ? tc.submittedAt.toISOString() : null,
+                  submittedByName: tc.submittedBy?.name ?? null,
+                  decidedAt: tc.decidedAt ? tc.decidedAt.toISOString() : null,
+                  comment: tc.comment,
+                  entries: tc.entries.map((e) => ({
+                    id: e.id,
+                    date: e.date.toISOString().slice(0, 10),
+                    hours: Number(e.hours),
+                    taskName: e.task?.name ?? null,
+                    description: e.description ?? "",
+                  })),
+                }))}
+              />
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="invoices" className="pt-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Invoices</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Invoice #</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Issued</TableHead>
+                    <TableHead>Period</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {invoices.map((inv) => (
+                    <TableRow key={inv.id}>
+                      <TableCell>
+                        <Link href={`/invoices/${inv.id}`} className="font-medium hover:underline">
+                          {inv.invoiceNumber}
+                        </Link>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="secondary">{inv.status}</Badge>
+                      </TableCell>
+                      <TableCell>{format(inv.issueDate, "MMM d, yyyy")}</TableCell>
+                      <TableCell>
+                        {format(inv.periodStart, "MMM d")} – {format(inv.periodEnd, "MMM d, yyyy")}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {invoices.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={4} className="text-center text-muted-foreground">
+                        No invoices yet.
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
+    </div>
+  );
+}

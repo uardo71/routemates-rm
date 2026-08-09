@@ -1,0 +1,58 @@
+import Link from "next/link";
+import { notFound } from "next/navigation";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { prisma } from "@/lib/prisma";
+import { can, canManageMilestone } from "@/lib/permissions";
+import { requireUser } from "@/lib/session";
+import { EditAssignmentForm } from "./edit-assignment-form";
+
+export default async function EditAssignmentPage({
+  params,
+}: {
+  params: Promise<{ id: string; milestoneId: string; assignmentId: string }>;
+}) {
+  const { id: projectId, milestoneId, assignmentId } = await params;
+  const user = await requireUser();
+
+  const assignment = await prisma.assignment.findFirst({
+    where: { id: assignmentId, milestoneId, milestone: { projectId, project: { companyId: user.companyId } } },
+    include: { user: true, milestone: true, _count: { select: { timeEntries: true } } },
+  });
+  if (!assignment) notFound();
+  if (!(await canManageMilestone(user, milestoneId))) notFound();
+
+  return (
+    <div className="flex flex-col gap-6">
+      <div>
+        <Link
+          href={`/projects/${projectId}/milestones/${milestoneId}`}
+          className="text-sm text-muted-foreground hover:underline"
+        >
+          ← {assignment.milestone.name}
+        </Link>
+        <h1 className="text-2xl font-semibold mt-1">Edit assignment — {assignment.user.name}</h1>
+      </div>
+      <Card>
+        <CardHeader>
+          <CardTitle>Assignment details</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <EditAssignmentForm
+            key={assignment.updatedAt.toISOString()}
+            assignment={{
+              id: assignment.id,
+              userName: assignment.user.name,
+              costRate: assignment.costRate.toString(),
+              allocatedHours: assignment.allocatedHours?.toString() ?? null,
+              startDate: assignment.startDate?.toISOString().slice(0, 10) ?? null,
+              endDate: assignment.endDate?.toISOString().slice(0, 10) ?? null,
+              status: assignment.status,
+            }}
+            canDelete={assignment._count.timeEntries === 0}
+            canViewCostRate={can(user, "rates:view:any")}
+          />
+        </CardContent>
+      </Card>
+    </div>
+  );
+}

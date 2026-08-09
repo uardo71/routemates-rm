@@ -1,0 +1,110 @@
+import type { SystemRole } from "@prisma/client";
+import { prisma } from "@/lib/prisma";
+
+export type Action =
+  | "users:manage"
+  | "clients:manage"
+  | "clients:view"
+  | "projects:view"
+  | "projects:create"
+  | "projects:manage:any"
+  | "timesheet:approve:any"
+  | "rates:view:any"
+  | "invoices:manage"
+  | "planning:view"
+  | "salaries:manage";
+
+// Employees and contractors are delivery staff, not delivery managers: for now they
+// only get the Dashboard and their own Time page (logging hours against assignments
+// they've been given). They have no visibility into projects/milestones/clients —
+// that's PM/Admin/Finance territory. (Time-off/PTO/holidays is a separate, later feature.)
+const ROLE_PERMISSIONS: Record<SystemRole, Action[]> = {
+  ADMIN: [
+    "users:manage",
+    "clients:manage",
+    "clients:view",
+    "projects:view",
+    "projects:create",
+    "projects:manage:any",
+    "timesheet:approve:any",
+    "rates:view:any",
+    "invoices:manage",
+    "planning:view",
+    "salaries:manage",
+  ],
+  FINANCE: ["clients:view", "projects:view", "rates:view:any", "invoices:manage", "salaries:manage"],
+  SALES: ["clients:manage", "clients:view"],
+  PM: ["projects:view", "projects:create", "planning:view"],
+  EMPLOYEE: [],
+  CONTRACTOR: [],
+};
+
+export type SessionUser = {
+  id: string;
+  role: SystemRole;
+  companyId: string;
+};
+
+export function can(user: SessionUser | null | undefined, action: Action): boolean {
+  if (!user) return false;
+  return ROLE_PERMISSIONS[user.role]?.includes(action) ?? false;
+}
+
+/** Project IDs a user is allowed to see: admin/finance see all; PMs see projects they manage;
+ *  everyone else sees only projects where they hold at least one milestone assignment. */
+export async function visibleProjectIds(user: SessionUser): Promise<string[] | "ALL"> {
+  if (user.role === "ADMIN" || user.role === "FINANCE") return "ALL";
+
+  const projects = await prisma.project.findMany({
+    where: {
+      companyId: user.companyId,
+      OR: [
+        { managerId: user.id },
+        { milestones: { some: { assignments: { some: { userId: user.id } } } } },
+      ],
+    },
+    select: { id: true },
+  });
+  return projects.map((p) => p.id);
+}
+
+/** Whether `user` may manage (edit milestones/assignments/tasks/budget of) a specific project. */
+export async function canManageProject(user: SessionUser, projectId: string): Promise<boolean> {
+  if (can(user, "projects:manage:any")) return true;
+  if (user.role !== "PM") return false;
+  const project = await prisma.project.findFirst({
+    where: { id: projectId, companyId: user.companyId, managerId: user.id },
+    select: { id: true },
+  });
+  return project !== null;
+}
+
+/** Whether `user` may manage a specific milestone (create/edit assignments, tasks, reallocate hours). */
+export async function canManageMilestone(user: SessionUser, milestoneId: string): Promise<boolean> {
+  if (can(user, "projects:manage:any")) return true;
+  if (user.role !== "PM") return false;
+  const milestone = await prisma.milestone.findFirst({
+    where: { id: milestoneId, project: { companyId: user.companyId, managerId: user.id } },
+    select: { id: true },
+  });
+  return milestone !== null;
+}
+
+/** Whether `user` may decide (approve/reject) a specific TimeCard.
+ *  Each TimeCard is pre-assigned to one approver (the manager of the relevant
+ *  project) at submission time, so this is a direct ownership check. */
+export function canDecideApproval(user: SessionUser, card: { approverId: string | null }): boolean {
+  return can(user, "timesheet:approve:any") || (user.role === "PM" && card.approverId === user.id);
+}
+
+/** Whether `user` may see bill/cost rate figures for the given project (own projects for PMs). */
+export async function canViewProjectRates(user: SessionUser, projectId: string): Promise<boolean> {
+  if (can(user, "rates:view:any")) return true;
+  return canManageProject(user, projectId);
+}
+
+/** Whether `user` may see sales price/cost figures for the given milestone (own projects for PMs). */
+export async function canViewMilestoneRates(user: SessionUser, milestoneId: string): Promise<boolean> {
+  if (can(user, "rates:view:any")) return true;
+  return canManageMilestone(user, milestoneId);
+}
