@@ -262,3 +262,110 @@ Project page) actually followed the Salesforce/Tungsten-screenshot direction, no
 brass/paper ink-navy palette above. **Don't assume which one wins — ask the user before
 starting a full grid-styling pass**, unless they've since told you explicitly (check
 recent conversation first).
+
+---
+
+## Session update — 2026-08-09 (later the same day, pushed to git as commit `cf20644`)
+
+Everything below was built in one continued session after the snapshot above was written,
+then committed and pushed to `origin/main` (`https://github.com/uardo71/routemates-rm.git`).
+The bootstrap note at the top of this file still applies — treat this as another one-time
+layer, not a live source of truth.
+
+**Leave management** (generalized from vacation-only to multi-type):
+- `LeaveType` enum: `VACATION` (20 days/yr, uncapped carryover, prorated first year),
+  `SICK` (uncapped, tracked only), `PATERNITY`/`MATERNITY` (one-time no-quota period,
+  admin-picks exact dates). `LeaveRequest` model (renamed from `VacationRequest`) +
+  `LeaveReturn` model for early/partial return-to-work (un-provisions the returned
+  working days from Planning/Time Entry and, for vacation, gives the days back to the
+  balance — supports both "back for good" and "back for a few days then out again").
+- Admin-only approval (admin-direct-insert auto-approves); PM has company-wide read-only
+  visibility; employees self-service only. Approval auto-provisions
+  Assignment/Milestone/AssignmentPlan/TimeCard/TimeEntry via `src/lib/vacation.ts`.
+- Albanian public holidays (`src/lib/holidays.ts`, hand-researched through 2030) shown as
+  informational (never blocking) in Planner, Time Entry, and vacation request preview.
+- UI at `/vacations` (`vacations-client.tsx`) — type selector, balance card, pending queue,
+  "Record return" button (Admin-only, by design), `formatLeavePeriod()` helper so a range
+  spanning a year boundary shows both years correctly.
+- Real freeze-bug fix: `countWorkingDays` in `src/lib/vacation-calc.ts` is bounded
+  (`MAX_VACATION_RANGE_DAYS = 400`, returns `-1` sentinel) so a mid-typo date can't hang
+  the tab looping day-by-day.
+
+**Expense tracking module** (`/expenses`, `/admin/expense-categories`):
+- Built for the year-end accountant-report use case: `ExpenseCategory`, `Expense`
+  (category, date, amount, currency, vendor, payment method, `paidBy` COMPANY/EMPLOYEE,
+  owner/submitter/decider trio mirroring `LeaveRequest`), `ExpenseReceipt` (file
+  attachments). Any employee can log a company-card expense or a personal reimbursement
+  claim; auto-approval depends only on whether the **submitter** has `expenses:manage`
+  (Admin/Finance), regardless of `paidBy` — a deliberate correction mid-build after the
+  user clarified employees can be handed the company card too.
+- Receipts stored on local disk (`uploads/receipts/`, gitignored, never in `public/`),
+  served only through the authenticated route `src/app/api/receipts/[fileName]/route.ts`.
+  `next.config.ts` `serverActions.bodySizeLimit` bumped to `20mb` for phone-camera photos.
+- CSV export at `src/app/api/expenses/export/route.ts` (date/category/amount/paid-by/
+  status/receipts-count/etc.) — the actual deliverable the user needs to send their
+  accountant.
+- 6 default categories seeded for the real company: Utilities, Office Supplies, Travel,
+  Entertainment, Professional Services & Fees, Other.
+
+**My Planning** (`/my-planning`): read-only, self-scoped mirror of the Resource Planner —
+every employee can see what their PM scheduled for them. Reuses `PlannerGrid` from
+`/planning` directly with `canManage={false}` (that prop already drives full read-only
+rendering, no separate component needed). No permission gate — available to every role,
+same as `/time` and `/vacations`.
+
+**Resource Planner (`/planning`) additions**:
+- Shows every active company user now, not just people with an existing assignment (role
+  filter narrows who's listed; project filter only narrows which assignments show under
+  each person) — via `src/components/multi-select-filter.tsx`, a checkbox-dropdown driven
+  by comma-separated URL params (`parseList()` in `src/lib/utils.ts`). Same treatment
+  applied to `/admin/scheduled-vs-actuals`.
+- Assignment window validation: `savePlanAction` now rejects hours planned outside an
+  assignment's own `startDate`/`endDate` (client grays the cells too).
+- Drag-to-resize an assignment's end date directly from the grid — bidirectional (right
+  to extend, capped at the project's end date; left to shrink, capped at the latest
+  submitted/approved time entry). Stages into local state (`pendingEndDates`), only
+  persisted on "Save plan" — never auto-saves.
+
+**Projects/Milestones/Invoices UI redesign** (pure presentation pass, no schema/behavior
+changes, done because the original flat label/value layout "looked poor, like someone
+without taste"):
+- Shared components: `src/components/stat-card.tsx` (pre-existing, reused), `info-field.tsx`
+  (icon-led label/value), `initials-avatar.tsx` (deterministic-tint initials chip),
+  `charts/donut-chart.tsx` and `charts/mini-bar-chart.tsx` — hand-rolled SVG/CSS, no
+  charting library added (same call already made for the Planner grid vs. an external
+  Gantt library).
+- Projects list: avatar chips, status/billing badges, team size, hours-progress column,
+  plus multi-select filters (status/client/manager/billing type) via `projects-filters.tsx`.
+- Project detail Overview tab: KPI stat row (milestones/team/hours/invoiced) + a "hours by
+  milestone" donut chart, replacing the flat info grid.
+- **Reallocate hours between milestones moved from the Project Overview tab to each
+  Milestone detail page** (scoped to that milestone + its siblings) — don't re-add it to
+  the project page.
+- Milestone page: stat row, icon-led info fields, "hours by assignee" donut chart.
+- Time entries tab gets a weekly-hours bar chart (only shown when there's more than one
+  week of data). Invoices list gets stat cards + a 6-month invoiced-value bar chart.
+
+**Session timeout fix**: `src/auth.ts` sets `session.maxAge` to one day; `@auth/core`'s
+JWT-strategy callback always stamps an explicit cookie `Expires` from that value
+regardless of the `cookies.sessionToken.options` config, so
+`src/app/api/auth/[...nextauth]/route.ts` strips `Expires`/`Max-Age` from the
+`Set-Cookie` header after the fact — this is why that stripping code exists, don't remove
+it thinking it's dead.
+
+**Verification note for whoever picks this up**: everything above was typechecked,
+linted, built (`pnpm run build`), and browser-verified live end-to-end, including a real
+concurrent user session (Iljona submitting an expense with receipts, approved live).
+One Base UI quirk worth knowing if you're browser-testing with an automation tool: plain
+synthetic `click` events sometimes don't register on Base UI `Tabs`/`Select` triggers in
+headless automation (aria-selected doesn't flip) — dispatching a full
+`pointerdown`→`mousedown`→`focus`→`pointerup`→`mouseup`→`click` sequence fixes it. Real
+mouse/touch input from an actual user is unaffected.
+
+**How the local dev database relates to this repo**: the Postgres database (`erp_dev`,
+real company data — 9 real users, live projects/expenses/leave requests) lives outside
+git entirely, native-installed on the machine this was built on. See the "Environment
+setup notes" section above for the DB role/connection details. If you're reading this
+from a *different* machine and don't have that database yet, you need a dump transferred
+from the original machine (pg_dump), not just a `git clone` — the schema comes from
+Prisma migrations in this repo, but the actual data doesn't.
