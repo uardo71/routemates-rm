@@ -29,6 +29,8 @@ type EditableUser = {
     costRateIsComputed: boolean;
     startDate: string | null;
     endDate: string | null;
+    carriedInVacationDays: string | null;
+    carriedInVacationYear: number | null;
   } | null;
 };
 
@@ -89,6 +91,38 @@ export function EditUserForm({ user }: { user: EditableUser }) {
           <Input id="endDate" name="endDate" type="date" defaultValue={user.employment?.endDate ?? undefined} />
         </div>
       </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="carriedInVacationDays">Vacation carried in (days)</Label>
+          <Input
+            id="carriedInVacationDays"
+            name="carriedInVacationDays"
+            type="number"
+            step="0.5"
+            min="0"
+            defaultValue={user.employment?.carriedInVacationDays ?? undefined}
+            placeholder="e.g. 12.5"
+          />
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="carriedInVacationYear">As of Jan 1 of</Label>
+          <Input
+            id="carriedInVacationYear"
+            name="carriedInVacationYear"
+            type="number"
+            min="2000"
+            max="2100"
+            defaultValue={user.employment?.carriedInVacationYear ?? undefined}
+            placeholder={`${new Date().getFullYear()}`}
+          />
+        </div>
+      </div>
+      <p className="text-xs text-muted-foreground -mt-2">
+        Opening vacation balance for someone onboarded onto the app after they were hired — the days left at
+        the start of that year. The system then adds each year&apos;s entitlement and subtracts logged vacation
+        automatically, so you never back-enter old requests. Leave days blank to instead compute the balance
+        purely from time off recorded in the app.
+      </p>
       {user.employment && (
         <div className="flex flex-col gap-1.5 max-w-xs">
           <Label>Cost rate (computed)</Label>

@@ -36,6 +36,14 @@ yarn-error.log*
 # uploaded receipts (local filesystem storage, never committed)
 /uploads
 
+# database backups (pg_dump output — real data, transferred out-of-band, never committed)
+/backups
+
+# machine-local Claude Code state
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
+.claude/worktrees/
+
 # vercel
 .vercel
 

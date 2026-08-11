@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { LinkButton } from "@/components/link-button";
+import { InitialsAvatar } from "@/components/initials-avatar";
 import { prisma } from "@/lib/prisma";
 import { can } from "@/lib/permissions";
 import { requirePermission } from "@/lib/session";
@@ -24,7 +25,9 @@ export default async function ClientsAdminPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>All clients</CardTitle>
+          <CardTitle className="text-base">
+            All clients <span className="font-normal text-muted-foreground">({clients.length})</span>
+          </CardTitle>
         </CardHeader>
         <CardContent>
           <Table>
@@ -32,26 +35,31 @@ export default async function ClientsAdminPage() {
               <TableRow>
                 <TableHead>Name</TableHead>
                 <TableHead>Primary contact</TableHead>
-                <TableHead>Projects</TableHead>
+                <TableHead className="text-right">Projects</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {clients.map((c) => (
                 <TableRow key={c.id}>
                   <TableCell>
-                    <Link href={`/admin/clients/${c.id}`} className="font-medium hover:underline">
-                      {c.name}
-                    </Link>
+                    <div className="flex items-center gap-2.5">
+                      <InitialsAvatar name={c.name} />
+                      <Link href={`/admin/clients/${c.id}`} className="font-medium hover:underline">
+                        {c.name}
+                      </Link>
+                    </div>
                   </TableCell>
-                  <TableCell>
+                  <TableCell className="text-muted-foreground">
                     {c.contacts[0] ? `${c.contacts[0].name}${c.contacts[0].email ? ` (${c.contacts[0].email})` : ""}` : "—"}
                   </TableCell>
-                  <TableCell>{c._count.projects}</TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {c._count.projects > 0 ? c._count.projects : <span className="text-muted-foreground">—</span>}
+                  </TableCell>
                 </TableRow>
               ))}
               {clients.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={3} className="text-center text-muted-foreground">
+                  <TableCell colSpan={3} className="py-8 text-center text-muted-foreground">
                     No clients yet.
                   </TableCell>
                 </TableRow>

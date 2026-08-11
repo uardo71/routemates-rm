@@ -467,3 +467,114 @@ contract value + PO/SoW); Milestones tab gained **Planned** (vs budget, red if o
 - Invoicing UI is functional but not design-polished (built fast).
 - **Pirelli** ("eFLOW AP …") projects/opportunities are **test data** created this session to
   exercise the flow — safe to delete.
+
+---
+
+## Session update — 2026-08-11 (large session; committed to git as one batch)
+
+Everything below was built across one long session and committed together (the working tree had
+also accumulated two earlier uncommitted features — task-level planning and historical cost basis —
+which are included in the same commit). Same bootstrap caveat: when this doc conflicts with code,
+trust the code. Durable design decisions and the "why" also live in the local auto-memory
+(`~/.claude/.../memory/`, outside git) — those do NOT travel with a clone, so the key ones are
+restated here.
+
+### Migrations added (all applied to erp_dev; apply with `migrate deploy` on a fresh DB)
+- `20260810130000_assignment_plan_task_level` — `AssignmentPlan.taskId` (nullable) + a
+  `NULLS NOT DISTINCT` unique on (assignmentId, taskId, weekStartDate); optional **task-level**
+  resource planning (plan by task under an assignment, or at assignment level).
+- `20260810140000_time_entry_cost_rate` — `TimeEntry.costRate` (frozen historical cost).
+- `20260810150000_documents` — `Document` model + `DocumentKind` enum (invoice/opportunity file
+  attachments).
+- `20260810160000_vacation_carried_in` — `Employment.carriedInVacationDays` + `carriedInVacationYear`.
+- `20260810170000_opportunity_amendment` — `OpportunityAmendment` model (change-orders).
+
+### Features built this session
+- **Historical cost basis**: `TimeEntry.costRate` is stamped at approval to the rate effective on
+  the *worked date* (salary + FX), via `stampCostRatesForCards` (called from the approval hooks);
+  `src/lib/cost-rate.ts`. Reports (Revenue, Budgets, Scheduled-vs-actuals) use this per-entry rate,
+  falling back to the assignment snapshot. Backfill script:
+  `scripts/backfill-time-entry-cost-rates.ts`. **A salaried person's hourly rate varies by month**
+  (monthly salary ÷ that month's working hours) — this is intentional, not a bug.
+- **Document attachments** (`Document` model, `/api/documents/[fileName]` authed serve route,
+  `uploads/documents/`): attach PDFs/images to **invoices** (fiscal invoice / credit note / other)
+  and **opportunities** (SoW / PO / other). Shared `src/components/documents-card.tsx` with
+  collapse/expand for long lists. Upload/delete actions in the invoice/opportunity actions files.
+- **Vacation manual carried-in**: admins set an opening vacation balance per employee on
+  `/admin/users/[id]` (days + "as of Jan 1 of year"). `computeVacationBalance` seeds its year-walk
+  from it (full annual entitlement from that year, no proration); blank = auto from hire date. Team
+  balances table shows a read-only Carried-in column.
+- **Opportunity amendments**: a WON opportunity takes change-orders (`createAmendmentAction`) that
+  add hours after the deal closed — each amendment appends a **new milestone** (default) or grows an
+  existing one, and bumps the project's `contractValue` / `budgetAmount` / `budgetHours`. Immutable,
+  versioned audit record. UI: an "Amendments" card on the won opportunity (Admin-only, gated on
+  `opportunities:approve`).
+- **Time Entry ← planning**: a "Planned this week" card on `/time` shows the week's plan per
+  assignment/task (even split across working days) with checkboxes + a **"Copy to timesheet"** button
+  → injects the planned hours as DRAFT lines (blank notes; skips days already covered by leave/existing
+  time). Also **relaxed the timesheet rule** so time can be logged at the **assignment level**
+  (`taskId` null) even on milestones that have tasks — the old "must pick a task" check in
+  `time/actions.ts` was removed; the grid renders such cards as a single leaf row.
+- **Vacations page redesign** (`vacations-client.tsx` + new `absence-calendar.tsx`): a **team absence
+  calendar** with a Month-grid ↔ Timeline toggle (colored by leave type, Albanian holidays marked),
+  a company overview strip, per-person used-vs-available progress bars, Out-now / Coming-up panels,
+  and expand/collapse on the team-balances + history tables.
+- **Dashboard redesign** (`src/app/(app)/page.tsx`): role-aware reporting home. Admin/Finance get a
+  KPI row + financial band (earned/forecast/gross/operating margin, open invoices) + bar charts
+  (forecast by quarter, invoiced last 6 months) + donuts (hours by project, billable vs internal) +
+  top-projects list + who's-out. PMs get delivery variants (no financials). Employees get their own
+  week + an 8-week hours trend. Reuses the hand-rolled donut/bar chart components (no chart lib).
+- **Revenue forecast margin**: `computeProjectRevenue` now also returns `forecastCost`
+  (Σ planned hours × current cost rate) and `forecastMargin` (forecast revenue − forecast cost).
+  Shown as a company tile + a "Fcst margin" per-project column. (Earned margin still uses historical
+  cost; forecast margin uses current rates — that's the deliberate distinction.)
+- **Budgets report**: budgeted cost now **derives** from allocated hours × current cost rate when a
+  milestone has no manually-entered cost (manual still wins). Cost "Remaining" shows "—" (not a
+  misleading red −actual) when no cost budget exists.
+
+### Bugs fixed this session
+- **Cost rate = €0 for some staff**: `computeHourlyCostRateEUR` only looked up ALL→EUR, but the FX
+  row was entered EUR→ALL ("1 EUR = 105 ALL"). Added `convertToEUR` (handles either direction);
+  recomputed all `Employment.costRate`. Exchange-rates page label clarified ("1 EUR = …").
+- **Resource Planner "data disappears on Prev/Next"**: `PlannerGrid` seeds cells via
+  `useState(initial)` (read once at mount); soft navigation reused the stale state. Fixed with a
+  `key` on the range+filters so it remounts (same trap the Time grid's WeekGrid had). Applied to
+  `/planning` and `/my-planning`. **Data was never lost — display only.**
+- **Invoice from time dropped the last day of the period**: `TimeEntry.date` is stored at UTC
+  midnight but the invoice period was parsed at LOCAL midnight (machine is UTC+2), so e.g. Jul-31
+  hours fell just outside a "Jul 31" period end. `createInvoiceFromTime` now parses the period at
+  UTC midnight with an inclusive end-of-day. **INV-0001 was generated before this fix and is still a
+  DRAFT with the old (short) quantities — delete + recreate it for Jul 1–31 to correct it (delete
+  frees the time entries).**
+- **Scheduled-vs-actuals** showed float noise (e.g. 26.999999999999996) from summing even-split
+  hours — now rounds cell + rollup totals to 2 dp.
+- **Project navigation**: milestone/assignment back-links returned to the project **Overview** tab
+  regardless of origin. Project tabs now honor a `?tab=` param; back-links point at the right tab.
+
+### Real-data notes (production erp_dev)
+- **Borana Dishani** is NOT a real employee — it's an account used to bill extra hours to a client,
+  so her €0 cost rate is fine (leave as-is).
+- **Indri Bejtja** is allocated 480h on AFW (not 960) because he was employed later — intentional.
+- The 20/24/33/40 values currently in the **planner/timesheet** for the AFW week(s) are throwaway
+  test values entered while debugging — clear/replace with real migrated data.
+
+### Open / next (pick up here)
+- **Deploy online** (the immediate goal): needs a Postgres host, a Node host for `next start`,
+  env vars (`DATABASE_URL`, `AUTH_SECRET`, `AUTH_URL`), `prisma migrate deploy`, a restore of the
+  `backups/` pg_dump, and a plan for `uploads/` (receipts/documents) — object storage or a mounted
+  volume, since local disk doesn't persist on most PaaS. See the deployment notes handed over in chat.
+- **Regenerate INV-0001** for July after the invoice-period fix (above).
+- **App-wide date-display cleanup** (UTC `toISOString().slice(0,10)` shows a day early in +UTC
+  timezones): the invoice *data* bug is fixed; the display-only cleanup across pages was started as a
+  separate background task on the office PC and is NOT reflected here — redo/finish it if those
+  off-by-one displayed dates still bother you.
+- A manual (non-copy) way to add an assignment-level timesheet line by typing (today it arrives via
+  the copy button); optional.
+
+### Moving to another machine (short version)
+Install Node 20 (nvm-windows) + pnpm 9 + PostgreSQL 17 (see the 2026-08-10 bring-up notes above);
+`git clone`; `pnpm install`; recreate `.env` (`DATABASE_URL`, `AUTH_SECRET`); create the `erp_app`
+role + `erp_dev` DB; **restore the data from the `backups/*.dump` transferred out-of-band**
+(`pg_restore` as `erp_app`) OR `pnpm exec prisma migrate deploy` for an empty schema; copy `uploads/`
+(receipts + documents, gitignored). The `backups/` dumps are gitignored — carry them on a USB/drive,
+they don't travel with the clone.

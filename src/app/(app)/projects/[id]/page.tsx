@@ -14,6 +14,7 @@ import {
   FileTextIcon,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { StatusStamp, type StampTone } from "@/components/status-stamp";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -32,12 +33,12 @@ import { cn } from "@/lib/utils";
 import { TimeEntriesTable } from "./time-entries-table";
 
 type Tone = "secondary" | "default" | "outline" | "destructive";
-const STATUS_TONE: Record<string, Tone> = {
-  ACTIVE: "default",
-  PLANNED: "secondary",
-  ON_HOLD: "outline",
-  COMPLETED: "secondary",
-  CANCELLED: "destructive",
+const PROJECT_STATUS_STAMP: Record<string, { tone: StampTone; dashed?: boolean }> = {
+  PLANNED: { tone: "neutral", dashed: true },
+  ACTIVE: { tone: "brass" },
+  ON_HOLD: { tone: "amber" },
+  COMPLETED: { tone: "green" },
+  CANCELLED: { tone: "rust" },
 };
 const MILESTONE_STATUS_TONE: Record<string, Tone> = {
   PLANNED: "secondary",
@@ -58,12 +59,20 @@ const INVOICE_STATUS_TONE: Record<string, Tone> = {
   VOID: "destructive",
 };
 
+const PROJECT_TABS = ["overview", "milestones", "assignments", "time", "invoices"] as const;
+
 export default async function ProjectDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ tab?: string }>;
 }) {
   const { id } = await params;
+  // Which tab to open on — lets drill-in pages (a milestone, an assignment) link back to the exact
+  // tab you came from via `?tab=…`, instead of always dumping you on Overview.
+  const { tab } = await searchParams;
+  const activeTab = (PROJECT_TABS as readonly string[]).includes(tab ?? "") ? (tab as string) : "overview";
   const user = await requirePermission("projects:view");
 
   const projectIds = await visibleProjectIds(user);
@@ -201,7 +210,7 @@ export default async function ProjectDetailPage({
           <div>
             <div className="flex items-center gap-2 flex-wrap">
               <h1 className="text-2xl font-semibold">{project.name}</h1>
-              <Badge variant={STATUS_TONE[project.status] ?? "secondary"}>{project.status.replaceAll("_", " ")}</Badge>
+              <StatusStamp label={project.status.replaceAll("_", " ")} {...(PROJECT_STATUS_STAMP[project.status] ?? { tone: "neutral" })} />
               <Badge variant="outline">{project.billingType.replaceAll("_", " ")}</Badge>
             </div>
             <p className="text-sm text-muted-foreground mt-1">
@@ -248,7 +257,7 @@ export default async function ProjectDetailPage({
         />
       </div>
 
-      <Tabs defaultValue="overview">
+      <Tabs defaultValue={activeTab}>
         <TabsList className="h-auto flex-wrap">
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="milestones">Milestones ({project.milestones.length})</TabsTrigger>
@@ -463,7 +472,7 @@ export default async function ProjectDetailPage({
                     <TableRow key={a.id}>
                       <TableCell>
                         <Link
-                          href={`/projects/${project.id}/milestones/${a.milestoneId}/assignments/${a.id}/edit`}
+                          href={`/projects/${project.id}/milestones/${a.milestoneId}/assignments/${a.id}/edit?tab=assignments`}
                           className="flex items-center gap-2.5 font-medium hover:underline"
                         >
                           <InitialsAvatar name={a.user.name} className="size-6 text-[10px]" />

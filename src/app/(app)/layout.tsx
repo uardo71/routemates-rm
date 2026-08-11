@@ -3,6 +3,7 @@ import { auth } from "@/auth";
 import { can } from "@/lib/permissions";
 import { SidebarNav, type NavGroup } from "./sidebar-nav";
 import { UserMenu } from "./user-menu";
+import { RoutematesLogo } from "@/components/routemates-logo";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const session = await auth();
@@ -67,7 +68,10 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       ? [
           {
             label: "Reports",
-            items: [{ href: "/revenue", label: "Revenue & forecast", icon: "revenue" as const }],
+            items: [
+              { href: "/revenue", label: "Revenue & forecast", icon: "revenue" as const },
+              { href: "/budgets", label: "Budgets", icon: "budgets" as const },
+            ],
           },
         ]
       : []),
@@ -91,11 +95,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   return (
     <div className="flex flex-1 min-h-full">
       <aside className="w-60 shrink-0 border-r border-sidebar-border bg-sidebar text-sidebar-foreground flex flex-col">
-        <div className="flex items-center gap-2 px-4 py-4">
-          <div className="flex size-7 items-center justify-center rounded-md bg-primary text-sm font-bold text-primary-foreground">
-            R
-          </div>
-          <span className="font-heading text-base font-semibold tracking-tight">Routemates</span>
+        <div className="px-4 py-4">
+          <RoutematesLogo className="h-9" />
         </div>
         <div className="flex-1 overflow-auto py-1">
           <SidebarNav groups={groups} />

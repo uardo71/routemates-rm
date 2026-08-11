@@ -18,5 +18,8 @@ export const proxy = auth((req) => {
 });
 
 export const config = {
-  matcher: ["/((?!api/auth|_next/static|_next/image|favicon.ico).*)"],
+  // Exclude auth endpoints, Next internals, and any static asset (files with an image/font
+  // extension) — otherwise the auth guard 307-redirects public assets like the logo to /login for
+  // unauthenticated visitors, so the logo breaks on the login page itself.
+  matcher: ["/((?!api/auth|_next/static|_next/image|favicon.ico|.*\\.(?:png|jpg|jpeg|gif|svg|webp|ico|woff2?)$).*)"],
 };

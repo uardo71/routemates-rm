@@ -6,7 +6,12 @@ import { randomUUID } from "crypto";
 // always served through the authenticated route at src/app/api/receipts/[fileName]/route.ts)
 // and gitignored. Fine for a single-server, ~10-person deployment; would need swapping for
 // object storage (S3-compatible) if this ever runs across multiple app instances.
-const UPLOAD_DIR = path.join(process.cwd(), "uploads", "receipts");
+// Files are grouped by subdir under uploads/ — "receipts" (expenses), "documents" (invoice /
+// opportunity attachments). Same storage mechanics; only the folder differs.
+const UPLOADS_ROOT = path.join(process.cwd(), "uploads");
+function uploadDir(subdir: string): string {
+  return path.join(UPLOADS_ROOT, subdir);
+}
 
 export const MAX_RECEIPT_SIZE_BYTES = 10 * 1024 * 1024; // 10MB per file
 
@@ -30,14 +35,15 @@ export type SavedReceipt = {
   sizeBytes: number;
 };
 
-export async function saveReceiptFile(file: File): Promise<SavedReceipt> {
-  await mkdir(UPLOAD_DIR, { recursive: true });
+export async function saveReceiptFile(file: File, subdir = "receipts"): Promise<SavedReceipt> {
+  const dir = uploadDir(subdir);
+  await mkdir(dir, { recursive: true });
   const ext = path.extname(file.name) || "";
   // Randomized, unrelated to the original name — two people's "receipt.jpg" must never collide,
   // and the on-disk name shouldn't leak the original file name to anyone who isn't authorized.
   const fileName = `${randomUUID()}${ext}`;
   const buffer = Buffer.from(await file.arrayBuffer());
-  await writeFile(path.join(UPLOAD_DIR, fileName), buffer);
+  await writeFile(path.join(dir, fileName), buffer);
   return {
     fileName,
     originalName: file.name,
@@ -48,16 +54,16 @@ export async function saveReceiptFile(file: File): Promise<SavedReceipt> {
 
 /** Resolves a stored receipt's absolute path — guards against path traversal since `fileName`
  *  ultimately comes from a URL segment on the serving route. */
-export function receiptFilePath(fileName: string): string {
+export function receiptFilePath(fileName: string, subdir = "receipts"): string {
   if (!fileName || fileName.includes("/") || fileName.includes("\\") || fileName.includes("..")) {
     throw new Error("Invalid file name.");
   }
-  return path.join(UPLOAD_DIR, fileName);
+  return path.join(uploadDir(subdir), fileName);
 }
 
-export async function deleteReceiptFile(fileName: string): Promise<void> {
+export async function deleteReceiptFile(fileName: string, subdir = "receipts"): Promise<void> {
   try {
-    await unlink(receiptFilePath(fileName));
+    await unlink(receiptFilePath(fileName, subdir));
   } catch {
     // Already gone, or never existed — deleting an expense whose file write failed shouldn't
     // itself fail.

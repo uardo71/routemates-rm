@@ -8,10 +8,16 @@ import { EditAssignmentForm } from "./edit-assignment-form";
 
 export default async function EditAssignmentPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string; milestoneId: string; assignmentId: string }>;
+  searchParams: Promise<{ tab?: string }>;
 }) {
   const { id: projectId, milestoneId, assignmentId } = await params;
+  // Opened from the project's Assignments tab (`?tab=assignments`) → go back there; opened from the
+  // milestone's assignment list → go back to the milestone.
+  const { tab } = await searchParams;
+  const fromAssignmentsTab = tab === "assignments";
   const user = await requireUser();
 
   const assignment = await prisma.assignment.findFirst({
@@ -25,10 +31,10 @@ export default async function EditAssignmentPage({
     <div className="flex flex-col gap-6">
       <div>
         <Link
-          href={`/projects/${projectId}/milestones/${milestoneId}`}
+          href={fromAssignmentsTab ? `/projects/${projectId}?tab=assignments` : `/projects/${projectId}/milestones/${milestoneId}`}
           className="text-sm text-muted-foreground hover:underline"
         >
-          ← {assignment.milestone.name}
+          ← {fromAssignmentsTab ? "Assignments" : assignment.milestone.name}
         </Link>
         <h1 className="text-2xl font-semibold mt-1">Edit assignment — {assignment.user.name}</h1>
       </div>

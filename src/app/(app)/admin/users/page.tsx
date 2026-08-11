@@ -3,6 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { LinkButton } from "@/components/link-button";
+import { InitialsAvatar } from "@/components/initials-avatar";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/session";
 import { formatMoney } from "@/lib/format";
@@ -25,7 +26,9 @@ export default async function UsersAdminPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Team members</CardTitle>
+          <CardTitle className="text-base">
+            Team members <span className="font-normal text-muted-foreground">({users.length})</span>
+          </CardTitle>
         </CardHeader>
         <CardContent>
           <Table>
@@ -34,7 +37,7 @@ export default async function UsersAdminPage() {
                 <TableHead>Name</TableHead>
                 <TableHead>Email</TableHead>
                 <TableHead>Role</TableHead>
-                <TableHead>Cost rate</TableHead>
+                <TableHead className="text-right">Cost rate</TableHead>
                 <TableHead>Status</TableHead>
               </TableRow>
             </TableHeader>
@@ -42,16 +45,19 @@ export default async function UsersAdminPage() {
               {users.map((u) => (
                 <TableRow key={u.id}>
                   <TableCell>
-                    <Link href={`/admin/users/${u.id}`} className="font-medium hover:underline">
-                      {u.name}
-                    </Link>
+                    <div className="flex items-center gap-2.5">
+                      <InitialsAvatar name={u.name} />
+                      <Link href={`/admin/users/${u.id}`} className="font-medium hover:underline">
+                        {u.name}
+                      </Link>
+                    </div>
                   </TableCell>
-                  <TableCell>{u.email}</TableCell>
+                  <TableCell className="text-muted-foreground">{u.email}</TableCell>
                   <TableCell>
                     <Badge variant="secondary">{u.role}</Badge>
                   </TableCell>
-                  <TableCell>
-                    {u.employment ? `${formatMoney(u.employment.costRate, "EUR")}/hr` : "—"}
+                  <TableCell className="text-right tabular-nums">
+                    {u.employment ? `${formatMoney(u.employment.costRate, "EUR")}/hr` : <span className="text-muted-foreground">—</span>}
                   </TableCell>
                   <TableCell>
                     <Badge variant={u.active ? "default" : "outline"}>
@@ -60,6 +66,13 @@ export default async function UsersAdminPage() {
                   </TableCell>
                 </TableRow>
               ))}
+              {users.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={5} className="py-8 text-center text-muted-foreground">
+                    No users yet.
+                  </TableCell>
+                </TableRow>
+              )}
             </TableBody>
           </Table>
         </CardContent>

@@ -123,6 +123,7 @@ model Company {
   expenseCategories ExpenseCategory[]
   expenses          Expense[]
   opportunities     Opportunity[]
+  documents         Document[]
 }
 
 model User {
@@ -158,6 +159,8 @@ model User {
   opportunitiesSubmitted Opportunity[] @relation("OpportunitySubmittedBy")
   opportunitiesDecided   Opportunity[] @relation("OpportunityDecidedBy")
   opportunityRevisions   OpportunityRevision[] @relation("OpportunityRevisionIssuedBy")
+  opportunityAmendments  OpportunityAmendment[] @relation("OpportunityAmendmentAppliedBy")
+  documents              Document[]
 
   @@index([companyId])
 }
@@ -200,6 +203,12 @@ model Employment {
   costRate   Decimal        @db.Decimal(10, 4)
   startDate  DateTime
   endDate    DateTime?
+  // Manual opening vacation balance, for teams onboarded onto the app mid-life (no historical
+  // LeaveRequests to derive carryover from). When both are set, computeVacationBalance seeds its
+  // year-walk with `carriedInVacationDays` as the balance at Jan 1 of `carriedInVacationYear`
+  // and grants full annual entitlement from that year on, instead of summing from the hire date.
+  carriedInVacationDays Decimal?  @db.Decimal(5, 2)
+  carriedInVacationYear Int?
   createdAt  DateTime       @default(now())
   updatedAt  DateTime       @updatedAt
 }
@@ -274,6 +283,7 @@ model Project {
 
   milestones Milestone[]
   opportunity Opportunity? @relation("OpportunityProject")
+  amendments  OpportunityAmendment[]
   invoices    Invoice[]
 
   @@index([companyId])
@@ -331,17 +341,25 @@ model Assignment {
   @@unique([milestoneId, userId])
 }
 
+// A planned-hours cell. `taskId` NULL = assignment-level plan (one number for the whole
+// assignment that week); `taskId` set = a task-level breakdown row. Invariant (enforced by the
+// NULLS NOT DISTINCT unique index): for any (assignment, week) there is EITHER one assignment-level
+// row OR one-or-more task-level rows, never both — so summing `hours` by assignment always gives
+// the correct weekly total with no double counting.
 model AssignmentPlan {
   id            String     @id @default(cuid())
   assignmentId  String
   assignment    Assignment @relation(fields: [assignmentId], references: [id])
+  taskId        String?
+  task          Task?      @relation(fields: [taskId], references: [id], onDelete: Cascade)
   weekStartDate DateTime
   hours         Decimal    @db.Decimal(6, 2)
   createdAt     DateTime   @default(now())
   updatedAt     DateTime   @updatedAt
 
-  @@unique([assignmentId, weekStartDate])
+  @@unique([assignmentId, taskId, weekStartDate])
   @@index([weekStartDate])
+  @@index([taskId])
 }
 
 model Task {
@@ -359,7 +377,8 @@ model Task {
   createdAt      DateTime   @default(now())
   updatedAt      DateTime   @updatedAt
 
-  timeEntries TimeEntry[]
+  timeEntries     TimeEntry[]
+  assignmentPlans AssignmentPlan[]
 
   @@index([milestoneId])
 }
@@ -417,6 +436,10 @@ model TimeEntry {
   timeCard      TimeCard     @relation(fields: [timeCardId], references: [id])
   date          DateTime
   hours         Decimal      @db.Decimal(5, 2)
+  // Historical cost rate (EUR/h) frozen onto the entry when its card is APPROVED — the rate that
+  // was correct on `date` (salary + FX effective then). Null until approved / for legacy rows;
+  // cost math falls back to the assignment's snapshot rate when null. See src/lib/cost-rate.ts.
+  costRate      Decimal?     @db.Decimal(10, 4)
   description   String?
   invoiceLineId String?
   invoiceLine   InvoiceLine? @relation(fields: [invoiceLineId], references: [id])
@@ -572,8 +595,9 @@ model Invoice {
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
 
-  lines    InvoiceLine[]
-  payments InvoicePayment[]
+  lines     InvoiceLine[]
+  payments  InvoicePayment[]
+  documents Document[]
 
   @@unique([companyId, invoiceNumber])
   @@index([clientId])
@@ -766,8 +790,10 @@ model Opportunity {
   createdAt         DateTime           @default(now())
   updatedAt         DateTime           @updatedAt
 
-  lines     OpportunityLine[]
-  revisions OpportunityRevision[]
+  lines      OpportunityLine[]
+  revisions  OpportunityRevision[]
+  amendments OpportunityAmendment[]
+  documents  Document[]
 
   @@index([companyId, stage])
   @@index([clientId])
@@ -815,4 +841,70 @@ model OpportunityRevision {
 
   @@unique([opportunityId, version])
   @@index([opportunityId])
+}
+
+// A contract amendment / change-order applied to an already-WON opportunity: additional hours
+// (and value) agreed after the deal closed. Applying one appends milestone(s) to the linked
+// project and bumps the project's contractValue / budgetHours / budgetAmount. Immutable once
+// created — `linesSnapshot` is the JSON record of what was added ({name, quantityHours, unitPrice,
+// billable, target}) and `addedHours`/`netAmount` freeze the totals. `version` numbers amendments
+// per opportunity (1, 2, 3, ...).
+model OpportunityAmendment {
+  id            String      @id @default(cuid())
+  opportunityId String
+  opportunity   Opportunity @relation(fields: [opportunityId], references: [id])
+  projectId     String
+  project       Project     @relation(fields: [projectId], references: [id])
+  version       Int
+  reference     String? // amendment / change-order reference (e.g. "AMD-2")
+  poNumber      String? // customer PO covering the amendment, if any
+  signedDate    DateTime?
+  note          String?
+  linesSnapshot Json
+  addedHours    Decimal     @db.Decimal(10, 2)
+  netAmount     Decimal     @db.Decimal(12, 2) // value added to the project's contract
+  appliedById   String
+  appliedBy     User        @relation("OpportunityAmendmentAppliedBy", fields: [appliedById], references: [id])
+  createdAt     DateTime    @default(now())
+
+  @@unique([opportunityId, version])
+  @@index([opportunityId])
+  @@index([projectId])
+}
+
+// ---------- Documents (invoice / opportunity attachments) ----------
+
+enum DocumentKind {
+  FISCAL_INVOICE // the fiscal app's invoice PDF, attached at reconciliation
+  CREDIT_NOTE // a customer credit-note document
+  SOW // Statement of Work (opportunity)
+  PO // Purchase Order (opportunity)
+  OTHER
+}
+
+// A file attached to an Invoice OR an Opportunity (exactly one of invoiceId/opportunityId is set,
+// enforced in the upload actions). Stored on local disk under uploads/documents (never in public/,
+// served only through the authenticated src/app/api/documents/[fileName] route), mirroring how
+// ExpenseReceipt handles expense files. `companyId` is denormalized so the serve route can
+// tenant-scope without joining the parent.
+model Document {
+  id            String       @id @default(cuid())
+  companyId     String
+  company       Company      @relation(fields: [companyId], references: [id])
+  kind          DocumentKind
+  fileName      String // randomized on-disk name (uuid + ext)
+  originalName  String
+  mimeType      String
+  sizeBytes     Int
+  uploadedById  String
+  uploadedBy    User         @relation(fields: [uploadedById], references: [id])
+  invoiceId     String?
+  invoice       Invoice?     @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  opportunityId String?
+  opportunity   Opportunity? @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  uploadedAt    DateTime     @default(now())
+
+  @@index([invoiceId])
+  @@index([opportunityId])
+  @@index([companyId])
 }

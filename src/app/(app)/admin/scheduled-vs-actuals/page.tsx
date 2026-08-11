@@ -122,9 +122,12 @@ export default async function ScheduledVsActualsPage({
     cellTotals.set(key, existing);
   }
 
+  // Round to 2 decimals so binary-float noise from summing daily entries (e.g. five 3.4h days
+  // summing to 16.999999999999996 instead of 17) never surfaces in the grid.
+  const round2 = (n: number) => Math.round(n * 100) / 100;
   const cells: ActualsCellInit[] = [...cellTotals.entries()].map(([key, totals]) => {
     const [assignmentId, weekStartDate] = key.split("|");
-    return { assignmentId, weekStartDate, ...totals };
+    return { assignmentId, weekStartDate, planned: round2(totals.planned), actual: round2(totals.actual) };
   });
 
   const resourcesMap = new Map<string, ActualsResourceRow>();

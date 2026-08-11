@@ -97,6 +97,15 @@ export default async function TimePage({
   const totalUsedByAssignment = new Map(usedByAssignment.map((u) => [u.assignmentId, Number(u._sum.hours ?? 0)]));
   const totalUsedByTask = new Map(usedByTask.map((u) => [u.taskId as string, Number(u._sum.hours ?? 0)]));
 
+  // This week's planned hours per assignment/task (weekly totals) — drives the "Planned this week"
+  // preview and its "Copy to timesheet" action in the grid. weekStartDate is stored as the Monday
+  // startOfWeek, so a direct equality on weekStart matches the viewed week.
+  const weekPlans = await prisma.assignmentPlan.findMany({
+    where: { assignmentId: { in: assignmentIds }, weekStartDate: weekStart },
+    select: { assignmentId: true, taskId: true, hours: true },
+  });
+  const plannedCells = weekPlans.map((p) => ({ assignmentId: p.assignmentId, taskId: p.taskId, hours: Number(p.hours) }));
+
   function buildOptions(): AssignmentOption[] {
     return allAssignments.map((a) => ({
       id: a.id,
@@ -159,6 +168,7 @@ export default async function TimePage({
         assignments={buildOptions()}
         cards={currentCards}
         previousWeekCards={prevCards}
+        plannedCells={plannedCells}
         isOwnWeek={isOwnWeek}
       />
 

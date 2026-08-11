@@ -2,7 +2,8 @@ import { addDays, parseISO } from "date-fns";
 import { Prisma, type LeaveType } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { startOfWeek, toDateParam } from "@/lib/week";
-import { entitlementForYear, isWorkingDay } from "@/lib/vacation-calc";
+import { ANNUAL_VACATION_ENTITLEMENT, entitlementForYear, isWorkingDay } from "@/lib/vacation-calc";
+import { computeHourlyCostRateEUR } from "@/lib/cost-rate";
 
 // This module (deliberately still named "vacation" — the original leave type, and the only one
 // with entitlement/balance math) now backs all LeaveTypes: VACATION, SICK, PATERNITY, MATERNITY.
@@ -45,6 +46,17 @@ export async function computeVacationBalance(userId: string, asOfYear?: number):
   const targetYear = asOfYear ?? new Date().getFullYear();
   const joinYear = joinDate.getFullYear();
 
+  // Manual opening balance (set by an admin for people onboarded onto the app mid-life, with no
+  // historical LeaveRequests to walk). When present, the walk starts at that year seeded with the
+  // entered days — everything before it is captured by that one number rather than re-derived —
+  // and every year from the baseline on grants the full annual entitlement (an established
+  // employee, so no first-year proration off the hire date).
+  const openingDays = user.employment?.carriedInVacationDays;
+  const openingYear = user.employment?.carriedInVacationYear ?? null;
+  const hasManualOpening = openingDays != null && openingYear != null;
+  const startYear = hasManualOpening ? openingYear : joinYear;
+  const seed = hasManualOpening ? Number(openingDays) : 0;
+
   const approved = await prisma.leaveRequest.findMany({
     where: { userId, type: "VACATION", status: "APPROVED" },
     select: { startDate: true, workingDays: true },
@@ -55,10 +67,10 @@ export async function computeVacationBalance(userId: string, asOfYear?: number):
     takenByYear.set(y, (takenByYear.get(y) ?? 0) + Number(r.workingDays));
   }
 
-  let running = 0;
-  let result: VacationBalance = { year: joinYear, joinDate, entitlement: 0, carriedIn: 0, taken: 0, balance: 0 };
-  for (let year = joinYear; year <= targetYear; year++) {
-    const entitlement = entitlementForYear(joinDate, year);
+  let running = seed;
+  let result: VacationBalance = { year: startYear, joinDate, entitlement: 0, carriedIn: seed, taken: 0, balance: seed };
+  for (let year = startYear; year <= targetYear; year++) {
+    const entitlement = hasManualOpening ? ANNUAL_VACATION_ENTITLEMENT : entitlementForYear(joinDate, year);
     const taken = takenByYear.get(year) ?? 0;
     const carriedIn = running;
     running = carriedIn + entitlement - taken;
@@ -156,11 +168,17 @@ export async function provisionLeave(leaveRequestId: string, projectId: string, 
         // "yyyy-MM-dd" as UTC, which drifts a couple hours off local-midnight in non-UTC
         // server timezones and silently misses the weekStartDate lookups pages rely on.
         const weekStart = parseISO(weekKey);
-        await tx.assignmentPlan.upsert({
-          where: { assignmentId_weekStartDate: { assignmentId: assignment.id, weekStartDate: weekStart } },
-          create: { assignmentId: assignment.id, weekStartDate: weekStart, hours },
-          update: { hours: { increment: hours } },
+        // Leave assignments never carry tasks, so these are always assignment-level rows
+        // (taskId null). findFirst + update/create instead of upsert, since Prisma can't take a
+        // null in a compound-unique where.
+        const existing = await tx.assignmentPlan.findFirst({
+          where: { assignmentId: assignment.id, taskId: null, weekStartDate: weekStart },
         });
+        if (existing) {
+          await tx.assignmentPlan.update({ where: { id: existing.id }, data: { hours: { increment: hours } } });
+        } else {
+          await tx.assignmentPlan.create({ data: { assignmentId: assignment.id, taskId: null, weekStartDate: weekStart, hours } });
+        }
       }
 
       const entriesByWeek = new Map<string, { date: Date; hours: number }[]>();
@@ -188,6 +206,10 @@ export async function provisionLeave(leaveRequestId: string, projectId: string, 
           },
         });
         for (const e of entries) {
+          // These entries are created already-APPROVED, so freeze the historical cost rate for the
+          // day now (leave is paid time — its cost is real overhead). Falls back to the leave
+          // assignment's snapshot rate when no salary/FX covers the date.
+          const costRate = (await computeHourlyCostRateEUR(request.userId, e.date)) ?? Number(assignment.costRate);
           await tx.timeEntry.create({
             data: {
               userId: request.userId,
@@ -197,6 +219,7 @@ export async function provisionLeave(leaveRequestId: string, projectId: string, 
               date: e.date,
               hours: e.hours,
               description: milestoneName,
+              costRate,
             },
           });
         }
@@ -256,8 +279,8 @@ export async function recordLeaveReturn(
 
       for (const [weekKey, hoursRemoved] of hoursRemovedByWeek) {
         const weekStart = parseISO(weekKey);
-        const plan = await tx.assignmentPlan.findUnique({
-          where: { assignmentId_weekStartDate: { assignmentId, weekStartDate: weekStart } },
+        const plan = await tx.assignmentPlan.findFirst({
+          where: { assignmentId, taskId: null, weekStartDate: weekStart },
         });
         if (!plan) continue;
         const remaining = Number(plan.hours) - hoursRemoved;

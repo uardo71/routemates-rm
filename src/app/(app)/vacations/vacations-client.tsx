@@ -4,8 +4,20 @@ import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { format, addDays } from "date-fns";
-import { PlusIcon } from "lucide-react";
+import {
+  PlusIcon,
+  CalendarDaysIcon,
+  WalletIcon,
+  ArchiveIcon,
+  PlaneIcon,
+  ThermometerIcon,
+  ClockIcon,
+  ChevronDownIcon,
+  ChevronUpIcon,
+} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { StatCard } from "@/components/stat-card";
+import { InitialsAvatar } from "@/components/initials-avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -24,6 +36,7 @@ import {
   recordLeaveReturnAction,
   type RequestVacationInput,
 } from "./actions";
+import { AbsenceCalendar, type CalLeave } from "./absence-calendar";
 
 export type VacationStatus = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED";
 export type LeaveType = "VACATION" | "SICK" | "PATERNITY" | "MATERNITY";
@@ -46,7 +59,15 @@ export type VacationRequestRow = {
 };
 export type PersonOption = { id: string; name: string };
 export type ProjectOption = { id: string; name: string };
-export type BalanceRow = { userId: string; userName: string; balance: number; sickDaysThisYear: number };
+export type BalanceRow = {
+  userId: string;
+  userName: string;
+  entitlement: number;
+  carriedIn: number;
+  taken: number;
+  balance: number;
+  sickDaysThisYear: number;
+};
 export type OwnBalance = { year: number; entitlement: number; carriedIn: number; taken: number; balance: number };
 
 const STATUS_TONE: Record<VacationStatus, "secondary" | "default" | "destructive" | "outline"> = {
@@ -67,6 +88,25 @@ function formatLeavePeriod(startDate: string, endDate: string): string {
   return `${format(start, startFmt)} – ${format(end, "MMM d, yyyy")}`;
 }
 
+const firstName = (name: string) => name.split(" ")[0];
+
+/** Compact "used vs total available" bar for a person's vacation, amber while within balance and
+ *  rose once they've gone over. */
+function UsedBar({ taken, total }: { taken: number; total: number }) {
+  const pct = total > 0 ? Math.min(100, (taken / total) * 100) : 0;
+  const over = taken > total;
+  return (
+    <div className="flex items-center gap-2">
+      <div className="h-2 w-24 rounded-full bg-muted overflow-hidden">
+        <div className={cn("h-full rounded-full", over ? "bg-rose-500" : "bg-amber-500")} style={{ width: `${over ? 100 : pct}%` }} />
+      </div>
+      <span className="text-xs text-muted-foreground tabular-nums whitespace-nowrap">
+        {taken}/{total}d
+      </span>
+    </div>
+  );
+}
+
 const LEAVE_TYPES: LeaveType[] = ["VACATION", "SICK", "PATERNITY", "MATERNITY"];
 const LEAVE_TYPE_LABEL: Record<LeaveType, string> = {
   VACATION: "Vacation",
@@ -82,38 +122,6 @@ const LEAVE_TYPE_HINT: Record<LeaveType, string> = {
   PATERNITY: "One-time leave for a childbirth event — no annual quota.",
   MATERNITY: "One-time leave for a childbirth event — no annual quota.",
 };
-
-function BalanceCard({ title, balance, sickDaysThisYear }: { title: string; balance: OwnBalance; sickDaysThisYear: number }) {
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base">{title}</CardTitle>
-      </CardHeader>
-      <CardContent className="flex flex-wrap gap-6 text-sm">
-        <div>
-          <div className="text-xs text-muted-foreground uppercase">Carried in</div>
-          <div className="text-lg font-semibold tabular-nums">{balance.carriedIn}d</div>
-        </div>
-        <div>
-          <div className="text-xs text-muted-foreground uppercase">{balance.year} entitlement</div>
-          <div className="text-lg font-semibold tabular-nums">{balance.entitlement}d</div>
-        </div>
-        <div>
-          <div className="text-xs text-muted-foreground uppercase">Taken this year</div>
-          <div className="text-lg font-semibold tabular-nums">{balance.taken}d</div>
-        </div>
-        <div>
-          <div className="text-xs text-muted-foreground uppercase">Available now</div>
-          <div className="text-lg font-semibold tabular-nums text-primary">{balance.balance}d</div>
-        </div>
-        <div>
-          <div className="text-xs text-muted-foreground uppercase">Sick days this year</div>
-          <div className="text-lg font-semibold tabular-nums">{sickDaysThisYear}d</div>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
 
 function RequestDialog({
   open,
@@ -539,6 +547,54 @@ export function VacationsClient({
 
   const pendingRows = rows.filter((r) => r.status === "PENDING");
 
+  const [showAllTeam, setShowAllTeam] = useState(false);
+  const [showAllHistory, setShowAllHistory] = useState(false);
+  const TEAM_PREVIEW = 6;
+  const HISTORY_PREVIEW = 8;
+
+  const todayStr = format(new Date(), "yyyy-MM-dd");
+  const in30Str = format(addDays(new Date(), 30), "yyyy-MM-dd");
+
+  // Calendar feed: approved leave (solid) + pending (tentative). Cancelled/rejected excluded.
+  const calendarLeave: CalLeave[] = useMemo(
+    () =>
+      rows
+        .filter((r) => r.status === "APPROVED" || r.status === "PENDING")
+        .map((r) => ({
+          userId: r.userId,
+          userName: r.userName,
+          type: r.type,
+          startDate: r.startDate,
+          endDate: r.endDate,
+          tentative: r.status === "PENDING",
+        })),
+    [rows],
+  );
+
+  const outNow = useMemo(
+    () => rows.filter((r) => r.status === "APPROVED" && r.startDate <= todayStr && todayStr <= r.endDate),
+    [rows, todayStr],
+  );
+  const comingUp = useMemo(
+    () =>
+      rows
+        .filter((r) => r.status === "APPROVED" && r.startDate > todayStr && r.startDate <= in30Str)
+        .sort((a, b) => a.startDate.localeCompare(b.startDate)),
+    [rows, todayStr, in30Str],
+  );
+
+  // Company totals — `balances` is only populated for managers.
+  const totals = useMemo(() => {
+    const totalAvailable = balances.reduce((s, b) => s + b.entitlement + b.carriedIn, 0);
+    const totalTaken = balances.reduce((s, b) => s + b.taken, 0);
+    const totalRemaining = balances.reduce((s, b) => s + b.balance, 0);
+    return { totalAvailable, totalTaken, totalRemaining };
+  }, [balances]);
+  const offNowCount = new Set(outNow.map((o) => o.userId)).size;
+
+  const teamShown = showAllTeam ? balances : balances.slice(0, TEAM_PREVIEW);
+  const historyShown = showAllHistory ? rows : rows.slice(0, HISTORY_PREVIEW);
+
   function cancel(id: string) {
     if (!confirm("Cancel this leave request?")) return;
     startTransition(async () => {
@@ -553,9 +609,140 @@ export function VacationsClient({
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex flex-wrap gap-4">
-        <BalanceCard title="Your balance" balance={ownBalance} sickDaysThisYear={ownSickDaysThisYear} />
+      <div className="flex flex-col gap-3">
+        <h2 className="text-sm font-medium text-muted-foreground">Your balance</h2>
+        <div className="grid gap-4 grid-cols-2 sm:grid-cols-3 lg:grid-cols-5">
+          <StatCard label="Carried in" value={`${ownBalance.carriedIn}d`} icon={ArchiveIcon} />
+          <StatCard label={`${ownBalance.year} entitlement`} value={`${ownBalance.entitlement}d`} icon={CalendarDaysIcon} />
+          <StatCard label="Taken this year" value={`${ownBalance.taken}d`} icon={PlaneIcon} />
+          <StatCard
+            label="Available now"
+            value={`${ownBalance.balance}d`}
+            sublabel="vacation days left"
+            icon={WalletIcon}
+            tone={ownBalance.balance <= 0 ? "warning" : "default"}
+          />
+          <StatCard label="Sick days this year" value={`${ownSickDaysThisYear}d`} icon={ThermometerIcon} />
+        </div>
       </div>
+
+      {canViewAll && (
+        <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
+          <StatCard
+            label="Off right now"
+            value={`${offNowCount}`}
+            sublabel={offNowCount === 0 ? "everyone's in" : outNow.map((o) => firstName(o.userName)).join(", ")}
+            icon={PlaneIcon}
+            tone={offNowCount > 0 ? "warning" : "default"}
+          />
+          <StatCard label="Taken this year" value={`${totals.totalTaken}d`} sublabel={`of ${totals.totalAvailable}d available`} icon={CalendarDaysIcon} />
+          <StatCard label="Team days left" value={`${totals.totalRemaining}d`} icon={WalletIcon} />
+          <StatCard label="Coming up · 30d" value={`${comingUp.length}`} sublabel="approved absences" icon={ClockIcon} />
+        </div>
+      )}
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">{canViewAll ? "Team absence calendar" : "Your time off"}</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <AbsenceCalendar leave={calendarLeave} />
+        </CardContent>
+      </Card>
+
+      {canViewAll && (
+        <div className="grid gap-4 md:grid-cols-2">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Out now</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {outNow.length === 0 ? (
+                <p className="text-sm text-muted-foreground">Everyone&apos;s in today.</p>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  {outNow.map((r) => (
+                    <div key={r.id} className="flex items-center gap-2.5 text-sm">
+                      <InitialsAvatar name={r.userName} className="size-6 text-[10px]" />
+                      <span className="font-medium">{r.userName}</span>
+                      <Badge variant="secondary">{LEAVE_TYPE_LABEL[r.type]}</Badge>
+                      <span className="ml-auto text-muted-foreground">back {format(addDays(new Date(`${r.endDate}T00:00:00`), 1), "MMM d")}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Coming up · next 30 days</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {comingUp.length === 0 ? (
+                <p className="text-sm text-muted-foreground">Nothing scheduled in the next 30 days.</p>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  {comingUp.slice(0, 6).map((r) => (
+                    <div key={r.id} className="flex items-center gap-2.5 text-sm">
+                      <InitialsAvatar name={r.userName} className="size-6 text-[10px]" />
+                      <span className="font-medium">{r.userName}</span>
+                      <Badge variant="secondary">{LEAVE_TYPE_LABEL[r.type]}</Badge>
+                      <span className="ml-auto text-muted-foreground">{formatLeavePeriod(r.startDate, r.endDate)}</span>
+                    </div>
+                  ))}
+                  {comingUp.length > 6 && <p className="text-xs text-muted-foreground">+{comingUp.length - 6} more</p>}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {canManage && balances.length > 0 && (
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between">
+            <CardTitle className="text-base">Team balances</CardTitle>
+            {balances.length > TEAM_PREVIEW && (
+              <Button variant="ghost" size="sm" onClick={() => setShowAllTeam((v) => !v)}>
+                {showAllTeam ? <ChevronUpIcon className="size-4 mr-1" /> : <ChevronDownIcon className="size-4 mr-1" />}
+                {showAllTeam ? "Show less" : `Show all ${balances.length}`}
+              </Button>
+            )}
+          </CardHeader>
+          <CardContent>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Person</TableHead>
+                  <TableHead className="text-right">Days left</TableHead>
+                  <TableHead>Used this year</TableHead>
+                  <TableHead className="text-right">Carried in</TableHead>
+                  <TableHead className="text-right">Sick (this year)</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {teamShown.map((b) => (
+                  <TableRow key={b.userId}>
+                    <TableCell>
+                      <div className="flex items-center gap-2.5">
+                        <InitialsAvatar name={b.userName} />
+                        <span className="font-medium">{b.userName}</span>
+                        {b.userId === callerId && <Badge variant="outline" className="text-[10px]">You</Badge>}
+                      </div>
+                    </TableCell>
+                    <TableCell className={cn("text-right tabular-nums font-medium", b.balance <= 0 && "text-rose-600")}>{b.balance}d</TableCell>
+                    <TableCell>
+                      <UsedBar taken={b.taken} total={b.entitlement + b.carriedIn} />
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums text-muted-foreground">{b.carriedIn}d</TableCell>
+                    <TableCell className="text-right tabular-nums text-muted-foreground">{b.sickDaysThisYear}d</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      )}
 
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold">{canViewAll ? "Requests" : "Your requests"}</h2>
@@ -604,37 +791,15 @@ export function VacationsClient({
         </Card>
       )}
 
-      {canManage && balances.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Balances</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Person</TableHead>
-                  <TableHead>Vacation balance</TableHead>
-                  <TableHead>Sick days (this year)</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {balances.map((b) => (
-                  <TableRow key={b.userId}>
-                    <TableCell className="font-medium">{b.userName}</TableCell>
-                    <TableCell className="tabular-nums">{b.balance}d</TableCell>
-                    <TableCell className="tabular-nums">{b.sickDaysThisYear}d</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
-      )}
-
       <Card>
-        <CardHeader>
-          <CardTitle className="text-base">History</CardTitle>
+        <CardHeader className="flex flex-row items-center justify-between">
+          <CardTitle className="text-base">History{rows.length > 0 ? ` (${rows.length})` : ""}</CardTitle>
+          {rows.length > HISTORY_PREVIEW && (
+            <Button variant="ghost" size="sm" onClick={() => setShowAllHistory((v) => !v)}>
+              {showAllHistory ? <ChevronUpIcon className="size-4 mr-1" /> : <ChevronDownIcon className="size-4 mr-1" />}
+              {showAllHistory ? "Show less" : `Show all ${rows.length}`}
+            </Button>
+          )}
         </CardHeader>
         <CardContent>
           <Table>
@@ -652,7 +817,7 @@ export function VacationsClient({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {rows.map((r) => (
+              {historyShown.map((r) => (
                 <TableRow key={r.id}>
                   {canViewAll && <TableCell className="font-medium">{r.userName}</TableCell>}
                   <TableCell>

@@ -21,7 +21,14 @@ export default async function MyPlanningPage({ searchParams }: { searchParams: P
 
   const assignments = await prisma.assignment.findMany({
     where: { userId: user.id, status: { not: "CLOSED" } },
-    include: { milestone: { include: { project: { include: { client: true } } } } },
+    include: {
+      milestone: {
+        include: {
+          project: { include: { client: true } },
+          tasks: { select: { id: true, name: true, assigneeId: true, estimatedHours: true }, orderBy: { createdAt: "asc" } },
+        },
+      },
+    },
     orderBy: { startDate: "asc" },
   });
 
@@ -31,6 +38,7 @@ export default async function MyPlanningPage({ searchParams }: { searchParams: P
   });
   const initialCells: PlanCellInit[] = planEntries.map((p) => ({
     assignmentId: p.assignmentId,
+    taskId: p.taskId,
     weekStartDate: toDateParam(p.weekStartDate),
     hours: Number(p.hours),
   }));
@@ -41,6 +49,9 @@ export default async function MyPlanningPage({ searchParams }: { searchParams: P
     allocatedHours: a.allocatedHours ? Number(a.allocatedHours) : null,
     startDate: toDateParam(a.startDate),
     endDate: toDateParam(a.endDate),
+    tasks: a.milestone.tasks
+      .filter((t) => t.assigneeId === user.id)
+      .map((t) => ({ id: t.id, name: t.name, estimatedHours: t.estimatedHours ? Number(t.estimatedHours) : null })),
   }));
   const resources: PlanResourceRow[] = [{ userId: user.id, userName: "My schedule", role: user.role, assignments: rows }];
 
@@ -72,6 +83,10 @@ export default async function MyPlanningPage({ searchParams }: { searchParams: P
       </div>
 
       <PlannerGrid
+        // Remount on range change so the grid re-reads initialCells (its useState(initial) is only
+        // read at mount) — otherwise a soft Prev/Next navigation shows the new range as empty until a
+        // hard refresh. Same fix as /planning.
+        key={toDateParam(timelineStart)}
         weeks={weeks.map((w) => ({ key: toDateParam(startOfWeek(w)), label: format(w, "MMM d") }))}
         resources={resources}
         initialCells={initialCells}

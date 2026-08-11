@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/session";
 import { canDecideApproval } from "@/lib/permissions";
+import { stampCostRatesForCards } from "@/lib/cost-rate";
 
 export async function decideApprovalsAction(
   cardIds: string[],
@@ -32,6 +33,9 @@ export async function decideApprovalsAction(
     where: { id: { in: cardIds } },
     data: { status: decision, comment: comment?.trim() || null, decidedAt: new Date(), approverId: user.id },
   });
+
+  // Freeze the historically-correct cost rate onto the entries now that they're approved.
+  if (decision === "APPROVED") await stampCostRatesForCards(cardIds);
 
   revalidatePath("/approvals");
   revalidatePath("/time");

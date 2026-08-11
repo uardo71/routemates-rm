@@ -19,7 +19,7 @@ export function StatCard({
     <Card>
       <CardContent className="flex items-start justify-between gap-3">
         <div className="flex flex-col gap-1">
-          <div className="text-sm text-muted-foreground">{label}</div>
+          <div className="text-xs uppercase tracking-wide text-muted-foreground">{label}</div>
           <div
             className={cn(
               "text-2xl font-semibold tabular-nums",

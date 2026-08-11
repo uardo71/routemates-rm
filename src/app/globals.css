@@ -8,7 +8,7 @@
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --font-sans: var(--font-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-mono: var(--font-mono);
   --font-heading: var(--font-sans);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
@@ -48,73 +48,75 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
+/* Brass & paper theme — warm off-white "paper" surfaces, ink-navy sidebar, brass/gold accent,
+   sharp 3px corners + thin borders. Numeric/data typography is IBM Plex Mono (see layout). */
 :root {
-  --background: oklch(0.965 0.002 260);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.546 0.215 262.9);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.96 0.003 260);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.955 0.004 260);
-  --muted-foreground: oklch(0.48 0 0);
-  --accent: oklch(0.93 0.03 262.9);
-  --accent-foreground: oklch(0.32 0.1 262.9);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.87 0.004 260);
-  --input: oklch(0.87 0.004 260);
-  --ring: oklch(0.546 0.215 262.9);
-  --chart-1: oklch(0.546 0.215 262.9);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --radius: 0.375rem;
-  --sidebar: oklch(0.99 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.546 0.215 262.9);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.93 0.03 262.9);
-  --sidebar-accent-foreground: oklch(0.32 0.1 262.9);
-  --sidebar-border: oklch(0.9 0.003 260);
-  --sidebar-ring: oklch(0.546 0.215 262.9);
+  --background: #ebeff1; /* paper */
+  --foreground: #141f2b; /* ink navy */
+  --card: #ffffff;
+  --card-foreground: #141f2b;
+  --popover: #ffffff;
+  --popover-foreground: #141f2b;
+  --primary: #a9812f; /* brass */
+  --primary-foreground: #16202c; /* dark ink on brass — AA-legible, premium "gold" look */
+  --secondary: #e2e7ea;
+  --secondary-foreground: #141f2b;
+  --muted: #e4e8eb;
+  --muted-foreground: #5b6672;
+  --accent: #f2e9d3; /* brass tint */
+  --accent-foreground: #6e5518;
+  --destructive: #b23a2e; /* rust */
+  --border: #d2d8dc;
+  --input: #c9d0d5;
+  --ring: #a9812f;
+  --chart-1: #a9812f; /* brass */
+  --chart-2: #2e7d5b; /* green */
+  --chart-3: #b23a2e; /* rust */
+  --chart-4: #d9a441; /* amber */
+  --chart-5: #3b6ea5; /* blue */
+  --radius: 0.1875rem; /* 3px — sharp corners */
+  --sidebar: #141f2b; /* ink navy */
+  --sidebar-foreground: #c7d0d9;
+  --sidebar-primary: #a9812f;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #1e2b3a; /* active item */
+  --sidebar-accent-foreground: #ead6a8; /* brass-tinted */
+  --sidebar-border: #24313f;
+  --sidebar-ring: #a9812f;
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.623 0.188 259.8);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.623 0.188 259.8);
-  --chart-1: oklch(0.623 0.188 259.8);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --sidebar: oklch(0.185 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.623 0.188 259.8);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0.045 260);
-  --sidebar-accent-foreground: oklch(0.929 0.04 262);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.623 0.188 259.8);
+  --background: #0e1620; /* deep ink */
+  --foreground: #e7ebee;
+  --card: #16202c;
+  --card-foreground: #e7ebee;
+  --popover: #16202c;
+  --popover-foreground: #e7ebee;
+  --primary: #c79a45; /* lighter brass for dark contrast */
+  --primary-foreground: #141f2b;
+  --secondary: #1e2a38;
+  --secondary-foreground: #e7ebee;
+  --muted: #1e2a38;
+  --muted-foreground: #95a1ae;
+  --accent: #26313e;
+  --accent-foreground: #ead6a8;
+  --destructive: #d2624e;
+  --border: #2a3542;
+  --input: #303c4a;
+  --ring: #c79a45;
+  --chart-1: #c79a45;
+  --chart-2: #4bae82;
+  --chart-3: #d2624e;
+  --chart-4: #e0b45c;
+  --chart-5: #6197c9;
+  --sidebar: #0a121b;
+  --sidebar-foreground: #c7d0d9;
+  --sidebar-primary: #c79a45;
+  --sidebar-primary-foreground: #0e1620;
+  --sidebar-accent: #17222f;
+  --sidebar-accent-foreground: #ead6a8;
+  --sidebar-border: #1e2a38;
+  --sidebar-ring: #c79a45;
 }
 
 @layer base {
@@ -127,4 +129,22 @@
   html {
     @apply font-sans;
   }
+}
+
+/* Brass & paper: every tabular figure renders in IBM Plex Mono (numbers/data), per the reference.
+   Kept outside @layer so it wins over the sans font on numeric cells. */
+.tabular-nums {
+  font-family: var(--font-mono);
+}
+
+/* Subtle layered "paper" shadow for cards — soft ink-tinted lift over the paper background. */
+.shadow-paper {
+  box-shadow:
+    0 1px 2px -1px rgb(20 31 43 / 0.09),
+    0 4px 12px -4px rgb(20 31 43 / 0.06);
+}
+.dark .shadow-paper {
+  box-shadow:
+    0 1px 2px -1px rgb(0 0 0 / 0.4),
+    0 4px 14px -4px rgb(0 0 0 / 0.3);
 }

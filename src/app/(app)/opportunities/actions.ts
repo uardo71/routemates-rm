@@ -8,6 +8,7 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/session";
 import { computeQuoteTotals, isOpenStage } from "@/lib/opportunity";
+import { MAX_RECEIPT_SIZE_BYTES, isAllowedReceiptType, saveReceiptFile, deleteReceiptFile } from "@/lib/receipt-storage";
 
 // ---------- helpers ----------
 
@@ -516,4 +517,184 @@ export async function decideOpportunityAction(
   revalidatePath("/opportunities");
   revalidatePath("/projects");
   return { projectId: project.id };
+}
+
+// ---------- amendments (change-orders on a won deal) ----------
+
+const AmendmentLineSchema = z.object({
+  name: z.string().min(1, "Line name is required.").max(200),
+  quantityHours: z.coerce.number().positive("Hours must be greater than 0."),
+  unitPrice: z.coerce.number().min(0, "Rate can't be negative."),
+  billable: z.boolean().default(true),
+  // "NEW" → create a new milestone for this line; otherwise an existing milestoneId on the
+  // project whose budget hours (and, for fixed price, lump sum) get grown.
+  target: z.string().min(1),
+});
+
+const AmendmentSchema = z.object({
+  opportunityId: z.string().min(1),
+  reference: z.string().max(100).optional(),
+  poNumber: z.string().max(100).optional(),
+  signedDate: z.string().optional(),
+  note: z.string().max(1000).optional(),
+  lines: z.array(AmendmentLineSchema).min(1, "Add at least one amendment line."),
+});
+
+export type CreateAmendmentInput = z.infer<typeof AmendmentSchema>;
+
+/** Applies a contract amendment / change-order to an already-WON opportunity: for each line it
+ *  either creates a new milestone on the linked project (default) or grows an existing one's budget
+ *  hours (+ lump sum for fixed price), then bumps the project's contractValue / budgetAmount /
+ *  budgetHours and writes an immutable OpportunityAmendment audit row. Admin-only (it changes the
+ *  contract value), mirroring the deal-desk approval gate. Amendments carry no deal-level discount —
+ *  net added = Σ hours × rate. */
+export async function createAmendmentAction(input: CreateAmendmentInput): Promise<{ error?: string }> {
+  const caller = await requirePermission("opportunities:approve");
+  const parsed = AmendmentSchema.safeParse(input);
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Invalid input." };
+  const data = parsed.data;
+
+  const signedDate = parseOptionalDate(data.signedDate);
+  if (signedDate === "invalid") return { error: "Invalid signed date." };
+
+  const opp = await prisma.opportunity.findFirst({
+    where: { id: data.opportunityId, companyId: caller.companyId },
+    include: {
+      project: { include: { milestones: { select: { id: true } } } },
+      _count: { select: { amendments: true } },
+    },
+  });
+  if (!opp) return { error: "Opportunity not found." };
+  if (opp.stage !== "WON" || !opp.projectId || !opp.project) {
+    return { error: "Amendments can only be added to a won opportunity that has a project." };
+  }
+  const project = opp.project;
+
+  const milestoneIds = new Set(project.milestones.map((m) => m.id));
+  for (const line of data.lines) {
+    if (line.target !== "NEW" && !milestoneIds.has(line.target)) {
+      return { error: "A line targets a milestone that isn't on this project." };
+    }
+  }
+
+  const isFixedPrice = opp.billingType === "FIXED_PRICE";
+  const addedHours = data.lines.reduce((s, l) => s + l.quantityHours, 0);
+  const netAmount = computeQuoteTotals(
+    data.lines.map((l) => ({ quantityHours: l.quantityHours, unitPrice: l.unitPrice })),
+    null,
+    null,
+  ).net;
+
+  await prisma.$transaction(async (tx) => {
+    const version = opp._count.amendments + 1;
+    const snapshot: Prisma.InputJsonValue = [];
+
+    for (const line of data.lines) {
+      const lineTotal = line.quantityHours * line.unitPrice;
+      let createdMilestoneId: string | null = null;
+
+      if (line.target === "NEW") {
+        // Same FP-vs-T&M salesPrice split as the original conversion: lump sum for fixed price,
+        // per-hour list rate otherwise.
+        const salesPrice = isFixedPrice ? lineTotal : line.unitPrice;
+        const created = await tx.milestone.create({
+          data: {
+            projectId: project.id,
+            name: line.name,
+            billable: line.billable,
+            salesPrice,
+            cost: 0,
+            budgetHours: line.quantityHours,
+            status: "PLANNED",
+          },
+        });
+        createdMilestoneId = created.id;
+      } else {
+        const existing = await tx.milestone.findUniqueOrThrow({ where: { id: line.target } });
+        const updateData: Prisma.MilestoneUpdateInput = {
+          budgetHours: Number(existing.budgetHours ?? 0) + line.quantityHours,
+        };
+        // For fixed price the milestone salesPrice is a lump sum, so grow it; for T&M/RETAINER it's
+        // a per-hour rate that stays as-is (the added hours simply bill at the existing rate).
+        if (isFixedPrice) updateData.salesPrice = Number(existing.salesPrice) + lineTotal;
+        await tx.milestone.update({ where: { id: line.target }, data: updateData });
+      }
+
+      (snapshot as Prisma.JsonArray).push({
+        name: line.name,
+        quantityHours: line.quantityHours,
+        unitPrice: line.unitPrice,
+        billable: line.billable,
+        target: line.target,
+        createdMilestoneId,
+      });
+    }
+
+    await tx.project.update({
+      where: { id: project.id },
+      data: {
+        contractValue: Number(project.contractValue ?? 0) + netAmount,
+        budgetAmount: Number(project.budgetAmount ?? 0) + netAmount,
+        budgetHours: Number(project.budgetHours ?? 0) + addedHours,
+      },
+    });
+
+    await tx.opportunityAmendment.create({
+      data: {
+        opportunityId: opp.id,
+        projectId: project.id,
+        version,
+        reference: data.reference?.trim() || null,
+        poNumber: data.poNumber?.trim() || null,
+        signedDate: signedDate ?? null,
+        note: data.note?.trim() || null,
+        linesSnapshot: snapshot,
+        addedHours,
+        netAmount,
+        appliedById: caller.id,
+      },
+    });
+  });
+
+  revalidatePath(`/opportunities/${opp.id}`);
+  revalidatePath(`/projects/${opp.projectId}`);
+  revalidatePath("/projects");
+  revalidatePath("/revenue");
+  return {};
+}
+
+// ---------- documents (SoW / PO / other) ----------
+
+const OPP_DOC_KINDS = ["SOW", "PO", "OTHER"] as const;
+type OppDocKind = (typeof OPP_DOC_KINDS)[number];
+
+export async function uploadOpportunityDocumentAction(opportunityId: string, formData: FormData): Promise<{ error?: string }> {
+  const caller = await requirePermission("opportunities:manage");
+  const opp = await prisma.opportunity.findFirst({ where: { id: opportunityId, companyId: caller.companyId }, select: { id: true } });
+  if (!opp) return { error: "Opportunity not found." };
+
+  const kind = String(formData.get("kind") ?? "");
+  if (!OPP_DOC_KINDS.includes(kind as OppDocKind)) return { error: "Invalid document type." };
+
+  const file = formData.get("file");
+  if (!(file instanceof File) || file.size === 0) return { error: "Pick a file to upload." };
+  if (file.size > MAX_RECEIPT_SIZE_BYTES) return { error: `File is too large (max ${MAX_RECEIPT_SIZE_BYTES / 1024 / 1024}MB).` };
+  if (!isAllowedReceiptType(file.type)) return { error: "Unsupported file type — use a PDF or an image (JPG/PNG/WEBP)." };
+
+  const saved = await saveReceiptFile(file, "documents");
+  await prisma.document.create({
+    data: { companyId: caller.companyId, kind: kind as OppDocKind, opportunityId, uploadedById: caller.id, ...saved },
+  });
+  revalidatePath(`/opportunities/${opportunityId}`);
+  return {};
+}
+
+export async function deleteOpportunityDocumentAction(documentId: string): Promise<{ error?: string }> {
+  const caller = await requirePermission("opportunities:manage");
+  const doc = await prisma.document.findFirst({ where: { id: documentId, companyId: caller.companyId, opportunityId: { not: null } } });
+  if (!doc) return { error: "Document not found." };
+  await prisma.document.delete({ where: { id: doc.id } });
+  await deleteReceiptFile(doc.fileName, "documents");
+  if (doc.opportunityId) revalidatePath(`/opportunities/${doc.opportunityId}`);
+  return {};
 }

@@ -6,6 +6,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/session";
 import { invoiceTotals } from "@/lib/invoice";
+import { MAX_RECEIPT_SIZE_BYTES, isAllowedReceiptType, saveReceiptFile, deleteReceiptFile } from "@/lib/receipt-storage";
 import type { InvoiceType } from "@prisma/client";
 
 // ---------- helpers ----------
@@ -29,6 +30,13 @@ const LineSchema = z.object({
   quantity: z.coerce.number(),
   rate: z.coerce.number(),
   milestoneId: z.string().optional().nullable(),
+});
+
+// Update variant carries the existing line's id so we can diff in place: a line with a known
+// id is edited (keeping its linked time entries), a line without one is created, and any
+// existing line missing from the payload is deleted (releasing its time entries).
+const UpdateLineSchema = LineSchema.extend({
+  id: z.string().optional().nullable(),
 });
 
 const CreateSchema = z.object({
@@ -141,15 +149,22 @@ export async function createTimeInvoiceAction(input: CreateTimeInvoiceInput): Pr
   if (!project) return { error: "Invalid project." };
   if (project.billingType === "FIXED_PRICE") return { error: "Fixed-price projects are billed by amount/milestone, not by time." };
 
-  const start = parseDate(d.periodStart);
-  const end = parseDate(d.periodEnd);
-  if (start === "invalid" || end === "invalid" || !start || !end) return { error: "Invalid period." };
+  // TimeEntry.date is stored at UTC midnight (new Date("yyyy-MM-dd")), so parse the period the same
+  // way. parseDate's parseISO uses LOCAL midnight, which in a non-UTC timezone shifts the boundary
+  // and silently drops the final day's hours (e.g. a Jul 31 entry at UTC-midnight falls just after a
+  // local-midnight Jul 31 period end). `queryEnd` covers the whole last day so it's inclusive.
+  const dateOnly = /^\d{4}-\d{2}-\d{2}$/;
+  if (!dateOnly.test(d.periodStart) || !dateOnly.test(d.periodEnd)) return { error: "Invalid period." };
+  const start = new Date(`${d.periodStart}T00:00:00.000Z`);
+  const end = new Date(`${d.periodEnd}T00:00:00.000Z`);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return { error: "Invalid period." };
   if (end < start) return { error: "End date must be after start date." };
+  const queryEnd = new Date(`${d.periodEnd}T23:59:59.999Z`);
 
   const entries = await prisma.timeEntry.findMany({
     where: {
       invoiceLineId: null,
-      date: { gte: start, lte: end },
+      date: { gte: start, lte: queryEnd },
       timeCard: { status: "APPROVED" },
       milestone: { billable: true, projectId: project.id },
     },
@@ -334,7 +349,7 @@ const UpdateSchema = z.object({
   customerReference: z.string().max(100).optional().nullable(),
   poNumber: z.string().max(100).optional().nullable(),
   notes: z.string().max(2000).optional().nullable(),
-  lines: z.array(LineSchema).optional(),
+  lines: z.array(UpdateLineSchema).min(1, "Add at least one line.").optional(),
 });
 export type UpdateInvoiceInput = z.infer<typeof UpdateSchema>;
 
@@ -359,11 +374,29 @@ export async function updateInvoiceAction(input: UpdateInvoiceInput): Promise<{ 
 
   await prisma.$transaction(async (tx) => {
     if (replaceLines && d.lines) {
-      const oldLineIds = inv.lines.map((l) => l.id);
-      await tx.timeEntry.updateMany({ where: { invoiceLineId: { in: oldLineIds } }, data: { invoiceLineId: null } });
-      await tx.invoiceLine.deleteMany({ where: { invoiceId: inv.id } });
+      // Per-line diff (keyed by existing line id) so kept lines retain their linked time
+      // entries; only lines actually removed release theirs. A payload id that isn't one of
+      // this invoice's lines is treated as a new line (never trusts a foreign id).
+      const existingIds = new Set(inv.lines.map((l) => l.id));
+      const keptIds = new Set<string>();
       for (const l of d.lines) {
-        await tx.invoiceLine.create({ data: { invoiceId: inv.id, milestoneId: l.milestoneId ?? null, description: l.description, quantity: l.quantity, rate: l.rate, amount: Math.round(l.quantity * l.rate * 100) / 100 } });
+        const amount = Math.round(l.quantity * l.rate * 100) / 100;
+        if (l.id && existingIds.has(l.id)) {
+          keptIds.add(l.id);
+          await tx.invoiceLine.update({
+            where: { id: l.id },
+            data: { milestoneId: l.milestoneId ?? null, description: l.description, quantity: l.quantity, rate: l.rate, amount },
+          });
+        } else {
+          await tx.invoiceLine.create({
+            data: { invoiceId: inv.id, milestoneId: l.milestoneId ?? null, description: l.description, quantity: l.quantity, rate: l.rate, amount },
+          });
+        }
+      }
+      const removedIds = inv.lines.filter((l) => !keptIds.has(l.id)).map((l) => l.id);
+      if (removedIds.length > 0) {
+        await tx.timeEntry.updateMany({ where: { invoiceLineId: { in: removedIds } }, data: { invoiceLineId: null } });
+        await tx.invoiceLine.deleteMany({ where: { id: { in: removedIds } } });
       }
     }
     await tx.invoice.update({
@@ -389,7 +422,7 @@ export async function updateInvoiceAction(input: UpdateInvoiceInput): Promise<{ 
 
 export async function deleteInvoiceAction(invoiceId: string): Promise<{ error?: string }> {
   const user = await requirePermission("invoices:manage");
-  const inv = await prisma.invoice.findFirst({ where: { id: invoiceId, companyId: user.companyId }, include: { lines: true } });
+  const inv = await prisma.invoice.findFirst({ where: { id: invoiceId, companyId: user.companyId }, include: { lines: true, documents: true } });
   if (!inv) return { error: "Invoice not found." };
   if (inv.status !== "DRAFT") return { error: "Only a draft can be deleted — void it instead." };
   const lineIds = inv.lines.map((l) => l.id);
@@ -397,8 +430,46 @@ export async function deleteInvoiceAction(invoiceId: string): Promise<{ error?: 
     prisma.timeEntry.updateMany({ where: { invoiceLineId: { in: lineIds } }, data: { invoiceLineId: null } }),
     prisma.invoicePayment.deleteMany({ where: { invoiceId: inv.id } }),
     prisma.invoiceLine.deleteMany({ where: { invoiceId: inv.id } }),
-    prisma.invoice.delete({ where: { id: inv.id } }),
+    prisma.invoice.delete({ where: { id: inv.id } }), // Document rows cascade via FK
   ]);
+  // Cascade only removes the DB rows; unlink the orphaned files too (best-effort).
+  for (const d of inv.documents) await deleteReceiptFile(d.fileName, "documents");
   revalidatePath("/invoices");
+  return {};
+}
+
+// ---------- documents (fiscal invoice / credit note / other) ----------
+
+const INVOICE_DOC_KINDS = ["FISCAL_INVOICE", "CREDIT_NOTE", "OTHER"] as const;
+type InvoiceDocKind = (typeof INVOICE_DOC_KINDS)[number];
+
+export async function uploadInvoiceDocumentAction(invoiceId: string, formData: FormData): Promise<{ error?: string }> {
+  const user = await requirePermission("invoices:manage");
+  const invoice = await prisma.invoice.findFirst({ where: { id: invoiceId, companyId: user.companyId }, select: { id: true } });
+  if (!invoice) return { error: "Invoice not found." };
+
+  const kind = String(formData.get("kind") ?? "");
+  if (!INVOICE_DOC_KINDS.includes(kind as InvoiceDocKind)) return { error: "Invalid document type." };
+
+  const file = formData.get("file");
+  if (!(file instanceof File) || file.size === 0) return { error: "Pick a file to upload." };
+  if (file.size > MAX_RECEIPT_SIZE_BYTES) return { error: `File is too large (max ${MAX_RECEIPT_SIZE_BYTES / 1024 / 1024}MB).` };
+  if (!isAllowedReceiptType(file.type)) return { error: "Unsupported file type — use a PDF or an image (JPG/PNG/WEBP)." };
+
+  const saved = await saveReceiptFile(file, "documents");
+  await prisma.document.create({
+    data: { companyId: user.companyId, kind: kind as InvoiceDocKind, invoiceId, uploadedById: user.id, ...saved },
+  });
+  revalidatePath(`/invoices/${invoiceId}`);
+  return {};
+}
+
+export async function deleteInvoiceDocumentAction(documentId: string): Promise<{ error?: string }> {
+  const user = await requirePermission("invoices:manage");
+  const doc = await prisma.document.findFirst({ where: { id: documentId, companyId: user.companyId, invoiceId: { not: null } } });
+  if (!doc) return { error: "Document not found." };
+  await prisma.document.delete({ where: { id: doc.id } });
+  await deleteReceiptFile(doc.fileName, "documents");
+  if (doc.invoiceId) revalidatePath(`/invoices/${doc.invoiceId}`);
   return {};
 }

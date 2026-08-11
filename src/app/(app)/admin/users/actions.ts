@@ -76,6 +76,8 @@ const UpdateUserSchema = z.object({
   trackEmployment: z.boolean(),
   startDate: z.string().optional(),
   endDate: z.string().optional(),
+  carriedInVacationDays: z.string().optional(),
+  carriedInVacationYear: z.string().optional(),
   newPassword: z.string().min(8).optional().or(z.literal("")),
 });
 
@@ -91,10 +93,29 @@ export async function updateUserAction(_prevState: string | undefined, formData:
     trackEmployment: formData.get("trackEmployment") === "on",
     startDate: formData.get("startDate") || undefined,
     endDate: formData.get("endDate") || undefined,
+    carriedInVacationDays: formData.get("carriedInVacationDays") || undefined,
+    carriedInVacationYear: formData.get("carriedInVacationYear") || undefined,
     newPassword: formData.get("newPassword") || undefined,
   });
   if (!parsed.success) return parsed.error.issues[0]?.message ?? "Invalid input";
   const data = parsed.data;
+
+  // Manual opening vacation balance. Blank days clears it (and the year); if days are given
+  // without a year, the balance is treated as of Jan 1 of the current year.
+  const carriedDaysRaw = data.carriedInVacationDays?.trim();
+  let carriedInVacationDays: number | null = null;
+  let carriedInVacationYear: number | null = null;
+  if (carriedDaysRaw) {
+    carriedInVacationDays = Number(carriedDaysRaw);
+    if (!Number.isFinite(carriedInVacationDays) || carriedInVacationDays < 0) {
+      return "Carried-in vacation days must be a number of 0 or more.";
+    }
+    const yearRaw = data.carriedInVacationYear?.trim();
+    carriedInVacationYear = yearRaw ? Number(yearRaw) : new Date().getFullYear();
+    if (!Number.isInteger(carriedInVacationYear) || carriedInVacationYear < 2000 || carriedInVacationYear > 2100) {
+      return "Carried-in vacation year must be a valid year.";
+    }
+  }
 
   const target = await prisma.user.findFirst({
     where: { id: data.userId, companyId: user.companyId },
@@ -129,11 +150,15 @@ export async function updateUserAction(_prevState: string | undefined, formData:
         costRate: 0,
         startDate: data.startDate ? new Date(data.startDate) : new Date(),
         endDate: data.endDate ? new Date(data.endDate) : undefined,
+        carriedInVacationDays,
+        carriedInVacationYear,
       },
       update: {
         type: data.role === "CONTRACTOR" ? "CONTRACTOR" : "EMPLOYEE",
         startDate: data.startDate ? new Date(data.startDate) : undefined,
         endDate: data.endDate ? new Date(data.endDate) : undefined,
+        carriedInVacationDays,
+        carriedInVacationYear,
       },
     });
     // Cost rate is never typed in directly — derive it from salary history.

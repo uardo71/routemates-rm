@@ -14,10 +14,11 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
     include: {
       client: { select: { name: true } },
       project: { select: { id: true, name: true } },
-      lines: { orderBy: { createdAt: "asc" } },
+      lines: { orderBy: { createdAt: "asc" }, include: { _count: { select: { timeEntries: true } } } },
       payments: { orderBy: { date: "asc" } },
       creditNoteFor: { select: { id: true, invoiceNumber: true } },
       creditNotes: { select: { id: true, invoiceNumber: true, status: true } },
+      documents: { orderBy: { uploadedAt: "desc" }, select: { id: true, kind: true, fileName: true, originalName: true } },
     },
   });
   if (!inv) notFound();
@@ -51,10 +52,11 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
     gross: t.gross,
     paid: Math.round(paid * 100) / 100,
     outstanding: Math.round((t.gross - paid) * 100) / 100,
-    lines: inv.lines.map((l) => ({ id: l.id, description: l.description, quantity: Number(l.quantity), rate: Number(l.rate), amount: Number(l.amount) })),
+    lines: inv.lines.map((l) => ({ id: l.id, description: l.description, quantity: Number(l.quantity), rate: Number(l.rate), amount: Number(l.amount), milestoneId: l.milestoneId, timeEntryCount: l._count.timeEntries })),
     payments: inv.payments.map((p) => ({ id: p.id, amount: Number(p.amount), date: p.date.toISOString().slice(0, 10), method: p.method, reference: p.reference })),
     creditNoteFor: inv.creditNoteFor ? { id: inv.creditNoteFor.id, invoiceNumber: inv.creditNoteFor.invoiceNumber } : null,
     creditNotes: inv.creditNotes.map((c) => ({ id: c.id, invoiceNumber: c.invoiceNumber })),
+    documents: inv.documents.map((d) => ({ id: d.id, kind: d.kind, fileName: d.fileName, originalName: d.originalName })),
   };
 
   return (

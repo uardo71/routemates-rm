@@ -66,13 +66,16 @@ export function TaskRow({
     }
     startTransition(async () => {
       try {
-        await quickUpdateTaskAction(task.id, {
+        const result = await quickUpdateTaskAction(task.id, {
           name: name.trim(),
           assigneeId: assigneeId === "__none__" ? null : assigneeId,
           estimatedHours: hours ? Number(hours) : null,
           dueDate: dueDate || null,
           status,
         });
+        if (result?.plansCleared) {
+          toast.warning(`Reassigned — cleared ${result.plansCleared} task-level plan ${result.plansCleared === 1 ? "entry" : "entries"} from the planner.`);
+        }
         setEditing(false);
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Failed to save task.");

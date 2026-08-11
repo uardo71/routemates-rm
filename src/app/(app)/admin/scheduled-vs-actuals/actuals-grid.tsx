@@ -64,7 +64,7 @@ export function ActualsGrid({
     return cellMap.get(`${assignmentId}|${weekKey}`) ?? { planned: 0, actual: 0 };
   }
   function resourceWeekTotals(resource: ActualsResourceRow, weekKey: string) {
-    return resource.assignments.reduce(
+    const totals = resource.assignments.reduce(
       (acc, a) => {
         const c = cellFor(a.id, weekKey);
         acc.planned += c.planned;
@@ -73,6 +73,8 @@ export function ActualsGrid({
       },
       { planned: 0, actual: 0 }
     );
+    // Round the rollup too, so summing per-assignment cells can't reintroduce float noise.
+    return { planned: Math.round(totals.planned * 100) / 100, actual: Math.round(totals.actual * 100) / 100 };
   }
 
   return (

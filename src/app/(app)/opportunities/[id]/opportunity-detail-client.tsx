@@ -15,9 +15,27 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { InfoField } from "@/components/info-field";
+import { StatusStamp, type StampTone } from "@/components/status-stamp";
+import { DocumentsCard } from "@/components/documents-card";
+
+const OPP_DOC_KINDS = [
+  { value: "SOW", label: "SoW" },
+  { value: "PO", label: "PO" },
+  { value: "OTHER", label: "Other" },
+];
 import { formatMoney, formatNumber } from "@/lib/format";
-import { STAGE_LABELS, STAGE_TONE, isOpenStage } from "@/lib/opportunity";
+import { STAGE_LABELS, isOpenStage } from "@/lib/opportunity";
 import type { OpportunityStage, ProjectBillingType, DiscountType } from "@prisma/client";
+
+const STAGE_STAMP: Record<OpportunityStage, { tone: StampTone; dashed?: boolean }> = {
+  QUALIFYING: { tone: "neutral", dashed: true },
+  PROPOSAL_SENT: { tone: "blue" },
+  NEGOTIATION: { tone: "amber" },
+  PENDING_APPROVAL: { tone: "amber", dashed: true },
+  WON: { tone: "green" },
+  LOST: { tone: "rust" },
+  CANCELLED: { tone: "neutral" },
+};
 import {
   updateOpportunityAction,
   addLineAction,
@@ -29,6 +47,9 @@ import {
   recallSubmissionAction,
   markLostAction,
   decideOpportunityAction,
+  uploadOpportunityDocumentAction,
+  deleteOpportunityDocumentAction,
+  createAmendmentAction,
 } from "../actions";
 
 export type QuoteLineDTO = {
@@ -49,6 +70,28 @@ export type RevisionDTO = {
   netAmount: number;
   issuedByName: string;
   createdAt: string;
+};
+export type MilestoneOption = { id: string; name: string };
+export type AmendmentLineDTO = {
+  name: string;
+  quantityHours: number;
+  unitPrice: number;
+  billable: boolean;
+  target: string;
+  createdMilestoneId: string | null;
+};
+export type AmendmentDTO = {
+  id: string;
+  version: number;
+  reference: string | null;
+  poNumber: string | null;
+  signedDate: string | null;
+  note: string | null;
+  addedHours: number;
+  netAmount: number;
+  appliedByName: string;
+  createdAt: string;
+  lines: AmendmentLineDTO[];
 };
 export type OpportunityDetail = {
   id: string;
@@ -83,6 +126,9 @@ export type OpportunityDetail = {
   net: number;
   lines: QuoteLineDTO[];
   revisions: RevisionDTO[];
+  documents: { id: string; kind: string; fileName: string; originalName: string }[];
+  projectMilestones: MilestoneOption[];
+  amendments: AmendmentDTO[];
 };
 
 type Option = { id: string; name: string };
@@ -112,6 +158,7 @@ export function OpportunityDetailClient({
   const [proposalOpen, setProposalOpen] = useState(false);
   const [decideOpen, setDecideOpen] = useState(false);
   const [lostOpen, setLostOpen] = useState(false);
+  const [amendmentOpen, setAmendmentOpen] = useState(false);
 
   const isOpen = isOpenStage(detail.stage);
   const isPending = detail.stage === "PENDING_APPROVAL";
@@ -142,7 +189,7 @@ export function OpportunityDetailClient({
         <div className="flex flex-col gap-1">
           <div className="flex items-center gap-2 flex-wrap">
             <h1 className="text-2xl font-semibold">{detail.name}</h1>
-            <Badge variant={STAGE_TONE[detail.stage]}>{STAGE_LABELS[detail.stage]}</Badge>
+            <StatusStamp label={STAGE_LABELS[detail.stage]} {...STAGE_STAMP[detail.stage]} />
           </div>
           <p className="text-sm text-muted-foreground">
             {detail.clientName}
@@ -370,6 +417,15 @@ export function OpportunityDetailClient({
         </Card>
       </div>
 
+      <DocumentsCard
+        title="Documents (SoW / PO)"
+        documents={detail.documents}
+        kinds={OPP_DOC_KINDS}
+        canManage={canManage}
+        uploadAction={uploadOpportunityDocumentAction.bind(null, detail.id)}
+        deleteAction={deleteOpportunityDocumentAction}
+      />
+
       {/* Proposal revisions */}
       <Card>
         <CardHeader>
@@ -414,6 +470,83 @@ export function OpportunityDetailClient({
           </Table>
         </CardContent>
       </Card>
+
+      {/* Amendments (change-orders on a won deal) */}
+      {detail.stage === "WON" && detail.projectId && (
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between">
+            <div>
+              <CardTitle className="text-base">Amendments</CardTitle>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Add hours after the deal closed — each appends to the project and raises its contract value.
+              </p>
+            </div>
+            {canApprove && (
+              <Button size="sm" variant="outline" onClick={() => setAmendmentOpen(true)} disabled={pending}>
+                <PlusIcon /> Add amendment
+              </Button>
+            )}
+          </CardHeader>
+          <CardContent>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Amendment</TableHead>
+                  <TableHead>Reference</TableHead>
+                  <TableHead>Signed</TableHead>
+                  <TableHead className="text-right">Added hours</TableHead>
+                  <TableHead className="text-right">Added value</TableHead>
+                  <TableHead>Applied by</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {detail.amendments.map((a) => (
+                  <TableRow key={a.id}>
+                    <TableCell className="font-medium align-top">
+                      A{a.version}
+                      <span className="block text-xs text-muted-foreground font-normal">
+                        {a.lines
+                          .map((l) => `${l.name} (+${formatNumber(l.quantityHours)}h${l.target === "NEW" ? ", new milestone" : ""})`)
+                          .join("; ")}
+                      </span>
+                      {a.note ? <span className="block text-xs text-muted-foreground font-normal italic">{a.note}</span> : null}
+                    </TableCell>
+                    <TableCell className="align-top">
+                      {a.reference ?? <span className="text-muted-foreground">—</span>}
+                      {a.poNumber ? <span className="block text-xs text-muted-foreground">PO {a.poNumber}</span> : null}
+                    </TableCell>
+                    <TableCell className="align-top text-muted-foreground">{a.signedDate ?? "—"}</TableCell>
+                    <TableCell className="align-top text-right tabular-nums">+{formatNumber(a.addedHours)}</TableCell>
+                    <TableCell className="align-top text-right tabular-nums font-medium">+{formatMoney(a.netAmount, c)}</TableCell>
+                    <TableCell className="align-top text-muted-foreground">
+                      {a.appliedByName}
+                      <span className="block text-xs">{a.createdAt}</span>
+                    </TableCell>
+                  </TableRow>
+                ))}
+                {detail.amendments.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={6} className="text-center text-muted-foreground">
+                      No amendments yet.{canApprove ? " Use “Add amendment” when more hours are agreed." : ""}
+                    </TableCell>
+                  </TableRow>
+                )}
+              </TableBody>
+            </Table>
+            {detail.amendments.length > 0 && (
+              <div className="mt-3 flex flex-col items-end gap-0.5 text-sm">
+                <div className="flex gap-6 font-semibold">
+                  <span>Total amended</span>
+                  <span className="tabular-nums w-40 text-right">
+                    +{formatNumber(detail.amendments.reduce((s, a) => s + a.addedHours, 0))}h ·{" "}
+                    +{formatMoney(detail.amendments.reduce((s, a) => s + a.netAmount, 0), c)}
+                  </span>
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {editOpen && (
         <EditDetailsDialog
@@ -473,7 +606,193 @@ export function OpportunityDetailClient({
           }}
         />
       )}
+      {amendmentOpen && (
+        <AmendmentDialog
+          opportunityId={detail.id}
+          currency={c}
+          billingType={detail.billingType}
+          milestones={detail.projectMilestones}
+          onClose={() => setAmendmentOpen(false)}
+          onSaved={() => {
+            setAmendmentOpen(false);
+            router.refresh();
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+// ---------- Amendment (change-order) dialog ----------
+type AmendmentDraftLine = { name: string; hours: string; price: string; billable: boolean; target: string };
+
+function AmendmentDialog({
+  opportunityId,
+  currency,
+  billingType,
+  milestones,
+  onClose,
+  onSaved,
+}: {
+  opportunityId: string;
+  currency: string;
+  billingType: ProjectBillingType;
+  milestones: MilestoneOption[];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [pending, start] = useTransition();
+  const [reference, setReference] = useState("");
+  const [poNumber, setPoNumber] = useState("");
+  const [signedDate, setSignedDate] = useState("");
+  const [note, setNote] = useState("");
+  const emptyLine = (): AmendmentDraftLine => ({ name: "", hours: "", price: "", billable: true, target: "NEW" });
+  const [lines, setLines] = useState<AmendmentDraftLine[]>([emptyLine()]);
+
+  const isFixedPrice = billingType === "FIXED_PRICE";
+  const rateLabel = isFixedPrice ? "Rate (× hours = lump)" : "Rate / hour";
+  const targetItems = [
+    { value: "NEW", label: "New milestone" },
+    ...milestones.map((m) => ({ value: m.id, label: `Add to: ${m.name}` })),
+  ];
+
+  const addedHours = lines.reduce((s, l) => s + (Number(l.hours) || 0), 0);
+  const addedValue = lines.reduce((s, l) => s + (Number(l.hours) || 0) * (Number(l.price) || 0), 0);
+
+  function setLine(i: number, patch: Partial<AmendmentDraftLine>) {
+    setLines((prev) => prev.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
+  }
+
+  function submit() {
+    const cleaned = lines
+      .map((l) => ({
+        name: l.name.trim(),
+        quantityHours: Number(l.hours),
+        unitPrice: Number(l.price),
+        billable: l.billable,
+        target: l.target,
+      }))
+      .filter((l) => l.name || l.quantityHours || l.unitPrice);
+    if (cleaned.length === 0) return toast.error("Add at least one amendment line.");
+    for (const l of cleaned) {
+      if (!l.name) return toast.error("Every line needs a name.");
+      if (!(l.quantityHours > 0)) return toast.error(`“${l.name}” needs hours greater than 0.`);
+      if (!(l.unitPrice >= 0)) return toast.error(`“${l.name}” has an invalid rate.`);
+    }
+    start(async () => {
+      const res = await createAmendmentAction({
+        opportunityId,
+        reference: reference.trim() || undefined,
+        poNumber: poNumber.trim() || undefined,
+        signedDate: signedDate || undefined,
+        note: note.trim() || undefined,
+        lines: cleaned,
+      });
+      if (res.error) toast.error(res.error);
+      else {
+        toast.success("Amendment applied.");
+        onSaved();
+      }
+    });
+  }
+
+  return (
+    <Dialog open onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="sm:max-w-3xl max-h-[85vh] flex flex-col overflow-hidden">
+        <DialogHeader>
+          <DialogTitle>Add amendment</DialogTitle>
+        </DialogHeader>
+        <div className="flex flex-col gap-4 overflow-y-auto flex-1 min-h-0 pr-1">
+          <div className="grid grid-cols-3 gap-3">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="amd-ref">Reference</Label>
+              <Input id="amd-ref" value={reference} onChange={(e) => setReference(e.target.value)} placeholder="AMD-2" />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="amd-po">PO number</Label>
+              <Input id="amd-po" value={poNumber} onChange={(e) => setPoNumber(e.target.value)} placeholder="optional" />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="amd-date">Signed date</Label>
+              <Input id="amd-date" type="date" value={signedDate} onChange={(e) => setSignedDate(e.target.value)} />
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center justify-between">
+              <Label>Lines</Label>
+              <Button size="sm" variant="outline" onClick={() => setLines((p) => [...p, emptyLine()])} disabled={pending}>
+                <PlusIcon /> Add line
+              </Button>
+            </div>
+            {lines.map((l, i) => (
+              <div key={i} className="grid grid-cols-12 gap-2 items-end border rounded-md p-2">
+                <div className="col-span-4 flex flex-col gap-1">
+                  <Label className="text-xs text-muted-foreground">Name</Label>
+                  <Input value={l.name} onChange={(e) => setLine(i, { name: e.target.value })} placeholder="e.g. Extra dev hours" />
+                </div>
+                <div className="col-span-2 flex flex-col gap-1">
+                  <Label className="text-xs text-muted-foreground">Hours</Label>
+                  <Input type="number" step="0.5" min="0" value={l.hours} onChange={(e) => setLine(i, { hours: e.target.value })} />
+                </div>
+                <div className="col-span-2 flex flex-col gap-1">
+                  <Label className="text-xs text-muted-foreground">{rateLabel}</Label>
+                  <Input type="number" step="0.0001" min="0" value={l.price} onChange={(e) => setLine(i, { price: e.target.value })} />
+                </div>
+                <div className="col-span-3 flex flex-col gap-1">
+                  <Label className="text-xs text-muted-foreground">Lands on</Label>
+                  <Select value={l.target} items={targetItems} onValueChange={(v) => setLine(i, { target: v ?? "NEW" })}>
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {targetItems.map((t) => (
+                        <SelectItem key={t.value} value={t.value}>
+                          {t.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="col-span-1 flex justify-end">
+                  {lines.length > 1 && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => setLines((p) => p.filter((_, idx) => idx !== i))}
+                      disabled={pending}
+                      aria-label="Remove line"
+                    >
+                      <XIcon className="size-3.5" />
+                    </Button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="amd-note">Note</Label>
+            <Textarea id="amd-note" value={note} onChange={(e) => setNote(e.target.value)} rows={2} placeholder="optional" />
+          </div>
+
+          <div className="flex justify-end gap-6 text-sm border-t pt-3">
+            <span className="text-muted-foreground">Adds</span>
+            <span className="tabular-nums font-medium">
+              +{formatNumber(addedHours)}h · +{formatMoney(addedValue, currency)}
+            </span>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={pending}>
+            Cancel
+          </Button>
+          <Button onClick={submit} disabled={pending}>
+            {pending ? "Applying…" : "Apply amendment"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

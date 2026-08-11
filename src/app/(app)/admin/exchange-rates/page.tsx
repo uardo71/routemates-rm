@@ -1,4 +1,5 @@
 import { format } from "date-fns";
+import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { LinkButton } from "@/components/link-button";
@@ -30,29 +31,32 @@ export default async function ExchangeRatesPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>All rates</CardTitle>
+          <CardTitle className="text-base">
+            All rates <span className="font-normal text-muted-foreground">({rates.length})</span>
+          </CardTitle>
         </CardHeader>
         <CardContent>
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>From</TableHead>
-                <TableHead>To</TableHead>
-                <TableHead>Rate</TableHead>
+                <TableHead>Pair</TableHead>
+                <TableHead className="text-right">Rate</TableHead>
                 <TableHead>Effective from</TableHead>
-                <TableHead />
+                <TableHead className="w-0" />
               </TableRow>
             </TableHeader>
             <TableBody>
               {rates.map((r) => (
                 <TableRow key={r.id}>
-                  <TableCell className="font-medium">{r.fromCurrency}</TableCell>
-                  <TableCell>{r.toCurrency}</TableCell>
                   <TableCell>
-                    {formatNumber(r.rate, 6)} {r.fromCurrency} = 1 {r.toCurrency}
+                    <Badge variant="outline" className="font-mono">{r.fromCurrency} → {r.toCurrency}</Badge>
                   </TableCell>
-                  <TableCell>{format(r.effectiveFrom, "MMM d, yyyy")}</TableCell>
-                  <TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    <span className="text-muted-foreground">1 {r.fromCurrency} = </span>
+                    {formatNumber(r.rate, 6)} {r.toCurrency}
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">{format(r.effectiveFrom, "MMM d, yyyy")}</TableCell>
+                  <TableCell className="text-right">
                     <DeleteButton
                       action={deleteExchangeRateAction.bind(null, r.id)}
                       confirmMessage="Remove this exchange rate?"
@@ -62,7 +66,7 @@ export default async function ExchangeRatesPage() {
               ))}
               {rates.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={5} className="text-center text-muted-foreground">
+                  <TableCell colSpan={4} className="py-8 text-center text-muted-foreground">
                     No exchange rates yet — salaries in non-EUR currencies can&apos;t be converted until one is added.
                   </TableCell>
                 </TableRow>

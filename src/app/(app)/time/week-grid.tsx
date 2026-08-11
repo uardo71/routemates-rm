@@ -14,6 +14,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { getPublicHoliday } from "@/lib/holidays";
+import { isWorkingDay } from "@/lib/vacation-calc";
 import {
   saveTimeGridAction,
   submitTimeCardsAction,
@@ -253,12 +254,15 @@ function cellKey(cardKey: string, taskId: string | null): string {
   return `${cardKey}::${taskId ?? "_"}`;
 }
 
+export type PlannedCell = { assignmentId: string; taskId: string | null; hours: number };
+
 export function WeekGrid({
   targetUserId,
   weekStart,
   assignments,
   cards,
   previousWeekCards,
+  plannedCells,
   isOwnWeek,
 }: {
   targetUserId: string;
@@ -266,12 +270,15 @@ export function WeekGrid({
   assignments: AssignmentOption[];
   cards: GridCard[];
   previousWeekCards: GridCard[];
+  plannedCells: PlannedCell[];
   isOwnWeek: boolean;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [pendingCardKey, setPendingCardKey] = useState<string | null>(null);
   const [selected, setSelected] = useState<Record<string, boolean>>({});
+  // Checkboxes on the "Planned this week" preview (keyed by assignmentId) for the copy action.
+  const [selectedPlan, setSelectedPlan] = useState<Record<string, boolean>>({});
   // Task sub-rows are collapsed by default — only the assignment/card header shows until expanded.
   const [expandedCards, setExpandedCards] = useState<Record<string, boolean>>({});
   function toggleExpanded(cardKey: string) {
@@ -537,6 +544,114 @@ export function WeekGrid({
     } else if (skipped.size === 0) {
       toast.error("Nothing to copy from last week.");
     }
+  }
+
+  // Weekly planned hours (from the Resource Planner) grouped per assignment, with an even split
+  // across this week's working days for the preview and copy. taskId null = an assignment-level
+  // plan; task rows carry a taskId.
+  const workingDayCount = useMemo(() => days.filter((d) => isWorkingDay(d)).length || 1, [days]);
+  const planPreview = useMemo(() => {
+    const byAsg = new Map<string, PlannedCell[]>();
+    for (const p of plannedCells) {
+      if (p.hours <= 0) continue;
+      const list = byAsg.get(p.assignmentId);
+      if (list) list.push(p);
+      else byAsg.set(p.assignmentId, [p]);
+    }
+    return [...byAsg.entries()].map(([assignmentId, plans]) => {
+      const a = assignmentMap.get(assignmentId);
+      const hasTasks = (a?.tasks.length ?? 0) > 0;
+      const taskRows = plans
+        .filter((p) => p.taskId !== null)
+        .map((p) => ({
+          taskId: p.taskId as string,
+          name: a?.tasks.find((t) => t.id === p.taskId)?.name ?? "Task",
+          weekly: p.hours,
+          perDay: Math.round((p.hours / workingDayCount) * 100) / 100,
+        }));
+      const weeklyTotal = plans.reduce((s, p) => s + p.hours, 0);
+      return {
+        assignmentId,
+        label: a ? `${a.projectName} — ${a.milestoneName}` : "Assignment",
+        pickable: a?.pickable ?? false,
+        hasTasks,
+        taskRows,
+        weeklyTotal,
+        perDayTotal: Math.round((weeklyTotal / workingDayCount) * 100) / 100,
+      };
+    });
+  }, [plannedCells, assignmentMap, workingDayCount]);
+
+  /** Copies the selected assignments' weekly planned hours into the timesheet as DRAFT lines —
+   *  even split across this week's working days, skipping days already covered by leave or existing
+   *  time (never double-books, never pushes over an existing entry). Notes are left blank on purpose
+   *  (the user adds them before submitting). Mirrors copyFromPreviousWeek's new-line plumbing. */
+  function copyFromPlanning(assignmentIds: string[]) {
+    if (assignmentIds.length === 0) {
+      toast.error("Select at least one assignment to copy.");
+      return;
+    }
+    const workingDayStrs = days.filter((d) => isWorkingDay(d)).map((d) => format(d, "yyyy-MM-dd"));
+    if (workingDayStrs.length === 0) {
+      toast.error("This week has no working days to plan into.");
+      return;
+    }
+    const takenDays = new Set(workingDayStrs.filter((ds) => daySum(ds) > 0));
+
+    const hourMap: Record<string, Record<string, number>> = {};
+    const toAdd: NewTaskEntry[] = [];
+    const skipped = new Set<string>();
+    const assignmentCardKeys: Record<string, string> = {};
+    let wrote = 0;
+
+    for (const assignmentId of assignmentIds) {
+      const a = assignmentMap.get(assignmentId);
+      if (!a || !a.pickable) {
+        skipped.add(a ? `${a.projectName} — ${a.milestoneName} (not open this week)` : "an assignment");
+        continue;
+      }
+      const plans = plannedCells.filter((p) => p.assignmentId === assignmentId && p.hours > 0);
+      for (const plan of plans) {
+        const targetTaskId = plan.taskId; // null = assignment-level (leaf); otherwise a task row
+        const perDay = Math.round((plan.hours / workingDayStrs.length) * 100) / 100;
+        if (perDay <= 0) continue;
+        // One card per assignment; reuse an open (unlocked) card only if it matches the plan's mode
+        // (assignment-level vs task-level) so the two never mix on one line.
+        let cardKey = assignmentCardKeys[assignmentId];
+        if (!cardKey) {
+          const openCard = resolvedCards.find((rc) => {
+            if (rc.assignmentId !== assignmentId || rc.locked) return false;
+            const leaf = rc.taskIds.length > 0 && rc.taskIds.every((t) => t === null);
+            return targetTaskId === null ? leaf : !leaf;
+          });
+          cardKey = openCard ? openCard.cardKey : NEW_PREFIX + crypto.randomUUID();
+          assignmentCardKeys[assignmentId] = cardKey;
+        }
+        const key = cellKey(cardKey, targetTaskId);
+        let wroteThis = false;
+        for (const ds of workingDayStrs) {
+          if (takenDays.has(ds)) continue;
+          const existing = hourMap[key]?.[ds] ?? cellValue(key, ds);
+          if (existing !== 0) continue; // never overwrite an existing/leave entry
+          hourMap[key] ??= {};
+          hourMap[key][ds] = perDay;
+          wrote++;
+          wroteThis = true;
+        }
+        if (wroteThis) {
+          const already = resolvedCards.some((rc) => rc.cardKey === cardKey && rc.taskIds.includes(targetTaskId));
+          if (!already && !toAdd.some((t) => t.cardKey === cardKey && t.taskId === targetTaskId)) {
+            toAdd.push({ cardKey, assignmentId, taskId: targetTaskId });
+          }
+        }
+      }
+    }
+
+    if (toAdd.length > 0) setNewTaskEntries((prev) => [...prev, ...toAdd]);
+    if (Object.keys(hourMap).length > 0) setHours((prev) => ({ ...prev, ...hourMap }));
+    if (skipped.size > 0) toast.warning(`Skipped: ${[...skipped].join("; ")}`);
+    if (wrote > 0) toast.success("Copied planned hours as draft — add a note on each day, then Save.");
+    else if (skipped.size === 0) toast.error("Nothing to copy — those days are already filled.");
   }
 
   // Notes are meant to be shared across every task row on a card for a given day, but the
@@ -879,7 +994,10 @@ export function WeekGrid({
   function renderCard(card: ResolvedCard) {
     const a = assignmentMap.get(card.assignmentId);
     if (!a) return null;
-    if (a.tasks.length === 0) return renderLeafCard(card);
+    // A single assignment-level row when the milestone has no tasks OR this card was logged at the
+    // assignment level (every entry taskId null) — e.g. copied from an assignment-level plan.
+    const isAssignmentLevel = card.taskIds.length > 0 && card.taskIds.every((t) => t === null);
+    if (a.tasks.length === 0 || isAssignmentLevel) return renderLeafCard(card);
 
     const headerCells = days.map((d) => cardSumForDay(card, format(d, "yyyy-MM-dd")));
     const headerTotal = headerCells.reduce((s, v) => s + v, 0);
@@ -974,7 +1092,10 @@ export function WeekGrid({
     );
   }
 
+  const anyPlanSelected = Object.values(selectedPlan).some(Boolean);
+
   return (
+    <>
     <Card>
       <CardHeader className="flex flex-row items-center justify-between flex-wrap gap-3">
         <CardTitle className="text-base">Week of {format(new Date(weekStart), "MMM d, yyyy")}</CardTitle>
@@ -1127,5 +1248,101 @@ export function WeekGrid({
         </DialogContent>
       </Dialog>
     </Card>
+
+    {planPreview.length > 0 && (
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between flex-wrap gap-3">
+          <div>
+            <CardTitle className="text-base">Planned this week</CardTitle>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              From the Resource Planner — even split across working days. Select rows and copy them into your
+              timesheet above as draft hours; days already covered by leave or existing time are skipped. Add a note
+              on each copied day before you Save.
+            </p>
+          </div>
+          <Button
+            size="sm"
+            onClick={() => copyFromPlanning(Object.keys(selectedPlan).filter((k) => selectedPlan[k]))}
+            disabled={pending || !anyPlanSelected}
+          >
+            Copy selected to timesheet
+          </Button>
+        </CardHeader>
+        <CardContent>
+          <div className="overflow-x-auto rounded-lg border">
+            <table className="w-full text-sm border-collapse">
+              <thead>
+                <tr className="text-left text-muted-foreground bg-muted/50">
+                  <th className="p-2 w-8 text-center">
+                    <input
+                      type="checkbox"
+                      aria-label="Select all planned assignments"
+                      checked={planPreview.length > 0 && planPreview.every((p) => selectedPlan[p.assignmentId])}
+                      onChange={(e) => {
+                        const v = e.target.checked;
+                        const next: Record<string, boolean> = {};
+                        if (v) planPreview.forEach((p) => (next[p.assignmentId] = true));
+                        setSelectedPlan(next);
+                      }}
+                    />
+                  </th>
+                  <th className="p-2 min-w-72">Assignment / Task</th>
+                  {days.map((d) => (
+                    <th
+                      key={d.toISOString()}
+                      className={cn("p-2 w-16 text-center border-l font-medium", !isWorkingDay(d) && "text-muted-foreground/60")}
+                    >
+                      {format(d, "EEE")}
+                      <div className="text-[11px] font-normal">{format(d, "M/d")}</div>
+                    </th>
+                  ))}
+                  <th className="p-2 w-16 text-center border-l">Week</th>
+                </tr>
+              </thead>
+              <tbody>
+                {planPreview.map((p) => (
+                  <Fragment key={p.assignmentId}>
+                    <tr className="border-t">
+                      <td className="p-2 text-center align-top">
+                        <input
+                          type="checkbox"
+                          aria-label={`Select ${p.label}`}
+                          checked={!!selectedPlan[p.assignmentId]}
+                          onChange={(e) => setSelectedPlan((prev) => ({ ...prev, [p.assignmentId]: e.target.checked }))}
+                        />
+                      </td>
+                      <td className="p-2 font-medium">
+                        {p.label}
+                        {!p.pickable && <span className="ml-1.5 text-[10px] text-amber-600">not open this week</span>}
+                      </td>
+                      {days.map((d) => (
+                        <td key={d.toISOString()} className="p-2 text-center tabular-nums border-l">
+                          {isWorkingDay(d) && p.perDayTotal > 0 ? p.perDayTotal : "—"}
+                        </td>
+                      ))}
+                      <td className="p-2 text-center tabular-nums border-l font-medium">{p.weeklyTotal}h</td>
+                    </tr>
+                    {p.hasTasks &&
+                      p.taskRows.map((t) => (
+                        <tr key={t.taskId} className="border-t bg-muted/20 text-muted-foreground">
+                          <td />
+                          <td className="p-2 pl-8 text-xs">{t.name}</td>
+                          {days.map((d) => (
+                            <td key={d.toISOString()} className="p-2 text-center tabular-nums border-l text-xs">
+                              {isWorkingDay(d) && t.perDay > 0 ? t.perDay : "—"}
+                            </td>
+                          ))}
+                          <td className="p-2 text-center tabular-nums border-l text-xs">{t.weekly}h</td>
+                        </tr>
+                      ))}
+                  </Fragment>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </CardContent>
+      </Card>
+    )}
+    </>
   );
 }

@@ -6,6 +6,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/session";
 import { startOfWeek } from "@/lib/week";
+import { stampCostRatesForCards } from "@/lib/cost-rate";
 
 const CellSchema = z.object({
   lineId: z.string().min(1),
@@ -108,9 +109,9 @@ export async function saveTimeGridAction(input: {
     }
 
     const milestoneTasks = assignment.milestone.tasks;
-    if (milestoneTasks.length > 0 && !cell.taskId) {
-      return { error: `${assignment.milestone.name}: select a task to log time against.` };
-    }
+    // Time can be logged either at the assignment level (taskId null) or against a specific task,
+    // even on milestones that have tasks — so an assignment-level plan copies straight onto the line
+    // without being forced into a task. A provided taskId must still belong to the milestone.
     if (cell.taskId && !milestoneTasks.some((t) => t.id === cell.taskId)) {
       return { error: `${assignment.milestone.name}: invalid task.` };
     }
@@ -327,6 +328,7 @@ export async function submitTimeCardsAction(cardIds: string[]): Promise<{ error?
   }
 
   const now = new Date();
+  const autoApprovedIds: string[] = [];
   await prisma.$transaction(
     cards.map((card) => {
       const total = totalsByCard.get(card.id)!;
@@ -339,6 +341,7 @@ export async function submitTimeCardsAction(cardIds: string[]): Promise<{ error?
       const isProxy = card.userId !== caller.id;
       const isCorrection = total < 0;
       const autoApprove = isCorrection || (isProxy && card.milestone.project.managerId === caller.id);
+      if (autoApprove) autoApprovedIds.push(card.id);
       return prisma.timeCard.update({
         where: { id: card.id },
         data: autoApprove
@@ -363,6 +366,9 @@ export async function submitTimeCardsAction(cardIds: string[]): Promise<{ error?
       });
     })
   );
+
+  // Auto-approved lines skip the approval queue, so freeze their historical cost rate now.
+  if (autoApprovedIds.length > 0) await stampCostRatesForCards(autoApprovedIds);
 
   revalidatePath("/time");
   revalidatePath("/approvals");

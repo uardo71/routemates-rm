@@ -186,14 +186,26 @@ export function NewInvoiceClient({ projects, defaultCurrency, invoices }: { proj
           )}
 
           <div className="flex flex-col gap-2">
-            {lines.map((l, i) => (
-              <div key={i} className="grid grid-cols-[1fr_80px_120px_32px] gap-2 items-center">
-                <Input placeholder="Description" value={l.description} onChange={(e) => setLine(i, { description: e.target.value })} />
-                <Input type="number" step="0.01" placeholder="Qty" value={l.quantity} onChange={(e) => setLine(i, { quantity: e.target.value })} />
-                <Input type="number" step="0.01" placeholder="Rate / amount" value={l.rate} onChange={(e) => setLine(i, { rate: e.target.value })} />
-                <Button type="button" size="sm" variant="ghost" onClick={() => removeLine(i)}><XIcon className="size-3.5" /></Button>
-              </div>
-            ))}
+            <Label>Lines</Label>
+            <div className="grid grid-cols-[1fr_80px_110px_96px_32px] gap-2 px-1 text-xs text-muted-foreground">
+              <span>Description</span>
+              <span className="text-right">Qty</span>
+              <span className="text-right">Rate</span>
+              <span className="text-right">Amount</span>
+              <span />
+            </div>
+            {lines.map((l, i) => {
+              const amt = (Number(l.quantity) || 0) * (Number(l.rate) || 0);
+              return (
+                <div key={i} className="grid grid-cols-[1fr_80px_110px_96px_32px] gap-2 items-center">
+                  <Input placeholder="Description" value={l.description} onChange={(e) => setLine(i, { description: e.target.value })} />
+                  <Input className="text-right tabular-nums" type="number" step="0.01" placeholder="Qty" value={l.quantity} onChange={(e) => setLine(i, { quantity: e.target.value })} />
+                  <Input className="text-right tabular-nums" type="number" step="0.01" placeholder="Rate" value={l.rate} onChange={(e) => setLine(i, { rate: e.target.value })} />
+                  <span className="text-right text-sm tabular-nums">{formatMoney(amt, defaultCurrency)}</span>
+                  <Button type="button" size="sm" variant="ghost" onClick={() => removeLine(i)} aria-label="Remove line"><XIcon className="size-3.5" /></Button>
+                </div>
+              );
+            })}
             <Button type="button" size="sm" variant="outline" className="w-fit" onClick={addLine}><PlusIcon /> Add line</Button>
           </div>
         </>
@@ -225,9 +237,10 @@ export function NewInvoiceClient({ projects, defaultCurrency, invoices }: { proj
       )}
 
       {mode === "MANUAL" && (
-        <div className="text-sm text-right text-muted-foreground">
-          Net {formatMoney(net, defaultCurrency)}
-          {vatRate !== "" && <> · VAT {formatMoney(totals.vat, defaultCurrency)} · <span className="font-medium text-foreground">Gross {formatMoney(totals.gross, defaultCurrency)}</span></>}
+        <div className="flex justify-end gap-4 border-t pt-3 text-sm tabular-nums">
+          <span className="text-muted-foreground">Net <span className="text-foreground">{formatMoney(net, defaultCurrency)}</span></span>
+          <span className="text-muted-foreground">VAT <span className="text-foreground">{formatMoney(totals.vat, defaultCurrency)}</span></span>
+          <span className="font-medium">Gross {formatMoney(totals.gross, defaultCurrency)}</span>
         </div>
       )}
 

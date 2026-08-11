@@ -406,7 +406,7 @@ export async function updateTaskAction(_prevState: string | undefined, formData:
 
   const task = await prisma.task.findUnique({
     where: { id: taskId },
-    select: { milestoneId: true, milestone: { select: { projectId: true } } },
+    select: { milestoneId: true, assigneeId: true, milestone: { select: { projectId: true } } },
   });
   if (!task) return "Task not found.";
   if (!(await canManageMilestone(user, task.milestoneId))) {
@@ -425,15 +425,22 @@ export async function updateTaskAction(_prevState: string | undefined, formData:
   if (!parsed.success) return parsed.error.issues[0]?.message ?? "Invalid input";
   const data = parsed.data;
 
-  await prisma.task.update({
-    where: { id: taskId },
-    data: {
-      name: data.name,
-      assigneeId: data.assigneeId ?? null,
-      estimatedHours: data.estimatedHours ?? null,
-      dueDate: data.dueDate ? new Date(data.dueDate) : null,
-      status: data.status,
-    },
+  // Task-level plan rows are scoped to the person the task is assigned to (they only appear under
+  // that person's assignment in the planner). If the assignee changes, those rows no longer map —
+  // clear them so they don't orphan under the previous person's assignment.
+  const reassigned = (data.assigneeId ?? null) !== task.assigneeId;
+  await prisma.$transaction(async (tx) => {
+    await tx.task.update({
+      where: { id: taskId },
+      data: {
+        name: data.name,
+        assigneeId: data.assigneeId ?? null,
+        estimatedHours: data.estimatedHours ?? null,
+        dueDate: data.dueDate ? new Date(data.dueDate) : null,
+        status: data.status,
+      },
+    });
+    if (reassigned) await tx.assignmentPlan.deleteMany({ where: { taskId } });
   });
 
   revalidatePath(`/projects/${task.milestone.projectId}/milestones/${task.milestoneId}`);
@@ -462,7 +469,7 @@ export async function quickUpdateTaskAction(
 
   const task = await prisma.task.findUnique({
     where: { id: taskId },
-    select: { milestoneId: true, milestone: { select: { projectId: true } } },
+    select: { milestoneId: true, assigneeId: true, milestone: { select: { projectId: true } } },
   });
   if (!task) throw new Error("Task not found.");
   if (!(await canManageMilestone(user, task.milestoneId))) {
@@ -473,18 +480,31 @@ export async function quickUpdateTaskAction(
   if (!parsed.success) throw new Error(parsed.error.issues[0]?.message ?? "Invalid input.");
   const parsedData = parsed.data;
 
-  await prisma.task.update({
-    where: { id: taskId },
-    data: {
-      name: parsedData.name,
-      assigneeId: parsedData.assigneeId,
-      estimatedHours: parsedData.estimatedHours,
-      dueDate: parsedData.dueDate ? new Date(parsedData.dueDate) : null,
-      status: parsedData.status,
-    },
+  // Clear task-level plan rows if the assignee changes — they're scoped to the prior assignee's
+  // assignment and would otherwise orphan (see updateTaskAction for the rationale).
+  const reassigned = parsedData.assigneeId !== task.assigneeId;
+  let plansCleared = 0;
+  await prisma.$transaction(async (tx) => {
+    await tx.task.update({
+      where: { id: taskId },
+      data: {
+        name: parsedData.name,
+        assigneeId: parsedData.assigneeId,
+        estimatedHours: parsedData.estimatedHours,
+        dueDate: parsedData.dueDate ? new Date(parsedData.dueDate) : null,
+        status: parsedData.status,
+      },
+    });
+    if (reassigned) {
+      const { count } = await tx.assignmentPlan.deleteMany({ where: { taskId } });
+      plansCleared = count;
+    }
   });
 
   revalidatePath(`/projects/${task.milestone.projectId}/milestones/${task.milestoneId}`);
+  revalidatePath("/planning");
+  revalidatePath("/my-planning");
+  return { plansCleared };
 }
 
 export async function deleteTaskAction(taskId: string) {

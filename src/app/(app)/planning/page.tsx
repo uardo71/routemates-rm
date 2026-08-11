@@ -56,7 +56,12 @@ export default async function PlanningPage({
       },
       include: {
         user: true,
-        milestone: { include: { project: { include: { client: true } } } },
+        milestone: {
+          include: {
+            project: { include: { client: true } },
+            tasks: { select: { id: true, name: true, assigneeId: true, estimatedHours: true }, orderBy: { createdAt: "asc" } },
+          },
+        },
       },
       orderBy: { user: { name: "asc" } },
     }),
@@ -80,6 +85,7 @@ export default async function PlanningPage({
 
   const initialCells: PlanCellInit[] = planEntries.map((p) => ({
     assignmentId: p.assignmentId,
+    taskId: p.taskId,
     weekStartDate: toDateParam(p.weekStartDate),
     hours: Number(p.hours),
   }));
@@ -97,6 +103,10 @@ export default async function PlanningPage({
       allocatedHours: a.allocatedHours ? Number(a.allocatedHours) : null,
       startDate: toDateParam(a.startDate),
       endDate: toDateParam(a.endDate),
+      // Only this person's tasks on the milestone are plannable under their assignment.
+      tasks: a.milestone.tasks
+        .filter((t) => t.assigneeId === a.userId)
+        .map((t) => ({ id: t.id, name: t.name, estimatedHours: t.estimatedHours ? Number(t.estimatedHours) : null })),
     };
     resourcesMap.get(a.userId)!.assignments.push(row);
   }
@@ -144,6 +154,12 @@ export default async function PlanningPage({
       <PlannerFilters projects={projects} currentProjects={selectedProjectIds} currentRoles={selectedRoles} />
 
       <PlannerGrid
+        // Remount the grid whenever the visible range or filters change. PlannerGrid seeds its
+        // editable cells from `initialCells` via useState(initial) — a value only read at mount —
+        // so without a changing key, a soft navigation (Prev/Next / date jump / filter change) would
+        // reuse the same instance and keep the previous range's stale cells, showing the newly loaded
+        // range as empty until a hard refresh. (Same trap the Time grid's WeekGrid hit.)
+        key={`${toDateParam(timelineStart)}|${selectedProjectIds.join(",")}|${selectedRoles.join(",")}`}
         weeks={weeks.map((w) => ({ key: toDateParam(startOfWeek(w)), label: format(w, "MMM d") }))}
         resources={resources}
         initialCells={initialCells}

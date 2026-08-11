@@ -29,8 +29,10 @@ export type ProjectRevenueInput = {
   contractValue: number;
   /** Project budget hours, or Σ milestone budget hours when the project has none. */
   budgetHours: number;
-  /** Actual cost to date = Σ(approved hours × cost rate), computed by the caller. */
+  /** Actual cost to date = Σ(approved hours × historical cost rate), computed by the caller. */
   cost: number;
+  /** Projected cost of the whole plan = Σ(planned hours × current cost rate), computed by the caller. */
+  forecastCost: number;
   milestones: MilestoneRevenueInput[];
 };
 
@@ -45,8 +47,12 @@ export type ProjectRevenueResult = {
   /** Recognized: same as earned for T&M; completed-milestone value for fixed price. */
   recognizedRevenue: number;
   cost: number;
-  /** Gross margin against earned revenue. */
+  /** Gross margin against earned revenue (earned − actual cost). */
   margin: number;
+  /** Projected cost of the whole plan = Σ(planned hours × current cost rate). */
+  forecastCost: number;
+  /** Projected margin if the whole plan is delivered = forecast revenue − forecast cost. */
+  forecastMargin: number;
 };
 
 function round2(n: number): number {
@@ -88,5 +94,7 @@ export function computeProjectRevenue(input: ProjectRevenueInput): ProjectRevenu
     recognizedRevenue,
     cost: round2(input.cost),
     margin: round2(earnedRevenue - input.cost),
+    forecastCost: round2(input.forecastCost),
+    forecastMargin: round2(forecastRevenue - input.forecastCost),
   };
 }

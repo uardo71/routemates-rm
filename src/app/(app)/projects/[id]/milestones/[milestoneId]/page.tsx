@@ -92,7 +92,7 @@ export default async function MilestoneDetailPage({
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <Link href={`/projects/${projectId}`} className="text-sm text-muted-foreground hover:underline">
+        <Link href={`/projects/${projectId}?tab=milestones`} className="text-sm text-muted-foreground hover:underline">
           ← {milestone.project.name}
         </Link>
         <div className="flex items-center justify-between mt-1 flex-wrap gap-2">

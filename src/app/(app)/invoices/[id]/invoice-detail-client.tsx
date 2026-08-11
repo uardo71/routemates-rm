@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { toast } from "sonner";
 import { format } from "date-fns";
-import { XIcon } from "lucide-react";
+import { XIcon, PlusIcon, Trash2Icon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,8 +17,24 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { InfoField } from "@/components/info-field";
 import { FileTextIcon } from "lucide-react";
 import { formatMoney } from "@/lib/format";
-import { INVOICE_STATUS_LABEL, INVOICE_STATUS_TONE, INVOICE_TYPE_LABEL } from "@/lib/invoice";
+import { INVOICE_STATUS_LABEL, INVOICE_TYPE_LABEL, invoiceTotals } from "@/lib/invoice";
+import { StatusStamp, type StampTone } from "@/components/status-stamp";
+import { DocumentsCard } from "@/components/documents-card";
 import type { InvoiceStatus, InvoiceType } from "@prisma/client";
+
+const INVOICE_DOC_KINDS = [
+  { value: "FISCAL_INVOICE", label: "Fiscal invoice" },
+  { value: "CREDIT_NOTE", label: "Credit note" },
+  { value: "OTHER", label: "Other" },
+];
+
+const INVOICE_STATUS_STAMP: Record<InvoiceStatus, { tone: StampTone; dashed?: boolean }> = {
+  DRAFT: { tone: "neutral", dashed: true },
+  ISSUED: { tone: "brass" },
+  RECONCILED: { tone: "blue" },
+  PAID: { tone: "green" },
+  VOID: { tone: "rust" },
+};
 import {
   issueInvoiceAction,
   reconcileInvoiceAction,
@@ -27,6 +43,8 @@ import {
   voidInvoiceAction,
   deleteInvoiceAction,
   updateInvoiceAction,
+  uploadInvoiceDocumentAction,
+  deleteInvoiceDocumentAction,
 } from "../actions";
 
 export type InvoiceDetail = {
@@ -55,10 +73,11 @@ export type InvoiceDetail = {
   gross: number;
   paid: number;
   outstanding: number;
-  lines: { id: string; description: string; quantity: number; rate: number; amount: number }[];
+  lines: { id: string; description: string; quantity: number; rate: number; amount: number; milestoneId: string | null; timeEntryCount: number }[];
   payments: { id: string; amount: number; date: string; method: string | null; reference: string | null }[];
   creditNoteFor: { id: string; invoiceNumber: string } | null;
   creditNotes: { id: string; invoiceNumber: string }[];
+  documents: { id: string; kind: string; fileName: string; originalName: string }[];
 };
 
 export function InvoiceDetailClient({ detail }: { detail: InvoiceDetail }) {
@@ -88,7 +107,7 @@ export function InvoiceDetailClient({ detail }: { detail: InvoiceDetail }) {
         <div>
           <div className="flex items-center gap-2 flex-wrap">
             <h1 className="text-2xl font-semibold">{detail.invoiceNumber}</h1>
-            <Badge variant={INVOICE_STATUS_TONE[s]}>{INVOICE_STATUS_LABEL[s]}</Badge>
+            <StatusStamp label={INVOICE_STATUS_LABEL[s]} {...INVOICE_STATUS_STAMP[s]} />
             <Badge variant="outline">{INVOICE_TYPE_LABEL[detail.type]}</Badge>
             {detail.selfBilled && <Badge variant="secondary">Self-billed</Badge>}
           </div>
@@ -132,7 +151,7 @@ export function InvoiceDetailClient({ detail }: { detail: InvoiceDetail }) {
                 ))}
               </TableBody>
             </Table>
-            {detail.status === "DRAFT" && <p className="mt-2 text-xs text-muted-foreground">To change lines, delete this draft and recreate it.</p>}
+            {detail.status === "DRAFT" && <p className="mt-2 text-xs text-muted-foreground">Use <span className="font-medium">Edit</span> to add, change, or remove lines while this invoice is a draft.</p>}
           </CardContent>
         </Card>
         <Card>
@@ -147,6 +166,15 @@ export function InvoiceDetailClient({ detail }: { detail: InvoiceDetail }) {
           </CardContent>
         </Card>
       </div>
+
+      <DocumentsCard
+        title="Documents"
+        documents={detail.documents}
+        kinds={INVOICE_DOC_KINDS}
+        canManage
+        uploadAction={uploadInvoiceDocumentAction.bind(null, detail.id)}
+        deleteAction={deleteInvoiceDocumentAction}
+      />
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
@@ -243,7 +271,11 @@ function PaymentDialog({ detail, onClose, onDone }: { detail: InvoiceDetail; onC
   );
 }
 
+type EditLineRow = { id: string | null; description: string; quantity: string; rate: string; milestoneId: string | null; timeEntryCount: number };
+
 function EditDialog({ detail, onClose, onDone }: { detail: InvoiceDetail; onClose: () => void; onDone: () => void }) {
+  const isDraft = detail.status === "DRAFT";
+  const c = detail.currency;
   const [pending, start] = useTransition();
   const [issueDate, setIssueDate] = useState(detail.issueDate);
   const [recognitionDate, setRecognitionDate] = useState(detail.recognitionDate ?? "");
@@ -254,22 +286,80 @@ function EditDialog({ detail, onClose, onDone }: { detail: InvoiceDetail; onClos
   const [customerReference, setCustomerReference] = useState(detail.customerReference ?? "");
   const [poNumber, setPoNumber] = useState(detail.poNumber ?? "");
   const [notes, setNotes] = useState(detail.notes ?? "");
+  const [lines, setLines] = useState<EditLineRow[]>(
+    detail.lines.map((l) => ({ id: l.id, description: l.description, quantity: String(l.quantity), rate: String(l.rate), milestoneId: l.milestoneId, timeEntryCount: l.timeEntryCount })),
+  );
+
+  const vatNum = vatRate === "" || Number.isNaN(Number(vatRate)) ? null : Number(vatRate);
+  const lineAmount = (l: EditLineRow) => Math.round((Number(l.quantity) || 0) * (Number(l.rate) || 0) * 100) / 100;
+  const totals = invoiceTotals(lines.map((l) => ({ amount: lineAmount(l) })), vatNum);
+  // Existing lines being removed that were backed by time entries — those hours get released on save.
+  const releasedEntryCount = detail.lines
+    .filter((orig) => orig.timeEntryCount > 0 && !lines.some((l) => l.id === orig.id))
+    .reduce((s, orig) => s + orig.timeEntryCount, 0);
+
+  const setLine = (i: number, patch: Partial<EditLineRow>) => setLines((prev) => prev.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
+  const addLine = () => setLines((prev) => [...prev, { id: null, description: "", quantity: "", rate: "", milestoneId: null, timeEntryCount: 0 }]);
+  const removeLine = (i: number) => setLines((prev) => prev.filter((_, idx) => idx !== i));
+
   function submit() {
+    let linesPayload: { id?: string; description: string; quantity: number; rate: number; milestoneId: string | null }[] | undefined;
+    if (isDraft) {
+      const cleaned = lines.map((l) => ({ ...l, description: l.description.trim() }));
+      if (cleaned.length === 0) return toast.error("Add at least one line.");
+      for (const l of cleaned) {
+        if (!l.description) return toast.error("Every line needs a description.");
+        if (l.quantity === "" || Number.isNaN(Number(l.quantity))) return toast.error("Every line needs a numeric quantity.");
+        if (l.rate === "" || Number.isNaN(Number(l.rate))) return toast.error("Every line needs a numeric rate.");
+      }
+      if (releasedEntryCount > 0 && !confirm(`Removing ${releasedEntryCount === 1 ? "a line backed by 1 time entry" : `line(s) backed by ${releasedEntryCount} time entries`} will release ${releasedEntryCount === 1 ? "it" : "them"} for re-invoicing. Continue?`)) return;
+      linesPayload = cleaned.map((l) => ({ id: l.id ?? undefined, description: l.description, quantity: Number(l.quantity), rate: Number(l.rate), milestoneId: l.milestoneId }));
+    }
     start(async () => {
       const r = await updateInvoiceAction({
         invoiceId: detail.id, issueDate, recognitionDate: recognitionDate || null, dueDate: dueDate || null,
         vatRate: vatRate === "" ? null : Number(vatRate), selfBilled,
         fiscalNumber: fiscalNumber.trim() || null, customerReference: customerReference.trim() || null,
         poNumber: poNumber.trim() || null, notes: notes.trim() || null,
+        lines: linesPayload,
       });
       if (r.error) toast.error(r.error); else { toast.success("Saved."); onDone(); }
     });
   }
   return (
     <Dialog open onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="sm:max-w-lg max-h-[85vh] flex flex-col overflow-hidden">
+      <DialogContent className={`${isDraft ? "sm:max-w-2xl" : "sm:max-w-lg"} max-h-[85vh] flex flex-col overflow-hidden`}>
         <DialogHeader><DialogTitle>Edit invoice</DialogTitle></DialogHeader>
-        <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-3 pr-1">
+        <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-4 pr-1">
+          {isDraft && (
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center justify-between">
+                <Label>Lines</Label>
+                <Button type="button" size="sm" variant="outline" onClick={addLine}><PlusIcon className="size-3.5 mr-1" />Add line</Button>
+              </div>
+              <div className="flex flex-col gap-2">
+                {lines.map((l, i) => (
+                  <div key={l.id ?? `new-${i}`} className="flex items-start gap-2">
+                    <div className="flex-1">
+                      <Input aria-label="Description" placeholder="Description" value={l.description} onChange={(e) => setLine(i, { description: e.target.value })} />
+                      {l.timeEntryCount > 0 && <span className="mt-0.5 block text-[11px] text-muted-foreground">{l.timeEntryCount} linked time {l.timeEntryCount === 1 ? "entry" : "entries"}</span>}
+                    </div>
+                    <Input aria-label="Quantity" className="w-20 text-right tabular-nums" type="number" step="0.01" placeholder="Qty" value={l.quantity} onChange={(e) => setLine(i, { quantity: e.target.value })} />
+                    <Input aria-label="Rate" className="w-24 text-right tabular-nums" type="number" step="0.0001" placeholder="Rate" value={l.rate} onChange={(e) => setLine(i, { rate: e.target.value })} />
+                    <span className="w-24 pt-2 text-right text-sm tabular-nums">{formatMoney(lineAmount(l), c)}</span>
+                    <Button type="button" size="sm" variant="ghost" className="shrink-0" onClick={() => removeLine(i)} aria-label="Remove line"><Trash2Icon className="size-3.5" /></Button>
+                  </div>
+                ))}
+                {lines.length === 0 && <p className="text-sm text-muted-foreground">No lines yet — add at least one.</p>}
+              </div>
+              <div className="flex justify-end gap-4 border-t pt-2 text-sm tabular-nums">
+                <span className="text-muted-foreground">Net <span className="text-foreground">{formatMoney(totals.net, c)}</span></span>
+                <span className="text-muted-foreground">VAT <span className="text-foreground">{formatMoney(totals.vat, c)}</span></span>
+                <span className="font-medium">Gross {formatMoney(totals.gross, c)}</span>
+              </div>
+              {releasedEntryCount > 0 && <p className="text-[11px] text-amber-600">Saving releases {releasedEntryCount} time {releasedEntryCount === 1 ? "entry" : "entries"} from removed line(s), making {releasedEntryCount === 1 ? "it" : "them"} available to invoice again.</p>}
+            </div>
+          )}
           <div className="grid grid-cols-3 gap-3">
             <div className="flex flex-col gap-1.5"><Label htmlFor="e-issue">Issue date</Label><Input id="e-issue" type="date" value={issueDate} onChange={(e) => setIssueDate(e.target.value)} /></div>
             <div className="flex flex-col gap-1.5"><Label htmlFor="e-rec">Recognition</Label><Input id="e-rec" type="date" value={recognitionDate} onChange={(e) => setRecognitionDate(e.target.value)} /></div>

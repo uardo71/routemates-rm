@@ -61,7 +61,15 @@ export default async function VacationsPage() {
     balances = await Promise.all(
       users.map(async (u) => {
         const [b, sickDays] = await Promise.all([computeVacationBalance(u.id), countApprovedLeaveDays(u.id, "SICK")]);
-        return { userId: u.id, userName: u.name, balance: b.balance, sickDaysThisYear: sickDays };
+        return {
+          userId: u.id,
+          userName: u.name,
+          entitlement: b.entitlement,
+          carriedIn: b.carriedIn,
+          taken: b.taken,
+          balance: b.balance,
+          sickDaysThisYear: sickDays,
+        };
       })
     );
   }

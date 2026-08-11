@@ -23,7 +23,7 @@ export default async function NewMilestonePage({ params }: { params: Promise<{ i
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <Link href={`/projects/${id}`} className="text-sm text-muted-foreground hover:underline">
+        <Link href={`/projects/${id}?tab=milestones`} className="text-sm text-muted-foreground hover:underline">
           ← {project.name}
         </Link>
         <h1 className="text-2xl font-semibold mt-1">New milestone</h1>

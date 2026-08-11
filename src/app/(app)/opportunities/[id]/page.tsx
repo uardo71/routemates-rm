@@ -18,9 +18,11 @@ export default async function OpportunityDetailPage({ params }: { params: Promis
       owner: { select: { id: true, name: true } },
       submittedBy: { select: { name: true } },
       decidedBy: { select: { name: true } },
-      project: { select: { id: true, name: true } },
+      project: { select: { id: true, name: true, milestones: { select: { id: true, name: true }, orderBy: { createdAt: "asc" } } } },
       lines: { orderBy: { sortOrder: "asc" } },
       revisions: { orderBy: { version: "desc" }, include: { issuedBy: { select: { name: true } } } },
+      amendments: { orderBy: { version: "desc" }, include: { appliedBy: { select: { name: true } } } },
+      documents: { orderBy: { uploadedAt: "desc" }, select: { id: true, kind: true, fileName: true, originalName: true } },
     },
   });
   if (!opp) notFound();
@@ -92,6 +94,28 @@ export default async function OpportunityDetailPage({ params }: { params: Promis
       netAmount: Number(r.netAmount),
       issuedByName: r.issuedBy.name,
       createdAt: r.createdAt.toISOString().slice(0, 10),
+    })),
+    documents: opp.documents.map((d) => ({ id: d.id, kind: d.kind, fileName: d.fileName, originalName: d.originalName })),
+    projectMilestones: opp.project?.milestones.map((m) => ({ id: m.id, name: m.name })) ?? [],
+    amendments: opp.amendments.map((a) => ({
+      id: a.id,
+      version: a.version,
+      reference: a.reference,
+      poNumber: a.poNumber,
+      signedDate: a.signedDate ? a.signedDate.toISOString().slice(0, 10) : null,
+      note: a.note,
+      addedHours: Number(a.addedHours),
+      netAmount: Number(a.netAmount),
+      appliedByName: a.appliedBy.name,
+      createdAt: a.createdAt.toISOString().slice(0, 10),
+      lines: (Array.isArray(a.linesSnapshot) ? a.linesSnapshot : []) as unknown as {
+        name: string;
+        quantityHours: number;
+        unitPrice: number;
+        billable: boolean;
+        target: string;
+        createdMilestoneId: string | null;
+      }[],
     })),
   };
 
