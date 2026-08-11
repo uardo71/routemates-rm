@@ -731,6 +731,17 @@ model ExpenseReceipt {
   @@index([expenseId])
 }
 
+// ---------- App settings ----------
+
+// Global (app-wide, not company-scoped) key/value settings that must be readable BEFORE auth — e.g.
+// the login page and the Credentials authorize() need to know whether password login is enabled.
+// First key: "passwordLoginEnabled" ("true"/"false"). Toggled by an Admin at /admin/settings.
+model AppSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
 // ---------- Opportunities (sales pipeline) ----------
 
 // A sales opportunity / deal, worked by SALES/PM/Admin (opportunities:manage) through the

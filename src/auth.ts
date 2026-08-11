@@ -1,7 +1,9 @@
 import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
+import MicrosoftEntraID from "next-auth/providers/microsoft-entra-id";
 import { prisma } from "@/lib/prisma";
 import { verifyPassword } from "@/lib/password";
+import { isPasswordLoginAllowed } from "@/lib/settings";
 
 const ONE_DAY = 60 * 60 * 24;
 
@@ -35,6 +37,10 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         const password = credentials?.password;
         if (typeof email !== "string" || typeof password !== "string") return null;
 
+        // Server-side enforcement of the admin "password login" toggle — hiding the form in the UI
+        // isn't enough (someone could POST credentials directly). Break-glass rules in isPasswordLoginAllowed.
+        if (!(await isPasswordLoginAllowed())) return null;
+
         const user = await prisma.user.findUnique({ where: { email } });
         if (!user || !user.active) return null;
 
@@ -50,10 +56,59 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         };
       },
     }),
+    // Microsoft Entra ID (SSO) — only wired up when its env vars are present, so the app runs
+    // fine (Credentials-only) until you fill them in. Single-tenant issuer locks it to your org.
+    ...(process.env.AUTH_MICROSOFT_ENTRA_ID_ID && process.env.AUTH_MICROSOFT_ENTRA_ID_SECRET
+      ? [
+          MicrosoftEntraID({
+            clientId: process.env.AUTH_MICROSOFT_ENTRA_ID_ID,
+            clientSecret: process.env.AUTH_MICROSOFT_ENTRA_ID_SECRET,
+            issuer: process.env.AUTH_MICROSOFT_ENTRA_ID_ISSUER,
+          }),
+        ]
+      : []),
   ],
   callbacks: {
-    jwt({ token, user }) {
-      if (user) {
+    async signIn({ account, profile, user }) {
+      // Credentials sign-ins are already vetted in authorize() — let them through.
+      if (account?.provider !== "microsoft-entra-id") return true;
+
+      // Defense in depth: reject any token not from our tenant. (Auth.js also validates the
+      // single-tenant issuer, so a mismatched tid should never actually occur.)
+      const expectedTid = process.env.AUTH_MICROSOFT_ENTRA_ID_ISSUER?.match(
+        /microsoftonline\.com\/([^/]+)\/v2\.0/i,
+      )?.[1];
+      const tid = (profile as { tid?: string } | undefined)?.tid;
+      if (expectedTid && tid && tid !== expectedTid) return false;
+
+      // Admit ONLY someone who already exists as an ACTIVE app user — no self-provisioning.
+      // Match on email, case-insensitively (Entra may return a different case than the seeded row).
+      const email = user.email ?? (profile as { email?: string } | undefined)?.email;
+      if (!email) return false;
+      const appUser = await prisma.user.findFirst({
+        where: { email: { equals: email, mode: "insensitive" } },
+        select: { active: true },
+      });
+      return appUser?.active === true;
+    },
+    async jwt({ token, user, account }) {
+      if (!user) return token; // later requests: token already hydrated
+
+      if (account?.provider === "microsoft-entra-id") {
+        // OAuth identity: user.id is the Entra `sub` (not our User.id) and carries no role/companyId.
+        // signIn() already guaranteed an active local user with this email exists — re-key the token
+        // onto the LOCAL user so every RBAC/scoping query (visibleProjectIds, assignments, …) resolves.
+        const appUser = await prisma.user.findFirst({
+          where: { email: { equals: user.email!, mode: "insensitive" } },
+          select: { id: true, role: true, companyId: true },
+        });
+        if (appUser) {
+          token.sub = appUser.id; // session.user.id reads token.sub
+          token.role = appUser.role;
+          token.companyId = appUser.companyId;
+        }
+      } else {
+        // Credentials: authorize() already returned id/role/companyId; token.sub = user.id.
         token.role = user.role;
         token.companyId = user.companyId;
       }

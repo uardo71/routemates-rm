@@ -20,6 +20,7 @@ import {
   TargetIcon,
   TrendingUpIcon,
   PiggyBankIcon,
+  SettingsIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -41,6 +42,7 @@ const ICONS = {
   opportunities: TargetIcon,
   revenue: TrendingUpIcon,
   budgets: PiggyBankIcon,
+  settings: SettingsIcon,
 } as const;
 
 export type NavItem = { href: string; label: string; icon: keyof typeof ICONS };

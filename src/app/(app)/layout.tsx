@@ -86,6 +86,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
               ...(can(user, "clients:view")
                 ? [{ href: "/admin/clients", label: "Clients", icon: "clients" as const }]
                 : []),
+              ...(can(user, "users:manage")
+                ? [{ href: "/admin/settings", label: "Settings", icon: "settings" as const }]
+                : []),
             ],
           },
         ]

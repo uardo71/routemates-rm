@@ -17,3 +17,9 @@ export async function loginAction(_prevState: string | undefined, formData: Form
     throw error;
   }
 }
+
+// OAuth sign-in works by throwing a redirect that Next must propagate — do NOT wrap in try/catch.
+// If the signIn callback rejects (unknown/inactive user), Auth.js redirects to /login?error=AccessDenied.
+export async function microsoftLoginAction() {
+  await signIn("microsoft-entra-id", { redirectTo: "/" });
+}
