@@ -578,3 +578,88 @@ role + `erp_dev` DB; **restore the data from the `backups/*.dump` transferred ou
 (`pg_restore` as `erp_app`) OR `pnpm exec prisma migrate deploy` for an empty schema; copy `uploads/`
 (receipts + documents, gitignored). The `backups/` dumps are gitignored — carry them on a USB/drive,
 they don't travel with the clone.
+
+---
+
+## Session update — 2026-08-11/12 (this PC: Microsoft SSO + password toggle + menu/button redesign)
+
+Everything below was built in one session on **this** PC and pushed to `origin/main`. Same
+bootstrap caveat — one-time layer; when it conflicts with code, trust the code. This session did
+**no schema-behavior changes to existing modules** — it added auth (SSO), one settings toggle, and
+a presentation-only menu/button pass.
+
+### Microsoft Entra ID SSO (NEW — sign in alongside credentials)
+Single-tenant OIDC login for `@al.routemates.it` M365 accounts, **matched to existing app users by
+email** (case-insensitive) — RBAC/role/companyId are preserved from the LOCAL user, never from
+Entra. No new users are created by SSO; an Entra identity with no matching active app user is
+rejected at the `signIn` callback. No `Account`/session DB tables (still JWT strategy, no adapter).
+- **Files**: `src/auth.ts` — provider added **conditionally** (only when
+  `AUTH_MICROSOFT_ENTRA_ID_ID` + `..._SECRET` are set), `signIn` callback (gates OAuth to the tenant
+  `tid` + an active app user by email; credentials pass straight through), `jwt` callback extended
+  with the `account` param so on a `microsoft-entra-id` sign-in it **re-keys `token.sub`/role/
+  companyId from the local user by email** (Entra's `user.id` is the Entra `sub`, NOT our user id —
+  this re-key is load-bearing, don't remove it). `src/app/login/*` — a **separate**
+  `<form action={microsoftLoginAction}>` + submit button ("Sign in with Microsoft"); do NOT collapse
+  it into `type="button"` + `formAction` (that renders inert). Adversarial review killed two bugs
+  before they shipped: relying on optional Entra claims (`acct`/`xms_edov`) would have locked
+  everyone out (dropped); the inert-button form issue (fixed).
+- **`.env` (gitignored — recreate on each PC)**: needs three vars for SSO to activate —
+  `AUTH_MICROSOFT_ENTRA_ID_ID="2d5d7ba9-7e36-4d60-96d9-a83c6b754735"`,
+  `AUTH_MICROSOFT_ENTRA_ID_ISSUER="https://login.microsoftonline.com/7f078d31-3381-4e70-a30e-c24dd9846734/v2.0"`,
+  and `AUTH_MICROSOFT_ENTRA_ID_SECRET="<the secret VALUE, not the Secret ID>"`. Tenant ID
+  `7f078d31-…-c24dd9846734`, App (client) ID `2d5d7ba9-…-a83c6b754735`, single-tenant ("My
+  organization only"). Redirect URI registered in Entra: `http://localhost:3000/api/auth/callback/
+  microsoft-entra-id` (add the deployed origin's callback there before going live).
+  **SECURITY TODO**: the client secret was pasted into the chat while setting this up — **rotate it
+  in Entra** (create a new secret, copy the *Value* column not the *Secret ID*, update `.env`) and
+  delete the old one. Without the three vars set, SSO simply doesn't appear and credentials login
+  works as before.
+
+### Admin toggle: enable/disable direct password login (NEW — `/admin/settings`)
+Lets the owner run **SSO-only** but flip password login back on from inside the app if needed.
+- **Model** `AppSetting { key @id, value, updatedAt }` (migration
+  `prisma/migrations/20260812100000_app_settings/`) — a generic key/value store; the toggle lives
+  under a single key. Applies via `prisma migrate deploy` on a fresh PC.
+- **`src/lib/settings.ts`**: `microsoftConfigured()`, `getPasswordLoginSetting()` (default **true**),
+  `setPasswordLoginSetting()`, `isPasswordLoginAllowed()`. Password login is allowed if SSO is NOT
+  configured (can't lock yourself out before SSO works) **OR** the env override
+  `AUTH_ALLOW_PASSWORD_LOGIN=true` is set **OR** the DB setting says so. **Server-enforced**:
+  `authorize()` in `src/auth.ts` returns `null` when `!isPasswordLoginAllowed()`, so disabling it
+  isn't just UI-hiding. The login form also hides the password fields when disabled.
+- **Lockout escape hatch**: if you toggle password off and SSO later breaks, set
+  `AUTH_ALLOW_PASSWORD_LOGIN=true` in `.env` and restart — that overrides the DB flag.
+- **UI**: `/admin/settings` (gated `users:manage`), confirm-on-toggle, disabled when SSO isn't
+  configured. Reachable from the user/app menu.
+- **Current state**: password login is toggled **OFF** (SSO-only). That's why the login page shows
+  only the "Sign in with Microsoft" outline button and no password fields / no default fill button.
+
+### Menu redesign (presentation only — `sidebar-shell.tsx` + `sheet.tsx`)
+Full sidebar rework: collapsible desktop rail + a real mobile drawer.
+- **NEW `src/app/(app)/sidebar-shell.tsx`**: stateful client shell owning `collapsed` (seeded from
+  cookie `rm_sidebar_collapsed` server-side → no FOUC) and `mobileOpen`. Desktop `<aside>`
+  (`hidden md:flex`, width `w-60` ↔ `w-[4.5rem]`), a floating rotating collapse chevron, top/bottom
+  scroll-fade masks, a glass mobile top bar (`md:hidden`, hamburger + theme-aware logo +
+  ThemeToggle), and a Sheet drawer for mobile nav. `layout.tsx` reads the cookie for
+  `defaultCollapsed` and renders `<SidebarShell>` around `children`.
+- **NEW `src/components/ui/sheet.tsx`**: edge-positioned Base UI Dialog (Sheet/SheetContent/
+  SheetTitle/SheetClose) with `data-closed:hidden` on Backdrop+Popup (the standard Base UI
+  stuck-open guard) and a slide-in transition.
+- **`sidebar-nav.tsx`** rewritten: string-key `ICONS` registry (icons never cross the RSC boundary
+  as components), `collapsed`/`onNavigate` props, brass grow-in active rail, sharp `rounded-sm`,
+  `aria-current`, collapsed-state tooltips via `<TooltipTrigger render={link} />`. `user-menu.tsx`
+  gained a `collapsed` prop (avatar-only when collapsed) and sharp corners.
+- Lint note: `React.useEffect(() => setMobileOpen(false), [pathname])` in `sidebar-shell.tsx` carries
+  an intentional `// eslint-disable-next-line react-hooks/set-state-in-effect` — syncing overlay
+  visibility to the route is deliberate, don't "fix" it.
+
+### Button color fix (`src/components/ui/button.tsx`)
+Default variant changed from brass fill (`bg-primary text-primary-foreground`, which had a poor
+text/fill contrast) to **ink-navy on paper**: `bg-foreground text-background hover:bg-foreground/90`
+(computed live as `rgb(20,31,43)` bg / `rgb(235,239,241)` text). Applies to every default `<Button>`
+app-wide (primary actions: New/Save/Add/etc.). Brass (`--primary` `#a9812f`) is still the accent used
+elsewhere (active nav rail, avatars, links). If ink-navy is ever unwanted, it's a one-line revert.
+
+### Open / next (carry-over)
+- **Rotate the Entra client secret** (exposed in chat) — see the SECURITY TODO above.
+- Still true from prior sessions: deploy online; regenerate INV-0001 for July; the app-wide
+  date-display (UTC off-by-one) cleanup; replace Pirelli test data when done exercising flows.

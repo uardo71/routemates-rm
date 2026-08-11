@@ -13,25 +13,33 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { signOutAction } from "./sign-out-action";
+import { cn } from "@/lib/utils";
 
-export function UserMenu({ name, role }: { name: string; role: string }) {
+export function UserMenu({ name, role, collapsed = false }: { name: string; role: string; collapsed?: boolean }) {
   const [pending, startTransition] = useTransition();
 
   return (
-    <div className="flex items-center gap-1">
+    <div className={cn("flex items-center gap-1", collapsed && "justify-center")}>
       <DropdownMenu>
-        <DropdownMenuTrigger className="flex flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-sidebar-accent/60 outline-none">
-          <div className="flex size-7 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-semibold text-primary-foreground">
+        <DropdownMenuTrigger
+          className={cn(
+            "flex items-center gap-2 rounded-sm text-left outline-none transition-colors hover:bg-sidebar-accent/60 focus-visible:ring-2 focus-visible:ring-sidebar-ring motion-reduce:transition-none",
+            collapsed ? "justify-center p-1" : "flex-1 px-2 py-1.5",
+          )}
+        >
+          <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-semibold text-primary-foreground">
             {name.slice(0, 1).toUpperCase()}
           </div>
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-sm font-medium">{name}</div>
-            <div className="truncate text-xs text-sidebar-foreground/50">{role}</div>
-          </div>
+          {!collapsed && (
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-sm font-medium">{name}</div>
+              <div className="truncate text-xs text-sidebar-foreground/50 uppercase tracking-wide">{role}</div>
+            </div>
+          )}
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" className="w-48">
+        <DropdownMenuContent align={collapsed ? "center" : "start"} className="w-52">
           <DropdownMenuGroup>
-            <DropdownMenuLabel>{name}</DropdownMenuLabel>
+            <DropdownMenuLabel className="truncate">{name}</DropdownMenuLabel>
             <DropdownMenuSeparator />
             <DropdownMenuItem disabled={pending} onClick={() => startTransition(() => signOutAction())}>
               <LogOutIcon />
@@ -40,7 +48,7 @@ export function UserMenu({ name, role }: { name: string; role: string }) {
           </DropdownMenuGroup>
         </DropdownMenuContent>
       </DropdownMenu>
-      <ThemeToggle />
+      {!collapsed && <ThemeToggle />}
     </div>
   );
 }

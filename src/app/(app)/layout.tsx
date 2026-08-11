@@ -1,9 +1,9 @@
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { can } from "@/lib/permissions";
-import { SidebarNav, type NavGroup } from "./sidebar-nav";
-import { UserMenu } from "./user-menu";
-import { RoutematesLogo } from "@/components/routemates-logo";
+import { type NavGroup } from "./sidebar-nav";
+import { SidebarShell } from "./sidebar-shell";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const session = await auth();
@@ -95,22 +95,17 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       : []),
   ];
 
+  const cookieStore = await cookies();
+  const defaultCollapsed = cookieStore.get("rm_sidebar_collapsed")?.value === "1";
+
   return (
-    <div className="flex flex-1 min-h-full">
-      <aside className="w-60 shrink-0 border-r border-sidebar-border bg-sidebar text-sidebar-foreground flex flex-col">
-        <div className="px-4 py-4">
-          <RoutematesLogo className="h-9" />
-        </div>
-        <div className="flex-1 overflow-auto py-1">
-          <SidebarNav groups={groups} />
-        </div>
-        <div className="border-t border-sidebar-border p-2">
-          <UserMenu name={user.name ?? "User"} role={user.role} />
-        </div>
-      </aside>
-      <main className="flex-1 overflow-auto bg-background p-6">
-        <div className="w-full">{children}</div>
-      </main>
-    </div>
+    <SidebarShell
+      groups={groups}
+      userName={user.name ?? "User"}
+      userRole={user.role}
+      defaultCollapsed={defaultCollapsed}
+    >
+      {children}
+    </SidebarShell>
   );
 }
