@@ -13,7 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { formatMoney } from "@/lib/format";
 import { invoiceTotals } from "@/lib/invoice";
 import type { ProjectBillingType } from "@prisma/client";
-import { createInvoiceAction, createTimeInvoiceAction } from "../actions";
+import { createInvoiceAction, createTimeInvoiceAction, setInvoiceCommissionAction } from "../actions";
 
 type MilestoneOpt = { id: string; name: string; salesPrice: number; budgetHours: number | null };
 export type ProjectOption = {
@@ -47,11 +47,18 @@ export function NewInvoiceClient({ projects, defaultCurrency, invoices }: { proj
   const [notes, setNotes] = useState("");
   const [periodStart, setPeriodStart] = useState("");
   const [periodEnd, setPeriodEnd] = useState("");
+  // Optional sales-commission discount: a % of the line net and/or a flat amount (they combine).
+  const [commissionPercent, setCommissionPercent] = useState("");
+  const [commissionFixed, setCommissionFixed] = useState("");
   const [lines, setLines] = useState<LineRow[]>([{ description: "", quantity: "1", rate: "" }]);
 
   const project = useMemo(() => projects.find((p) => p.id === projectId) ?? null, [projects, projectId]);
 
-  const net = lines.reduce((s, l) => s + (Number(l.quantity) || 0) * (Number(l.rate) || 0), 0);
+  const linesNet = lines.reduce((s, l) => s + (Number(l.quantity) || 0) * (Number(l.rate) || 0), 0);
+  const pct = Number(commissionPercent) || 0;
+  const fixedAmt = Number(commissionFixed) || 0;
+  const commissionVal = Math.round((linesNet * (pct / 100) + fixedAmt) * 100) / 100;
+  const net = linesNet - commissionVal; // the "Sales comision" line reduces net
   const totals = invoiceTotals([{ amount: net }], vatRate === "" ? null : Number(vatRate));
 
   function setLine(i: number, patch: Partial<LineRow>) {
@@ -81,8 +88,13 @@ export function NewInvoiceClient({ projects, defaultCurrency, invoices }: { proj
       if (!periodStart || !periodEnd) return toast.error("Pick the billing period.");
       startTransition(async () => {
         const r = await createTimeInvoiceAction({ projectId, periodStart, periodEnd, vatRate: vatRate === "" ? null : Number(vatRate) });
-        if (r.error) toast.error(r.error);
-        else if (r.invoiceId) {
+        if (r.error) { toast.error(r.error); return; }
+        if (r.invoiceId) {
+          // Apply the optional commission discount to the just-created time invoice.
+          if (pct > 0 || fixedAmt > 0) {
+            const cr = await setInvoiceCommissionAction({ invoiceId: r.invoiceId, percent: pct || null, fixed: fixedAmt || null });
+            if (cr.error) { toast.error(cr.error); return; }
+          }
           toast.success("Draft invoice created from time entries.");
           router.push(`/invoices/${r.invoiceId}`);
         }
@@ -91,6 +103,7 @@ export function NewInvoiceClient({ projects, defaultCurrency, invoices }: { proj
     }
     const cleaned = lines.filter((l) => l.description.trim() && l.rate !== "");
     if (cleaned.length === 0) return toast.error("Add at least one line with a description and amount.");
+    const finalLines = cleaned.map((l) => ({ description: l.description.trim(), quantity: Number(l.quantity) || 0, rate: Number(l.rate) || 0, milestoneId: null as string | null }));
     startTransition(async () => {
       const r = await createInvoiceAction({
         projectId,
@@ -103,10 +116,17 @@ export function NewInvoiceClient({ projects, defaultCurrency, invoices }: { proj
         poNumber: null,
         fiscalNumber: fiscalNumber.trim() || null,
         notes: notes.trim() || null,
-        lines: cleaned.map((l) => ({ description: l.description.trim(), quantity: Number(l.quantity) || 0, rate: Number(l.rate) || 0, milestoneId: null })),
+        periodStart: periodStart || null,
+        periodEnd: periodEnd || null,
+        lines: finalLines,
       });
-      if (r.error) toast.error(r.error);
-      else if (r.invoiceId) {
+      if (r.error) { toast.error(r.error); return; }
+      if (r.invoiceId) {
+        // Apply the optional commission discount (% and/or fixed) to the just-created draft.
+        if (pct > 0 || fixedAmt > 0) {
+          const cr = await setInvoiceCommissionAction({ invoiceId: r.invoiceId, percent: pct || null, fixed: fixedAmt || null });
+          if (cr.error) { toast.error(cr.error); return; }
+        }
         toast.success(isCreditNote ? "Draft credit note created." : "Draft invoice created.");
         router.push(`/invoices/${r.invoiceId}`);
       }
@@ -230,6 +250,40 @@ export function NewInvoiceClient({ projects, defaultCurrency, invoices }: { proj
         </div>
       </div>
       {mode === "MANUAL" && (
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="inv-svcfrom">Service from</Label>
+            <Input id="inv-svcfrom" type="date" value={periodStart} onChange={(e) => setPeriodStart(e.target.value)} />
+            <span className="text-[11px] text-muted-foreground">Period the work relates to.</span>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="inv-svcto">Service to</Label>
+            <Input id="inv-svcto" type="date" value={periodEnd} onChange={(e) => setPeriodEnd(e.target.value)} />
+            <span className="text-[11px] text-muted-foreground">Can span multiple months.</span>
+          </div>
+        </div>
+      )}
+      <div className="flex flex-col gap-1.5">
+        <Label>Sales commission <span className="font-normal text-muted-foreground">(optional discount)</span></Label>
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="flex flex-col gap-1">
+            <span className="text-[11px] text-muted-foreground">Percent of net</span>
+            <div className="flex items-center gap-1">
+              <Input aria-label="Commission percent" className="w-24" type="number" step="0.01" min="0" max="100" value={commissionPercent} onChange={(e) => setCommissionPercent(e.target.value)} placeholder="0" />
+              <span className="text-sm text-muted-foreground">%</span>
+            </div>
+          </div>
+          <span className="pb-2 text-xs text-muted-foreground">and / or</span>
+          <div className="flex flex-col gap-1">
+            <span className="text-[11px] text-muted-foreground">Fixed amount</span>
+            <Input aria-label="Commission fixed amount" className="w-32" type="number" step="0.01" min="0" value={commissionFixed} onChange={(e) => setCommissionFixed(e.target.value)} placeholder="0.00" />
+          </div>
+          {commissionVal > 0 && (
+            <span className="pb-2 text-sm text-muted-foreground">= <span className="text-destructive tabular-nums">−{formatMoney(commissionVal, defaultCurrency)}</span> &quot;Sales comision&quot; line</span>
+          )}
+        </div>
+      </div>
+      {mode === "MANUAL" && (
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="inv-notes">Notes</Label>
           <Textarea id="inv-notes" value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} maxLength={2000} />
@@ -238,6 +292,12 @@ export function NewInvoiceClient({ projects, defaultCurrency, invoices }: { proj
 
       {mode === "MANUAL" && (
         <div className="flex justify-end gap-4 border-t pt-3 text-sm tabular-nums">
+          {commissionVal > 0 && (
+            <>
+              <span className="text-muted-foreground">Subtotal <span className="text-foreground">{formatMoney(linesNet, defaultCurrency)}</span></span>
+              <span className="text-muted-foreground">Sales comision <span className="text-destructive">−{formatMoney(commissionVal, defaultCurrency)}</span></span>
+            </>
+          )}
           <span className="text-muted-foreground">Net <span className="text-foreground">{formatMoney(net, defaultCurrency)}</span></span>
           <span className="text-muted-foreground">VAT <span className="text-foreground">{formatMoney(totals.vat, defaultCurrency)}</span></span>
           <span className="font-medium">Gross {formatMoney(totals.gross, defaultCurrency)}</span>

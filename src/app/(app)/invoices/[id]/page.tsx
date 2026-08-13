@@ -42,6 +42,8 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
     periodStart: inv.periodStart ? inv.periodStart.toISOString().slice(0, 10) : null,
     periodEnd: inv.periodEnd ? inv.periodEnd.toISOString().slice(0, 10) : null,
     vatRate: inv.vatRate == null ? null : Number(inv.vatRate),
+    commissionPercent: inv.commissionPercent == null ? null : Number(inv.commissionPercent),
+    commissionFixed: inv.commissionFixed == null ? null : Number(inv.commissionFixed),
     fiscalNumber: inv.fiscalNumber,
     fiscalReference: inv.fiscalReference,
     customerReference: inv.customerReference,

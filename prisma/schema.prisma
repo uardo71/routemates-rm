@@ -579,6 +579,12 @@ model Invoice {
   // VAT percentage; net comes from the lines, gross = net + net*vatRate. The fiscal app is the
   // source of truth for tax — this is captured for management totals only.
   vatRate         Decimal?      @db.Decimal(5, 2)
+  // Optional sales-commission discount, expressed as a percentage of the invoice's line net
+  // and/or a flat amount (they combine: discount = net*commissionPercent/100 + commissionFixed).
+  // The resulting figure is materialised as the negative "Sales comision" line; these two fields
+  // remember how it was entered so it round-trips on edit and % recomputes if the lines change.
+  commissionPercent Decimal?    @db.Decimal(5, 2)
+  commissionFixed   Decimal?    @db.Decimal(12, 2)
   // Reconciliation references.
   fiscalNumber    String? // the external fiscal app's invoice number
   fiscalReference String? // any extra fiscal-side reference

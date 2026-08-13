@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { toast } from "sonner";
 import { format } from "date-fns";
-import { XIcon, PlusIcon, Trash2Icon } from "lucide-react";
+import { XIcon, PlusIcon, Trash2Icon, Link2Icon, BanknoteIcon, PencilIcon, BanIcon, SendIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -43,6 +43,7 @@ import {
   voidInvoiceAction,
   deleteInvoiceAction,
   updateInvoiceAction,
+  setInvoiceCommissionAction,
   uploadInvoiceDocumentAction,
   deleteInvoiceDocumentAction,
 } from "../actions";
@@ -63,6 +64,8 @@ export type InvoiceDetail = {
   periodStart: string | null;
   periodEnd: string | null;
   vatRate: number | null;
+  commissionPercent: number | null;
+  commissionFixed: number | null;
   fiscalNumber: string | null;
   fiscalReference: string | null;
   customerReference: string | null;
@@ -118,12 +121,12 @@ export function InvoiceDetailClient({ detail }: { detail: InvoiceDetail }) {
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          {s === "DRAFT" && <Button size="sm" onClick={() => run(() => issueInvoiceAction(detail.id), "Issued — revenue recognized.")} disabled={pending}>Issue</Button>}
-          {s !== "VOID" && s !== "DRAFT" && <Button size="sm" variant="outline" onClick={() => setReconcileOpen(true)} disabled={pending}>{detail.fiscalNumber ? "Update reconciliation" : "Reconcile"}</Button>}
-          {(s === "ISSUED" || s === "RECONCILED") && <Button size="sm" variant="outline" onClick={() => setPayOpen(true)} disabled={pending}>Record payment</Button>}
-          {s !== "VOID" && <Button size="sm" variant="ghost" onClick={() => setEditOpen(true)} disabled={pending}>Edit</Button>}
-          {s !== "VOID" && s !== "DRAFT" && <Button size="sm" variant="ghost" onClick={() => { if (confirm("Void this invoice?")) run(() => voidInvoiceAction(detail.id), "Voided."); }} disabled={pending}>Void</Button>}
-          {s === "DRAFT" && <Button size="sm" variant="ghost" onClick={() => { if (confirm("Delete this draft?")) run(() => deleteInvoiceAction(detail.id), "Deleted.", () => router.push("/invoices")); }} disabled={pending}>Delete</Button>}
+          {s === "DRAFT" && <Button size="sm" onClick={() => run(() => issueInvoiceAction(detail.id), "Issued — revenue recognized.")} disabled={pending}><SendIcon className="size-3.5 mr-1.5" />Issue</Button>}
+          {s !== "VOID" && s !== "DRAFT" && <Button size="sm" variant={detail.fiscalNumber ? "outline" : "default"} onClick={() => setReconcileOpen(true)} disabled={pending}><Link2Icon className="size-3.5 mr-1.5" />{detail.fiscalNumber ? "Update reconciliation" : "Reconcile"}</Button>}
+          {(s === "ISSUED" || s === "RECONCILED") && <Button size="sm" variant="outline" onClick={() => setPayOpen(true)} disabled={pending}><BanknoteIcon className="size-3.5 mr-1.5" />Record payment</Button>}
+          {s !== "VOID" && <Button size="sm" variant="outline" onClick={() => setEditOpen(true)} disabled={pending}><PencilIcon className="size-3.5 mr-1.5" />Edit</Button>}
+          {s !== "VOID" && s !== "DRAFT" && <Button size="sm" variant="outline" className="text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => { if (confirm("Void this invoice?")) run(() => voidInvoiceAction(detail.id), "Voided."); }} disabled={pending}><BanIcon className="size-3.5 mr-1.5" />Void</Button>}
+          {s === "DRAFT" && <Button size="sm" variant="outline" className="text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => { if (confirm("Delete this draft?")) run(() => deleteInvoiceAction(detail.id), "Deleted.", () => router.push("/invoices")); }} disabled={pending}><Trash2Icon className="size-3.5 mr-1.5" />Delete</Button>}
         </div>
       </div>
 
@@ -143,7 +146,14 @@ export function InvoiceDetailClient({ detail }: { detail: InvoiceDetail }) {
               <TableBody>
                 {detail.lines.map((l) => (
                   <TableRow key={l.id}>
-                    <TableCell>{l.description}</TableCell>
+                    <TableCell>
+                      {l.description}
+                      {l.description === "Sales comision" && (detail.commissionPercent || detail.commissionFixed) && (
+                        <span className="ml-1.5 text-[11px] text-muted-foreground">
+                          ({[detail.commissionPercent ? `${detail.commissionPercent}% of net` : null, detail.commissionFixed ? formatMoney(detail.commissionFixed, c) : null].filter(Boolean).join(" + ")})
+                        </span>
+                      )}
+                    </TableCell>
                     <TableCell className="text-right tabular-nums">{l.quantity}</TableCell>
                     <TableCell className="text-right tabular-nums">{formatMoney(l.rate, c)}</TableCell>
                     <TableCell className="text-right tabular-nums">{formatMoney(l.amount, c)}</TableCell>
@@ -163,6 +173,19 @@ export function InvoiceDetailClient({ detail }: { detail: InvoiceDetail }) {
             <InfoField icon={FileTextIcon} label="PO #" value={detail.poNumber ?? "—"} />
             <InfoField icon={FileTextIcon} label="Issue date" value={detail.issueDate} />
             <InfoField icon={FileTextIcon} label="Recognition" value={detail.recognitionDate ?? detail.issueDate} />
+            <InfoField
+              icon={FileTextIcon}
+              label="Service period"
+              value={(() => {
+                const s = detail.periodStart;
+                if (!s) return "—";
+                const e = detail.periodEnd ?? s;
+                const M = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+                const [sy, sm, sd] = s.split("-");
+                const [ey, em, ed] = e.split("-");
+                return sy === ey && sm === em ? `${M[+sm - 1]} ${sy}` : `${M[+sm - 1]} ${+sd} – ${M[+em - 1]} ${+ed}, ${ey}`;
+              })()}
+            />
           </CardContent>
         </Card>
       </div>
@@ -286,13 +309,28 @@ function EditDialog({ detail, onClose, onDone }: { detail: InvoiceDetail; onClos
   const [customerReference, setCustomerReference] = useState(detail.customerReference ?? "");
   const [poNumber, setPoNumber] = useState(detail.poNumber ?? "");
   const [notes, setNotes] = useState(detail.notes ?? "");
+  const [periodStart, setPeriodStart] = useState(detail.periodStart ?? "");
+  const [periodEnd, setPeriodEnd] = useState(detail.periodEnd ?? "");
+  // The optional sales-commission discount is stored as a "Sales comision" line, but entered as a
+  // % of the line net and/or a flat amount (they combine). Those two raw inputs are persisted on
+  // the invoice, so seed the boxes from them, not from the materialised line.
+  const [commissionPercent, setCommissionPercent] = useState(detail.commissionPercent != null ? String(detail.commissionPercent) : "");
+  const [commissionFixed, setCommissionFixed] = useState(detail.commissionFixed != null ? String(detail.commissionFixed) : "");
   const [lines, setLines] = useState<EditLineRow[]>(
-    detail.lines.map((l) => ({ id: l.id, description: l.description, quantity: String(l.quantity), rate: String(l.rate), milestoneId: l.milestoneId, timeEntryCount: l.timeEntryCount })),
+    detail.lines.filter((l) => l.description !== "Sales comision").map((l) => ({ id: l.id, description: l.description, quantity: String(l.quantity), rate: String(l.rate), milestoneId: l.milestoneId, timeEntryCount: l.timeEntryCount })),
   );
 
   const vatNum = vatRate === "" || Number.isNaN(Number(vatRate)) ? null : Number(vatRate);
   const lineAmount = (l: EditLineRow) => Math.round((Number(l.quantity) || 0) * (Number(l.rate) || 0) * 100) / 100;
-  const totals = invoiceTotals(lines.map((l) => ({ amount: lineAmount(l) })), vatNum);
+  // Base for the percentage = net of the work lines shown in the editor (excludes the commission).
+  const commissionBase = lines.reduce((s, l) => s + lineAmount(l), 0);
+  const pct = Number(commissionPercent) || 0;
+  const fixedAmt = Number(commissionFixed) || 0;
+  const commissionVal = Math.round((commissionBase * (pct / 100) + fixedAmt) * 100) / 100;
+  const totals = invoiceTotals(
+    [...lines.map((l) => ({ amount: lineAmount(l) })), ...(commissionVal > 0 ? [{ amount: -commissionVal }] : [])],
+    vatNum,
+  );
   // Existing lines being removed that were backed by time entries — those hours get released on save.
   const releasedEntryCount = detail.lines
     .filter((orig) => orig.timeEntryCount > 0 && !lines.some((l) => l.id === orig.id))
@@ -314,6 +352,8 @@ function EditDialog({ detail, onClose, onDone }: { detail: InvoiceDetail; onClos
       }
       if (releasedEntryCount > 0 && !confirm(`Removing ${releasedEntryCount === 1 ? "a line backed by 1 time entry" : `line(s) backed by ${releasedEntryCount} time entries`} will release ${releasedEntryCount === 1 ? "it" : "them"} for re-invoicing. Continue?`)) return;
       linesPayload = cleaned.map((l) => ({ id: l.id ?? undefined, description: l.description, quantity: Number(l.quantity), rate: Number(l.rate), milestoneId: l.milestoneId }));
+      // Commission is NOT bundled into the work lines — it's reconciled separately below so it can
+      // change on issued/paid invoices too (the line editor is DRAFT-only).
     }
     start(async () => {
       const r = await updateInvoiceAction({
@@ -321,9 +361,14 @@ function EditDialog({ detail, onClose, onDone }: { detail: InvoiceDetail; onClos
         vatRate: vatRate === "" ? null : Number(vatRate), selfBilled,
         fiscalNumber: fiscalNumber.trim() || null, customerReference: customerReference.trim() || null,
         poNumber: poNumber.trim() || null, notes: notes.trim() || null,
+        periodStart: periodStart || null, periodEnd: periodEnd || null,
         lines: linesPayload,
       });
-      if (r.error) toast.error(r.error); else { toast.success("Saved."); onDone(); }
+      if (r.error) { toast.error(r.error); return; }
+      const cr = await setInvoiceCommissionAction({ invoiceId: detail.id, percent: pct || null, fixed: fixedAmt || null });
+      if (cr.error) { toast.error(cr.error); return; }
+      toast.success("Saved.");
+      onDone();
     });
   }
   return (
@@ -352,19 +397,44 @@ function EditDialog({ detail, onClose, onDone }: { detail: InvoiceDetail; onClos
                 ))}
                 {lines.length === 0 && <p className="text-sm text-muted-foreground">No lines yet — add at least one.</p>}
               </div>
-              <div className="flex justify-end gap-4 border-t pt-2 text-sm tabular-nums">
-                <span className="text-muted-foreground">Net <span className="text-foreground">{formatMoney(totals.net, c)}</span></span>
-                <span className="text-muted-foreground">VAT <span className="text-foreground">{formatMoney(totals.vat, c)}</span></span>
-                <span className="font-medium">Gross {formatMoney(totals.gross, c)}</span>
-              </div>
               {releasedEntryCount > 0 && <p className="text-[11px] text-amber-600">Saving releases {releasedEntryCount} time {releasedEntryCount === 1 ? "entry" : "entries"} from removed line(s), making {releasedEntryCount === 1 ? "it" : "them"} available to invoice again.</p>}
             </div>
           )}
+          {/* Sales commission — always editable (not just DRAFT): a deal-level discount that can be
+              agreed after issuing, stored as the "Sales comision" line. */}
+          <div className="flex flex-col gap-2 rounded-md border bg-muted/30 p-3">
+            <Label className="shrink-0">Sales commission <span className="font-normal text-muted-foreground">(optional discount — leave blank to remove)</span></Label>
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="flex flex-col gap-1">
+                <span className="text-[11px] text-muted-foreground">Percent of net</span>
+                <div className="flex items-center gap-1">
+                  <Input aria-label="Commission percent" type="number" step="0.01" min="0" max="100" className="w-24" value={commissionPercent} onChange={(e) => setCommissionPercent(e.target.value)} placeholder="0" />
+                  <span className="text-sm text-muted-foreground">%</span>
+                </div>
+              </div>
+              <span className="pb-2 text-xs text-muted-foreground">and / or</span>
+              <div className="flex flex-col gap-1">
+                <span className="text-[11px] text-muted-foreground">Fixed amount</span>
+                <Input aria-label="Commission fixed amount" type="number" step="0.01" min="0" className="w-32" value={commissionFixed} onChange={(e) => setCommissionFixed(e.target.value)} placeholder="0.00" />
+              </div>
+            </div>
+            <div className="flex justify-end gap-4 border-t pt-2 text-sm tabular-nums">
+              {commissionVal > 0 && <span className="text-muted-foreground">Comision <span className="text-destructive">−{formatMoney(commissionVal, c)}</span></span>}
+              <span className="text-muted-foreground">Net <span className="text-foreground">{formatMoney(totals.net, c)}</span></span>
+              <span className="text-muted-foreground">VAT <span className="text-foreground">{formatMoney(totals.vat, c)}</span></span>
+              <span className="font-medium">Gross {formatMoney(totals.gross, c)}</span>
+            </div>
+          </div>
           <div className="grid grid-cols-3 gap-3">
             <div className="flex flex-col gap-1.5"><Label htmlFor="e-issue">Issue date</Label><Input id="e-issue" type="date" value={issueDate} onChange={(e) => setIssueDate(e.target.value)} /></div>
             <div className="flex flex-col gap-1.5"><Label htmlFor="e-rec">Recognition</Label><Input id="e-rec" type="date" value={recognitionDate} onChange={(e) => setRecognitionDate(e.target.value)} /></div>
             <div className="flex flex-col gap-1.5"><Label htmlFor="e-due">Due date</Label><Input id="e-due" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} /></div>
           </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="flex flex-col gap-1.5"><Label htmlFor="e-pstart">Service from</Label><Input id="e-pstart" type="date" value={periodStart} onChange={(e) => setPeriodStart(e.target.value)} /></div>
+            <div className="flex flex-col gap-1.5"><Label htmlFor="e-pend">Service to</Label><Input id="e-pend" type="date" value={periodEnd} onChange={(e) => setPeriodEnd(e.target.value)} /></div>
+          </div>
+          <p className="text-[11px] text-muted-foreground -mt-2">Which period the work relates to — can span multiple months. Shows as a single month if it&apos;s a full calendar month.</p>
           <div className="grid grid-cols-3 gap-3">
             <div className="flex flex-col gap-1.5"><Label htmlFor="e-vat">VAT %</Label><Input id="e-vat" type="number" step="0.01" value={vatRate} onChange={(e) => setVatRate(e.target.value)} /></div>
             <div className="flex flex-col gap-1.5"><Label htmlFor="e-po">PO #</Label><Input id="e-po" value={poNumber} onChange={(e) => setPoNumber(e.target.value)} /></div>

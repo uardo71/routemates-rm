@@ -663,3 +663,69 @@ elsewhere (active nav rail, avatars, links). If ink-navy is ever unwanted, it's 
 - **Rotate the Entra client secret** (exposed in chat) — see the SECURITY TODO above.
 - Still true from prior sessions: deploy online; regenerate INV-0001 for July; the app-wide
   date-display (UTC off-by-one) cleanup; replace Pirelli test data when done exercising flows.
+
+---
+
+## Session update — 2026-08-13 (this PC: invoicing register polish + sales commission)
+
+One session on this PC, focused entirely on the **Invoicing register** (`/invoices`) and its detail/new
+pages. Pushed to `origin/main`. One migration added (apply with `migrate deploy` on the other PC).
+Same bootstrap caveat — when this doc conflicts with code, trust the code.
+
+### Migration added (applied to erp_dev)
+- `20260812130000_invoice_commission` — adds `Invoice.commissionPercent Decimal(5,2)` and
+  `Invoice.commissionFixed Decimal(12,2)`. Apply on a fresh/other DB with `pnpm exec prisma migrate deploy`.
+
+### Sales commission discount — now % and/or fixed, any status (the main ask)
+- The optional sales-commission discount is stored as a single negative **`InvoiceLine` whose
+  description is EXACTLY `"Sales comision"`** (owner's required wording — do not "fix" the spelling,
+  do not stuff metadata into that description; it's matched by string in several places). It flows
+  through every total (net/VAT/gross), the register, and revenue recognition as a normal line — no
+  special-casing in the totals math.
+- Entered as a **percentage of the work-line net AND/OR a flat amount** (they combine:
+  `discount = base * percent/100 + fixed`, where `base` = net of the non-commission lines). The two
+  raw inputs persist on the invoice (`commissionPercent` / `commissionFixed`) so the Edit box
+  round-trips and the % recomputes if lines change.
+- **New server action `setInvoiceCommissionAction({ invoiceId, percent, fixed })`** in
+  `invoices/actions.ts` — recomputes the base, upserts the `"Sales comision"` line when the result
+  > 0, deletes it when 0, and stores the raw percent/fixed. **Works in ANY status** (DRAFT / ISSUED /
+  RECONCILED / PAID) — only VOID is blocked. This is deliberate: a commission can be agreed after
+  issuing, so it is NOT gated to DRAFT like the work-line editor. Const `COMMISSION_DESC` holds the
+  exact string (can't be exported from a `"use server"` file, so the client re-uses the literal).
+- **Edit dialog** (`invoice-detail-client.tsx`): the commission box is a standalone always-visible
+  section (Percent-of-net input + "and/or" + Fixed-amount input + live Comision/Net/VAT/Gross), moved
+  OUT of the `{isDraft && …}` line-editor block. On Save it calls `updateInvoiceAction` (work lines,
+  DRAFT-only as before) THEN `setInvoiceCommissionAction` (commission, any status). The commission is
+  no longer bundled into `linesPayload`.
+- **New-invoice form** (`new-invoice-client.tsx`): same two-field commission control, now shown for
+  BOTH bases (Manual AND From-approved-time), applied via `setInvoiceCommissionAction` right after the
+  draft is created (no longer appended client-side as a raw line).
+- Detail read-only lines table annotates the `Sales comision` row with its breakdown, e.g.
+  `(5% of net + €100)`.
+
+### Register overview redesign + search/filters
+- **`invoices/page.tsx`** (server) now builds serializable rows and renders a new client table
+  **`invoices/invoices-table.tsx`** with: a search box (invoice number, fiscal number, client,
+  project, amounts), a **Client** filter, a **Status** filter, and a **service-month** picker
+  (keeps invoices whose service period overlaps the chosen month), a Clear button, and an "X of N ·
+  Filtered net" footer. KPI StatCards (Recognized net / Outstanding / Collected / To reconcile), a
+  "Billed by service month" MiniBarChart, and the "Needs reconciliation" worklist stay in the server
+  page above the table.
+- **Service period** ("date of service") is first-class: `Invoice.periodStart/periodEnd` (already
+  existed) is shown on the register (a "Service period" column, full-month → "Jul 2026", else a
+  range) and the detail page; editable on New (Manual) + Edit via "Service from"/"Service to" date
+  inputs. Parsed/stored at **UTC midnight**, read with UTC accessors (same tz discipline as
+  everywhere else).
+- Detail header action buttons restyled to consistent outline variants with lucide icons
+  (Reconcile / Record payment / Edit / Void / Delete; Void+Delete destructive-tinted).
+
+### Bug fixed this session
+- **Project detail → Invoices tab showed 0** for manual/self-billed invoices. The query matched only
+  invoices with a **milestone-linked line**; manual invoices carry `projectId` but no milestone line.
+  Fixed `projects/[id]/page.tsx` to match `{ OR: [{ projectId }, { lines: { some: { milestoneId
+  in … } } }] }`. This also feeds the project's "Invoiced" stat + tab count.
+
+### Open / next (unchanged carry-over)
+- Rotate the Entra client secret; deploy online; regenerate INV-0001 for July; app-wide UTC
+  date-display cleanup; replace Pirelli test data. Line editing after DRAFT is still delete+recreate
+  (no in-place editor beyond the commission box).

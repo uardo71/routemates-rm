@@ -23,6 +23,11 @@ function parseDate(value: string | null | undefined): Date | null | "invalid" {
   return Number.isNaN(d.getTime()) ? "invalid" : d;
 }
 
+// The optional sales-commission discount is stored as a single negative line with this exact
+// description (owner's required wording). Kept as a plain line so it flows through every total
+// (net/VAT/gross), the register, and revenue recognition without special-casing.
+const COMMISSION_DESC = "Sales comision";
+
 // ---------- create (manual / partial / full / milestone / credit note) ----------
 
 const LineSchema = z.object({
@@ -55,6 +60,10 @@ const CreateSchema = z.object({
   customerReference: z.string().max(100).optional().nullable(),
   poNumber: z.string().max(100).optional().nullable(),
   notes: z.string().max(2000).optional().nullable(),
+  // Service period ("date of service" — which month the work relates to). Optional; stored on the
+  // invoice and shown on the register. Parsed at UTC midnight (see createInvoiceFromTime).
+  periodStart: z.string().optional().nullable(),
+  periodEnd: z.string().optional().nullable(),
   lines: z.array(LineSchema).min(1, "Add at least one line."),
 });
 export type CreateInvoiceInput = z.infer<typeof CreateSchema>;
@@ -90,6 +99,10 @@ export async function createInvoiceAction(input: CreateInvoiceInput): Promise<{ 
   if (recognitionDate === "invalid") return { error: "Invalid recognition date." };
   const dueDate = parseDate(d.dueDate);
   if (dueDate === "invalid") return { error: "Invalid due date." };
+  // Service period stored at UTC midnight so its month reads correctly regardless of timezone.
+  const dateOnly = /^\d{4}-\d{2}-\d{2}$/;
+  const periodStart = d.periodStart && dateOnly.test(d.periodStart) ? new Date(`${d.periodStart}T00:00:00.000Z`) : null;
+  const periodEnd = d.periodEnd && dateOnly.test(d.periodEnd) ? new Date(`${d.periodEnd}T00:00:00.000Z`) : null;
 
   const invoiceNumber = await nextInvoiceNumber(user.companyId, d.type);
 
@@ -106,6 +119,8 @@ export async function createInvoiceAction(input: CreateInvoiceInput): Promise<{ 
       issueDate,
       recognitionDate: recognitionDate ?? null,
       dueDate: dueDate ?? null,
+      periodStart,
+      periodEnd,
       currency,
       vatRate: d.vatRate ?? null,
       fiscalNumber: d.fiscalNumber ?? null,
@@ -349,6 +364,8 @@ const UpdateSchema = z.object({
   customerReference: z.string().max(100).optional().nullable(),
   poNumber: z.string().max(100).optional().nullable(),
   notes: z.string().max(2000).optional().nullable(),
+  periodStart: z.string().optional().nullable(),
+  periodEnd: z.string().optional().nullable(),
   lines: z.array(UpdateLineSchema).min(1, "Add at least one line.").optional(),
 });
 export type UpdateInvoiceInput = z.infer<typeof UpdateSchema>;
@@ -368,6 +385,9 @@ export async function updateInvoiceAction(input: UpdateInvoiceInput): Promise<{ 
   if (recognitionDate === "invalid") return { error: "Invalid recognition date." };
   const dueDate = parseDate(d.dueDate);
   if (dueDate === "invalid") return { error: "Invalid due date." };
+  const dateOnly = /^\d{4}-\d{2}-\d{2}$/;
+  const periodStart = d.periodStart && dateOnly.test(d.periodStart) ? new Date(`${d.periodStart}T00:00:00.000Z`) : null;
+  const periodEnd = d.periodEnd && dateOnly.test(d.periodEnd) ? new Date(`${d.periodEnd}T00:00:00.000Z`) : null;
 
   const replaceLines = d.lines && inv.status === "DRAFT";
   if (d.lines && inv.status !== "DRAFT") return { error: "Lines can only be edited while the invoice is a draft." };
@@ -405,6 +425,8 @@ export async function updateInvoiceAction(input: UpdateInvoiceInput): Promise<{ 
         issueDate,
         recognitionDate: recognitionDate ?? null,
         dueDate: dueDate ?? null,
+        periodStart,
+        periodEnd,
         vatRate: d.vatRate ?? null,
         selfBilled: d.selfBilled ?? inv.selfBilled,
         fiscalNumber: d.fiscalNumber ?? null,
@@ -417,6 +439,58 @@ export async function updateInvoiceAction(input: UpdateInvoiceInput): Promise<{ 
   });
   revalidatePath("/invoices");
   revalidatePath(`/invoices/${inv.id}`);
+  return {};
+}
+
+// ---------- sales commission (discount) — editable in ANY status, independent of the line editor ----------
+
+const CommissionSchema = z.object({
+  invoiceId: z.string().min(1),
+  // A percentage of the invoice's line net and/or a flat amount — they combine.
+  percent: z.coerce.number().min(0, "Percentage can't be negative.").max(100, "Percentage can't exceed 100.").optional().nullable(),
+  fixed: z.coerce.number().min(0, "Amount can't be negative.").max(100_000_000).optional().nullable(),
+});
+export type SetCommissionInput = z.infer<typeof CommissionSchema>;
+
+// Reconciles the single "Sales comision" line from a percentage of the line net and/or a flat
+// amount (discount = net*percent/100 + fixed). Creates/updates the line when the result is > 0,
+// removes it when 0, and stores the raw percent/fixed on the invoice so it round-trips on edit.
+// Works on issued/reconciled/paid invoices too — the commission is a deal-level discount that can
+// be agreed after issuing, so it is deliberately not gated to DRAFT like the work lines.
+export async function setInvoiceCommissionAction(input: SetCommissionInput): Promise<{ error?: string }> {
+  const user = await requirePermission("invoices:manage");
+  const parsed = CommissionSchema.safeParse(input);
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Invalid input." };
+  const d = parsed.data;
+  const inv = await prisma.invoice.findFirst({ where: { id: d.invoiceId, companyId: user.companyId }, include: { lines: true } });
+  if (!inv) return { error: "Invoice not found." };
+  if (inv.status === "VOID") return { error: "A void invoice can't be edited." };
+
+  const percent = d.percent && d.percent > 0 ? Math.round(d.percent * 100) / 100 : 0;
+  const fixed = d.fixed && d.fixed > 0 ? Math.round(d.fixed * 100) / 100 : 0;
+  // Base = net of the non-commission (work) lines. The percent is taken against that.
+  const base = inv.lines.filter((l) => l.description !== COMMISSION_DESC).reduce((s, l) => s + Number(l.amount), 0);
+  const amount = Math.round((base * (percent / 100) + fixed) * 100) / 100;
+  const existing = inv.lines.find((l) => l.description === COMMISSION_DESC);
+
+  await prisma.$transaction(async (tx) => {
+    if (amount > 0) {
+      if (existing) {
+        await tx.invoiceLine.update({ where: { id: existing.id }, data: { quantity: 1, rate: -amount, amount: -amount } });
+      } else {
+        await tx.invoiceLine.create({ data: { invoiceId: inv.id, milestoneId: null, description: COMMISSION_DESC, quantity: 1, rate: -amount, amount: -amount } });
+      }
+    } else if (existing) {
+      await tx.invoiceLine.delete({ where: { id: existing.id } });
+    }
+    await tx.invoice.update({
+      where: { id: inv.id },
+      data: { commissionPercent: percent > 0 ? percent : null, commissionFixed: fixed > 0 ? fixed : null },
+    });
+  });
+  revalidatePath("/invoices");
+  revalidatePath(`/invoices/${inv.id}`);
+  if (inv.projectId) revalidatePath(`/projects/${inv.projectId}`);
   return {};
 }
 

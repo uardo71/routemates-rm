@@ -121,7 +121,9 @@ export default async function ProjectDetailPage({
       _max: { date: true },
     }),
     prisma.invoice.findMany({
-      where: { lines: { some: { milestoneId: { in: milestoneIds } } } },
+      // Match invoices tied to this project either directly (manual / self-billed invoices carry
+      // projectId but no milestone lines) or via a milestone-linked line (time-based invoices).
+      where: { OR: [{ projectId: project.id }, { lines: { some: { milestoneId: { in: milestoneIds } } } }] },
       include: { lines: true },
       orderBy: { issueDate: "desc" },
     }),
