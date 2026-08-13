@@ -27,6 +27,8 @@ export async function GET(req: NextRequest) {
   const expenses = await prisma.expense.findMany({
     where: {
       companyId: user.companyId,
+      // Never export DRAFT captures (unconfirmed). A specific status filter below overrides this.
+      status: { not: "DRAFT" },
       ...(isManager ? {} : { OR: [{ userId: user.id }, { submittedById: user.id }] }),
       ...(from ? { date: { gte: parseISO(from) } } : {}),
       ...(to ? { date: { lte: parseISO(to) } } : {}),

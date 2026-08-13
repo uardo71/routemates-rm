@@ -10,7 +10,14 @@ export default async function ExpensesPage() {
 
   const [expenses, categories, company] = await Promise.all([
     prisma.expense.findMany({
-      where: canManage ? { companyId: caller.companyId } : { OR: [{ userId: caller.id }, { submittedById: caller.id }] },
+      // Exclude DRAFT (receipts captured via /capture but not yet confirmed) — they only surface in
+      // the capture flow, never the main register/approvals/export.
+      where: {
+        ...(canManage
+          ? { companyId: caller.companyId }
+          : { OR: [{ userId: caller.id }, { submittedById: caller.id }] }),
+        status: { not: "DRAFT" },
+      },
       include: { category: true, user: true, submittedBy: true, decidedBy: true, receipts: true },
       orderBy: { date: "desc" },
     }),
@@ -33,7 +40,7 @@ export default async function ExpensesPage() {
     userName: e.user.name,
     submittedById: e.submittedById,
     submittedByName: e.submittedBy.name,
-    status: e.status,
+    status: e.status as ExpenseRow["status"], // DRAFT filtered out above, so this narrows safely
     decidedByName: e.decidedBy?.name ?? null,
     decidedAt: e.decidedAt ? toDateParam(e.decidedAt) : null,
     comment: e.comment,

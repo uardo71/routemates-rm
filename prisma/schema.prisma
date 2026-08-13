@@ -659,9 +659,17 @@ enum ExpensePaidBy {
 }
 
 enum ExpenseStatus {
+  DRAFT // captured via the /capture PWA, not yet confirmed — excluded from approvals + reports
   PENDING
   APPROVED
   REJECTED
+}
+
+// How an expense record was created: MANUAL (the /expenses form) or CAPTURE (the /capture PWA
+// receipt-scan flow, which pre-fills fields from Azure Document Intelligence).
+enum ExpenseSource {
+  MANUAL
+  CAPTURE
 }
 
 enum ExpensePaymentMethod {
@@ -714,6 +722,11 @@ model Expense {
   submittedById String
   submittedBy   User                 @relation("ExpenseSubmittedBy", fields: [submittedById], references: [id])
   status        ExpenseStatus        @default(PENDING)
+  source        ExpenseSource        @default(MANUAL)
+  // Raw Azure Document Intelligence extraction for a captured receipt: per-field confidence scores,
+  // line items, and the model/version used. Null for manually-entered expenses. Informational —
+  // the authoritative values are the editable columns above (the user confirms/corrects them).
+  captureData   Json?
   decidedById   String?
   decidedBy     User?                @relation("ExpenseDecidedBy", fields: [decidedById], references: [id])
   decidedAt     DateTime?

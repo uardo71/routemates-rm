@@ -22,5 +22,5 @@ export const config = {
   // own shared secret, not a user session), Next internals, and any static asset (files with an
   // image/font extension) — otherwise the auth guard 307-redirects those to /login: public assets
   // like the logo would break on the login page, and secret-gated cron endpoints could never be hit.
-  matcher: ["/((?!api/auth|api/internal|_next/static|_next/image|favicon.ico|.*\\.(?:png|jpg|jpeg|gif|svg|webp|ico|woff2?)$).*)"],
+  matcher: ["/((?!api/auth|api/internal|manifest.json|sw.js|_next/static|_next/image|favicon.ico|.*\\.(?:png|jpg|jpeg|gif|svg|webp|ico|woff2?)$).*)"],
 };

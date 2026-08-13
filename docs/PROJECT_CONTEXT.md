@@ -795,3 +795,59 @@ Detection + notify, admin-configurable, deployment-agnostic. **No schema change*
 ### Open / next
 - **Add `Mail.Send` (application) + admin consent** in Entra to turn on nudge email; set
   `GRAPH_MAIL_SENDER` / `TEAMS_WEBHOOK_URL`. Still: rotate the Entra secret; deploy; wire the scheduler.
+
+---
+
+## Session update — 2026-08-13 (later: receipt-capture PWA)
+
+Built in the same session. Trust the code over this doc.
+
+### Migrations (applied to erp_dev; `migrate deploy` on a fresh DB)
+- `20260813130000_expense_source_capture` — `Expense.source` (`ExpenseSource` MANUAL/CAPTURE, default
+  MANUAL) + `Expense.captureData Json?` (raw OCR confidences/line-items).
+- `20260813130100_expense_status_draft` — adds `DRAFT` to `ExpenseStatus` (own migration: Postgres
+  can't use a new enum value in the same txn it's added). Captured-but-unconfirmed receipts are DRAFT.
+
+### Receipt-capture PWA (NEW — `/capture`)
+- Mobile-first standalone route **outside the `(app)` sidebar** (`src/app/capture/`), still auth-gated.
+  Big "Capture Receipt" button → `<input capture="environment">`; client-side canvas compress
+  (≤2000px, JPEG ~0.8) → POST `src/app/api/capture/route.ts` (session-gated).
+- API: saves via existing `saveReceiptFile`, creates a **DRAFT** `Expense` (source CAPTURE) immediately
+  (placeholder category = first one, amount 0, company currency), then best-effort Azure OCR, updates
+  the draft + `captureData`, returns pre-filled fields. Confirm form (`capture-client.tsx`) reuses the
+  expense field set; `confirmCapturedExpenseAction` moves DRAFT → PENDING/APPROVED via the existing
+  auto-approval; `discardCapturedExpenseAction` deletes an abandoned draft + its file.
+- **DRAFT is excluded** from the `/expenses` list and the CSV export (both filter `status != DRAFT`) —
+  drafts live only in the capture flow. Don't remove those filters.
+- **Azure Document Intelligence** `src/lib/document-intelligence.ts` — prebuilt-receipt over REST (no
+  SDK), graceful: returns null / skips OCR when `AZURE_DOCINTEL_ENDPOINT`/`AZURE_DOCINTEL_KEY` are
+  unset, so capture still works (manual entry). Env vars added to `.env` (blank).
+- **PWA**: `public/manifest.json` (start_url `/capture`, standalone), minimal no-op-fetch
+  `public/sw.js` (installability only, no caching — deliberately, so it can't serve stale authed
+  pages), generated brand icons `public/icons/*`, `src/components/pwa-register.tsx`, root-layout
+  metadata (manifest/apple-icon/theme-color). **`proxy.ts` matcher now also excludes `manifest.json`
+  + `sw.js`** so uncredentialed manifest/SW fetches aren't 307'd to /login (don't remove).
+
+---
+
+## ⚠️ PENDING — not completed / not verified (DISCUSS COSTS FIRST — remind me on next steps)
+
+The user wants to understand costs + discuss internally before switching these on. **When asked about
+"next steps", surface this list.**
+
+1. **Azure AI Document Intelligence (receipt OCR for /capture)** — resource **not provisioned**; the
+   OCR path is **built but untested against real Azure** (graceful fallback works). TODO: create the
+   Document Intelligence resource, set `AZURE_DOCINTEL_ENDPOINT`/`AZURE_DOCINTEL_KEY`, test a real
+   receipt. Cost: ~prebuilt-receipt pricing (small for their volume) — see the cost breakdown.
+2. **Microsoft Graph email (timesheet-nudge)** — `Mail.Send` **application permission + admin consent
+   NOT yet added** in Entra; email path **built but untested**. TODO: add the permission + consent,
+   set `GRAPH_MAIL_SENDER`, test. Cost: **$0 incremental** (reuses existing M365/Entra).
+3. **Deploy online** — not done. Needs a host (compute), Postgres, a plan for `uploads/` (persistent
+   disk vs object storage — local-disk works only on a single VM/persistent volume), domain + TLS,
+   env vars, `migrate deploy`, data restore, and a scheduler for the nudge. See the cost breakdown.
+4. **Rotate the Entra client secret** (older TODO — was pasted in chat during SSO setup).
+
+Verification status of what IS built this session: typecheck + lint + production build all green;
+PWA assets serve (manifest/sw/icons 200); capture flow's authenticated UI + the OCR + the nudge email
+could NOT be runtime-verified here (no SSO login available to the agent, no Azure key, no Graph
+permission). Treat those three as **"needs a live smoke test once provisioned."**
