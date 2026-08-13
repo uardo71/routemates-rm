@@ -2,6 +2,8 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { can } from "@/lib/permissions";
+import { prisma } from "@/lib/prisma";
+import { avatarSrc } from "@/lib/avatar";
 import { type NavGroup } from "./sidebar-nav";
 import { SidebarShell } from "./sidebar-shell";
 
@@ -10,6 +12,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   if (!session?.user) redirect("/login");
 
   const user = session.user;
+  const me = await prisma.user.findUnique({ where: { id: user.id }, select: { avatarUrl: true } });
 
   const groups: NavGroup[] = [
     { label: "Overview", items: [{ href: "/", label: "Dashboard", icon: "dashboard" }] },
@@ -103,6 +106,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       groups={groups}
       userName={user.name ?? "User"}
       userRole={user.role}
+      userAvatar={avatarSrc(me?.avatarUrl)}
       defaultCollapsed={defaultCollapsed}
     >
       {children}

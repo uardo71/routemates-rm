@@ -135,6 +135,14 @@ model User {
   name         String
   role         SystemRole @default(EMPLOYEE)
   active       Boolean    @default(true)
+  // Self-service profile fields — editable by the person themselves on /profile (never email,
+  // password, or role). `avatarUrl` stores just the on-disk file name (served, authenticated,
+  // through /api/avatars/[fileName]); everything else is free text.
+  title        String?
+  phone        String?
+  location     String?
+  bio          String?
+  avatarUrl    String?
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
 

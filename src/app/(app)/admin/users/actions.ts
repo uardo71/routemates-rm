@@ -67,12 +67,20 @@ export async function createUserAction(_prevState: string | undefined, formData:
   redirect(`/admin/users/${newUser.id}`);
 }
 
+const orNull = (v?: string) => {
+  const t = v?.trim();
+  return t ? t : null;
+};
+
 const UpdateUserSchema = z.object({
   userId: z.string().min(1),
   name: z.string().min(1, "Name is required"),
   email: z.string().email("Invalid email"),
   role: z.enum(["ADMIN", "FINANCE", "SALES", "PM", "EMPLOYEE", "CONTRACTOR"]),
   active: z.boolean(),
+  title: z.string().max(120).optional(),
+  phone: z.string().max(40).optional(),
+  location: z.string().max(120).optional(),
   trackEmployment: z.boolean(),
   startDate: z.string().optional(),
   endDate: z.string().optional(),
@@ -90,6 +98,9 @@ export async function updateUserAction(_prevState: string | undefined, formData:
     email: formData.get("email"),
     role: formData.get("role"),
     active: formData.get("active") === "on",
+    title: formData.get("title") ?? undefined,
+    phone: formData.get("phone") ?? undefined,
+    location: formData.get("location") ?? undefined,
     trackEmployment: formData.get("trackEmployment") === "on",
     startDate: formData.get("startDate") || undefined,
     endDate: formData.get("endDate") || undefined,
@@ -137,6 +148,9 @@ export async function updateUserAction(_prevState: string | undefined, formData:
       email: data.email,
       role: data.role,
       active: data.active,
+      title: orNull(data.title),
+      phone: orNull(data.phone),
+      location: orNull(data.location),
       ...(passwordHash ? { passwordHash } : {}),
     },
   });

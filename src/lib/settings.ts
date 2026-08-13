@@ -36,3 +36,82 @@ export async function isPasswordLoginAllowed(): Promise<boolean> {
   if (process.env.AUTH_ALLOW_PASSWORD_LOGIN === "true") return true;
   return getPasswordLoginSetting();
 }
+
+// ---------- Timesheet nudge ----------
+
+const TIMESHEET_NUDGE_KEY = "timesheetNudge";
+
+// Admin-editable behaviour for the timesheet nudge (the actual detect/notify runs in
+// src/lib/timesheet-nudge.ts + /api/internal/timesheet-nudge). Stored as one JSON blob in AppSetting.
+export type TimesheetNudgeConfig = {
+  enabled: boolean; // master switch
+  includeContractors: boolean;
+  dailyEnabled: boolean;
+  weeklyEnabled: boolean;
+  weeklyWeekday: number; // ISO 1=Mon … 7=Sun — the day a weekly run actually sends
+  emailEnabled: boolean;
+  teamsEnabled: boolean;
+  excludedUserIds: string[]; // never nudged
+  emailSubject: string;
+  emailBody: string; // placeholders: {firstName} {name} {dates} {count} {mode}
+  teamsMessage: string; // placeholders: {count} {list} {mode} {range}
+};
+
+export const DEFAULT_TIMESHEET_NUDGE_CONFIG: TimesheetNudgeConfig = {
+  enabled: true,
+  includeContractors: true,
+  dailyEnabled: true,
+  weeklyEnabled: true,
+  weeklyWeekday: 5, // Friday
+  emailEnabled: true,
+  teamsEnabled: true,
+  excludedUserIds: [],
+  emailSubject: "Reminder: log your timesheet",
+  emailBody:
+    "Hi {firstName},\n\nWe don't have time logged from you for {dates}. When you get a moment, please log your hours in RM Ops.\n\nThanks!",
+  teamsMessage: "{count} missing a timecard ({range}):\n\n{list}",
+};
+
+/** Reads the config, merged onto defaults so new fields always have a value even for an old row. */
+export async function getTimesheetNudgeConfig(): Promise<TimesheetNudgeConfig> {
+  const row = await prisma.appSetting.findUnique({ where: { key: TIMESHEET_NUDGE_KEY } });
+  if (!row) return { ...DEFAULT_TIMESHEET_NUDGE_CONFIG };
+  try {
+    const parsed = JSON.parse(row.value) as Partial<TimesheetNudgeConfig>;
+    return {
+      ...DEFAULT_TIMESHEET_NUDGE_CONFIG,
+      ...parsed,
+      excludedUserIds: Array.isArray(parsed.excludedUserIds) ? parsed.excludedUserIds : [],
+    };
+  } catch {
+    return { ...DEFAULT_TIMESHEET_NUDGE_CONFIG };
+  }
+}
+
+export async function setTimesheetNudgeConfig(config: TimesheetNudgeConfig): Promise<void> {
+  const value = JSON.stringify(config);
+  await prisma.appSetting.upsert({
+    where: { key: TIMESHEET_NUDGE_KEY },
+    create: { key: TIMESHEET_NUDGE_KEY, value },
+    update: { value },
+  });
+}
+
+// Per-mode "last actually sent on" marker (yyyy-MM-dd), so a frequent external trigger produces at
+// most one real send per mode per day. Kept separate from the admin config so saving settings never
+// clobbers it.
+function lastRunKey(mode: "daily" | "weekly"): string {
+  return `timesheetNudgeLastRun:${mode}`;
+}
+export async function getNudgeLastRun(mode: "daily" | "weekly"): Promise<string | null> {
+  const row = await prisma.appSetting.findUnique({ where: { key: lastRunKey(mode) } });
+  return row?.value ?? null;
+}
+export async function setNudgeLastRun(mode: "daily" | "weekly", dateStr: string): Promise<void> {
+  const key = lastRunKey(mode);
+  await prisma.appSetting.upsert({
+    where: { key },
+    create: { key, value: dateStr },
+    update: { value: dateStr },
+  });
+}

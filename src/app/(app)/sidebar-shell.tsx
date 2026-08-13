@@ -32,12 +32,14 @@ export function SidebarShell({
   groups,
   userName,
   userRole,
+  userAvatar = null,
   defaultCollapsed = false,
   children,
 }: {
   groups: NavGroup[];
   userName: string;
   userRole: string;
+  userAvatar?: string | null;
   defaultCollapsed?: boolean;
   children: React.ReactNode;
 }) {
@@ -126,7 +128,7 @@ export function SidebarShell({
 
           {/* footer */}
           <div className="border-t border-sidebar-border/70 p-2">
-            <UserMenu name={userName} role={userRole} collapsed={collapsed} />
+            <UserMenu name={userName} role={userRole} avatarSrc={userAvatar} collapsed={collapsed} />
           </div>
         </aside>
 
@@ -171,7 +173,7 @@ export function SidebarShell({
               <SidebarNav groups={groups} onNavigate={() => setMobileOpen(false)} />
             </div>
             <div className="border-t border-sidebar-border p-2">
-              <UserMenu name={userName} role={userRole} />
+              <UserMenu name={userName} role={userRole} avatarSrc={userAvatar} />
             </div>
           </SheetContent>
         </Sheet>

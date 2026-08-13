@@ -1,19 +1,57 @@
 import { requirePermission } from "@/lib/session";
-import { getPasswordLoginSetting, microsoftConfigured } from "@/lib/settings";
+import { prisma } from "@/lib/prisma";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import {
+  getPasswordLoginSetting,
+  microsoftConfigured,
+  getTimesheetNudgeConfig,
+} from "@/lib/settings";
+import { graphMailConfigured } from "@/lib/graph-mail";
+import { teamsWebhookConfigured } from "@/lib/teams-webhook";
 import { SettingsClient } from "./settings-client";
+import { NudgeSettingsClient } from "./nudge-settings-client";
 
 export default async function SettingsPage() {
-  await requirePermission("users:manage");
-  const passwordLogin = await getPasswordLoginSetting();
+  const admin = await requirePermission("users:manage");
+
+  const [passwordLogin, nudgeConfig, users] = await Promise.all([
+    getPasswordLoginSetting(),
+    getTimesheetNudgeConfig(),
+    prisma.user.findMany({
+      where: { companyId: admin.companyId, active: true },
+      select: { id: true, name: true, role: true },
+      orderBy: { name: "asc" },
+    }),
+  ]);
   const ssoConfigured = microsoftConfigured();
 
   return (
     <div className="flex flex-col gap-6">
       <div>
         <h1 className="text-2xl font-semibold">Settings</h1>
-        <p className="text-sm text-muted-foreground">App-wide sign-in &amp; security settings.</p>
+        <p className="text-sm text-muted-foreground">Sign-in, security &amp; automation.</p>
       </div>
-      <SettingsClient passwordLogin={passwordLogin} ssoConfigured={ssoConfigured} />
+
+      <Tabs defaultValue="signin" className="gap-5">
+        <TabsList>
+          <TabsTrigger value="signin">Sign-in &amp; security</TabsTrigger>
+          <TabsTrigger value="nudge">Timesheet nudge</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="signin">
+          <SettingsClient passwordLogin={passwordLogin} ssoConfigured={ssoConfigured} />
+        </TabsContent>
+
+        <TabsContent value="nudge">
+          <NudgeSettingsClient
+            config={nudgeConfig}
+            users={users}
+            emailConfigured={graphMailConfigured()}
+            teamsConfigured={teamsWebhookConfigured()}
+            secretConfigured={Boolean(process.env.TIMESHEET_NUDGE_SECRET)}
+          />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

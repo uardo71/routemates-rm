@@ -729,3 +729,69 @@ Same bootstrap caveat — when this doc conflicts with code, trust the code.
 - Rotate the Entra client secret; deploy online; regenerate INV-0001 for July; app-wide UTC
   date-display cleanup; replace Pirelli test data. Line editing after DRAFT is still delete+recreate
   (no in-place editor beyond the commission box).
+
+---
+
+## Session update — 2026-08-13 (this PC: profile page, users/clients redesign, timesheet nudge)
+
+Built in one session on this PC. Same bootstrap caveat — trust the code over this doc.
+
+### Migration (applied to erp_dev; `migrate deploy` on a fresh DB)
+- `20260813120000_user_profile` — adds `User.title/phone/location/bio/avatarUrl` (all nullable). No
+  other schema changes this session.
+
+### Self-service Profile (NEW — `/profile`, all roles, in the account menu)
+- Users edit **their own** name, title, phone, location, bio — **never** email/password/role (those
+  are admin-managed). `src/app/(app)/profile/` (page + `profile-form.tsx` + `avatar-uploader.tsx` +
+  `actions.ts`). Actions are self-scoped to `requireUser().id`.
+- **Avatar photo upload**: stored under `uploads/avatars/` (gitignored) via the shared
+  `receipt-storage` helpers, served through an authed route `src/app/api/avatars/[fileName]/route.ts`
+  (same-company check). `User.avatarUrl` holds just the filename; `src/lib/avatar.ts#avatarSrc` builds
+  the URL. `InitialsAvatar` is now image-aware (`src` + `size` props; falls back to colored initials)
+  — flows into the sidebar user menu (layout fetches avatarUrl), users list, and detail headers.
+- New shared `src/components/role-badge.tsx` — color-coded role chips (Admin/Finance/Sales/PM/
+  Employee/Contractor), used across profile + users pages.
+
+### Users + Clients redesign (presentation)
+- `/admin/users` (list + `[id]` detail) and `/admin/clients` (list + `[id]` detail) redesigned: KPI
+  stat rows, hero headers (banner + avatar), role chips, sectioned edit forms. Admin can now also set
+  a user's title/phone/location (added to `updateUserAction`).
+- **Clients "Opportunities" column**: was "open opportunities" and showed `0` because both existing
+  opps are **WON** (a won deal isn't open). Now shows total with an open/won split (`1 won of 1`), so
+  it no longer reads as "no opportunities". Open stages = QUALIFYING/PROPOSAL_SENT/NEGOTIATION/
+  PENDING_APPROVAL.
+
+### Timesheet nudge (NEW — reminds people who haven't logged time)
+Detection + notify, admin-configurable, deployment-agnostic. **No schema change** (config lives in
+`AppSetting`).
+- `src/lib/timesheet-nudge.ts` — `detectMissingTimecards(mode, opts)`. `daily` = yesterday; `weekly`
+  = Mon-of-week…yesterday (today excluded). Skips weekends + Albanian holidays via `isWorkingDay`,
+  and any date covered by an APPROVED `LeaveRequest`. Options: `includeContractors`, `excludedUserIds`.
+  UTC-day matching (TimeEntry.date is UTC-midnight) — don't "fix" the UTC vs local split in there.
+- **Email** `src/lib/graph-mail.ts` — app-only (client-credentials) Microsoft Graph `sendMail`,
+  **reusing the existing Entra app reg + secret** (tenant parsed from the SSO issuer). Emails each
+  missing person individually. **Requires a `Mail.Send` APPLICATION permission + admin consent on the
+  app registration (Azure portal), and `GRAPH_MAIL_SENDER`** (a real tenant mailbox). SSO is delegated;
+  this daemon path needs the app-only grant — already coded, just add the permission in the portal.
+- **Teams** `src/lib/teams-webhook.ts` — one MessageCard to an Incoming Webhook (`TEAMS_WEBHOOK_URL`),
+  listing everyone missing.
+- **Entry point** `src/app/api/internal/timesheet-nudge/route.ts` — `POST ?mode=daily|weekly&dryRun&
+  force`, gated by `x-nudge-secret` header (constant-time). NOT session-gated. **`src/proxy.ts`** (Next
+  16's renamed `middleware.ts` — this is the app's auth guard) had `api/internal` added to its matcher
+  exclusion so the route isn't 307'd to /login.
+- **Admin config** on `/admin/settings` (now **tabbed**: Sign-in | Timesheet nudge;
+  `nudge-settings-client.tsx`). Stored as JSON under AppSetting key `timesheetNudge` (see
+  `TimesheetNudgeConfig` in `src/lib/settings.ts`): master enable, per-mode enable, weekly weekday,
+  channel toggles, `includeContractors`, `excludedUserIds`, and editable email/Teams **templates**
+  (placeholders `{firstName}{name}{dates}{count}{mode}` / `{count}{list}{range}{mode}`). Per-mode
+  **once-a-day dedup** via `timesheetNudgeLastRun:*` keys, so a frequent external trigger is safe;
+  weekly only fires on the configured weekday. `force=1` bypasses weekday+dedup (not the toggles).
+- **Env vars** (in `.env`, gitignored — recreate per PC): `TIMESHEET_NUDGE_SECRET` (generated),
+  `GRAPH_MAIL_SENDER` (blank — fill to enable email), `TEAMS_WEBHOOK_URL` (blank — optional).
+- **Not wired**: no in-app scheduler. Trigger later with anything that POSTs the URL + header (Vercel
+  Cron / GitHub Action / cloud scheduler / OS cron). Verified end-to-end via dry-runs against real
+  data (401 on bad secret; daily/weekly detection; exclusion).
+
+### Open / next
+- **Add `Mail.Send` (application) + admin consent** in Entra to turn on nudge email; set
+  `GRAPH_MAIL_SENDER` / `TEAMS_WEBHOOK_URL`. Still: rotate the Entra secret; deploy; wire the scheduler.

@@ -23,11 +23,47 @@ function tintOf(name: string): string {
   return TINTS[Math.abs(hash) % TINTS.length];
 }
 
-export function InitialsAvatar({ name, className }: { name: string; className?: string }) {
+// Size → container + text classes. `sm` is the default so existing call sites (list rows) are
+// unchanged. Larger sizes are for the profile / user-detail headers.
+const SIZES = {
+  sm: "size-8 rounded-lg text-xs",
+  md: "size-10 rounded-lg text-sm",
+  lg: "size-14 rounded-2xl text-lg",
+  xl: "size-24 rounded-2xl text-3xl",
+} as const;
+
+export type AvatarSize = keyof typeof SIZES;
+
+export function InitialsAvatar({
+  name,
+  src,
+  size = "sm",
+  className,
+}: {
+  name: string;
+  src?: string | null;
+  size?: AvatarSize;
+  className?: string;
+}) {
+  const sizeClasses = SIZES[size];
+
+  if (src) {
+    return (
+      // Authed-route avatar (outside public/), so next/image's loader can't reach it.
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={src}
+        alt={name}
+        className={cn("shrink-0 object-cover ring-1 ring-foreground/10", sizeClasses, className)}
+      />
+    );
+  }
+
   return (
     <span
       className={cn(
-        "flex size-8 shrink-0 items-center justify-center rounded-lg text-xs font-semibold",
+        "flex shrink-0 items-center justify-center font-semibold",
+        sizeClasses,
         tintOf(name),
         className
       )}

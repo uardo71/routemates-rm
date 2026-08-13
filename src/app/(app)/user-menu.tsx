@@ -1,7 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { useTransition } from "react";
-import { LogOutIcon } from "lucide-react";
+import { LogOutIcon, UserIcon } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -11,11 +12,22 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { InitialsAvatar } from "@/components/initials-avatar";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { signOutAction } from "./sign-out-action";
 import { cn } from "@/lib/utils";
 
-export function UserMenu({ name, role, collapsed = false }: { name: string; role: string; collapsed?: boolean }) {
+export function UserMenu({
+  name,
+  role,
+  avatarSrc = null,
+  collapsed = false,
+}: {
+  name: string;
+  role: string;
+  avatarSrc?: string | null;
+  collapsed?: boolean;
+}) {
   const [pending, startTransition] = useTransition();
 
   return (
@@ -27,9 +39,13 @@ export function UserMenu({ name, role, collapsed = false }: { name: string; role
             collapsed ? "justify-center p-1" : "flex-1 px-2 py-1.5",
           )}
         >
-          <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-semibold text-primary-foreground">
-            {name.slice(0, 1).toUpperCase()}
-          </div>
+          {avatarSrc ? (
+            <InitialsAvatar name={name} src={avatarSrc} size="sm" className="rounded-full" />
+          ) : (
+            <div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-semibold text-primary-foreground">
+              {name.slice(0, 1).toUpperCase()}
+            </div>
+          )}
           {!collapsed && (
             <div className="min-w-0 flex-1">
               <div className="truncate text-sm font-medium">{name}</div>
@@ -41,6 +57,10 @@ export function UserMenu({ name, role, collapsed = false }: { name: string; role
           <DropdownMenuGroup>
             <DropdownMenuLabel className="truncate">{name}</DropdownMenuLabel>
             <DropdownMenuSeparator />
+            <DropdownMenuItem render={<Link href="/profile" />}>
+              <UserIcon />
+              Profile
+            </DropdownMenuItem>
             <DropdownMenuItem disabled={pending} onClick={() => startTransition(() => signOutAction())}>
               <LogOutIcon />
               Sign out
