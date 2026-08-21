@@ -125,7 +125,11 @@ export default async function ProjectsPage({
                       <InitialsAvatar name={p.client.name} />
                       <span>
                         <span className="block font-medium group-hover/row:underline">{p.name}</span>
-                        <span className="block text-xs text-muted-foreground">{p.client.name}</span>
+                        <span className="block text-xs text-muted-foreground">
+                          {p.number && <span className="font-mono">{p.number}</span>}
+                          {p.number && " · "}
+                          {p.client.name}
+                        </span>
                       </span>
                     </Link>
                   </TableCell>

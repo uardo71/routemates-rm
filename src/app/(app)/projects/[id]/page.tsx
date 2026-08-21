@@ -30,7 +30,10 @@ import { can, canManageProject, visibleProjectIds } from "@/lib/permissions";
 import { requirePermission } from "@/lib/session";
 import { formatMoney, formatNumber } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { DocumentsCard, type DocRow } from "@/components/documents-card";
 import { TimeEntriesTable } from "./time-entries-table";
+import { UatCard, PhasePill, type UatState, type UatEventItem } from "./uat-card";
+import { uploadProjectDocumentAction, deleteProjectDocumentAction } from "../actions";
 
 type Tone = "secondary" | "default" | "outline" | "destructive";
 const PROJECT_STATUS_STAMP: Record<string, { tone: StampTone; dashed?: boolean }> = {
@@ -59,7 +62,7 @@ const INVOICE_STATUS_TONE: Record<string, Tone> = {
   VOID: "destructive",
 };
 
-const PROJECT_TABS = ["overview", "milestones", "assignments", "time", "invoices"] as const;
+const PROJECT_TABS = ["overview", "milestones", "assignments", "time", "invoices", "uat"] as const;
 
 export default async function ProjectDetailPage({
   params,
@@ -93,6 +96,9 @@ export default async function ProjectDetailPage({
       // Present only when this project was created by converting a won Opportunity — drives the
       // "View opportunity" link and the contract-terms (discount / PO / SoW) block below.
       opportunity: { select: { id: true, name: true } },
+      uatRecordedBy: { select: { name: true } },
+      uatEvents: { include: { actor: { select: { name: true } } }, orderBy: { createdAt: "desc" } },
+      documents: { orderBy: { uploadedAt: "desc" } },
     },
   });
   if (!project) notFound();
@@ -193,6 +199,28 @@ export default async function ProjectDetailPage({
     !!project.poNumber ||
     !!project.sowNumber;
 
+  const uatState: UatState = {
+    status: project.uatStatus,
+    acceptedDate: project.uatAcceptedDate ? project.uatAcceptedDate.toISOString().slice(0, 10) : null,
+    signatory: project.uatSignatory,
+    notes: project.uatNotes,
+    recordedByName: project.uatRecordedBy?.name ?? null,
+    recordedAt: project.uatRecordedAt ? format(project.uatRecordedAt, "MMM d, yyyy") : null,
+  };
+  const uatEvents: UatEventItem[] = project.uatEvents.map((e) => ({
+    id: e.id,
+    status: e.status,
+    note: e.note,
+    actorName: e.actor.name,
+    at: format(e.createdAt, "MMM d, yyyy 'at' HH:mm"),
+  }));
+  const projectDocRows: DocRow[] = project.documents.map((d) => ({
+    id: d.id,
+    kind: d.kind,
+    fileName: d.fileName,
+    originalName: d.originalName,
+  }));
+
   const weeklyHoursMap = new Map<string, number>();
   for (const tc of timeCards) {
     const key = tc.weekStartDate.toISOString().slice(0, 10);
@@ -214,8 +242,11 @@ export default async function ProjectDetailPage({
               <h1 className="text-2xl font-semibold">{project.name}</h1>
               <StatusStamp label={project.status.replaceAll("_", " ")} {...(PROJECT_STATUS_STAMP[project.status] ?? { tone: "neutral" })} />
               <Badge variant="outline">{project.billingType.replaceAll("_", " ")}</Badge>
+              {project.uatStatus !== "NOT_STARTED" && <PhasePill status={project.uatStatus} />}
             </div>
             <p className="text-sm text-muted-foreground mt-1">
+              {project.number && <span className="font-mono text-foreground">{project.number}</span>}
+              {project.number && " · "}
               {project.client.name} · Managed by {project.manager?.name ?? "unassigned"}
               {project.endDate &&
                 ` · ${daysRemaining !== null && daysRemaining >= 0 ? `${daysRemaining}d left` : "Ended"} (${format(project.endDate, "MMM d, yyyy")})`}
@@ -266,6 +297,7 @@ export default async function ProjectDetailPage({
           <TabsTrigger value="assignments">Assignments ({assignmentsCount})</TabsTrigger>
           <TabsTrigger value="time">Time entries ({timeCards.length})</TabsTrigger>
           <TabsTrigger value="invoices">Invoices ({invoices.length})</TabsTrigger>
+          <TabsTrigger value="uat">UAT</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview" className="flex flex-col gap-6 pt-4">
@@ -597,6 +629,23 @@ export default async function ProjectDetailPage({
               </Table>
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="uat" className="pt-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+            <UatCard projectId={project.id} canManage={canManage} uat={uatState} events={uatEvents} />
+            <DocumentsCard
+              title="UAT / acceptance documents"
+              documents={projectDocRows}
+              kinds={[
+                { value: "UAT_ACCEPTANCE", label: "Signed acceptance" },
+                { value: "OTHER", label: "Other" },
+              ]}
+              canManage={canManage}
+              uploadAction={uploadProjectDocumentAction.bind(null, project.id)}
+              deleteAction={deleteProjectDocumentAction}
+            />
+          </div>
         </TabsContent>
       </Tabs>
     </div>

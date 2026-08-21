@@ -6,6 +6,8 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/session";
 import { canManageProject } from "@/lib/permissions";
+import { nextProjectNumber } from "@/lib/numbering";
+import { MAX_RECEIPT_SIZE_BYTES, isAllowedReceiptType, saveReceiptFile, deleteReceiptFile } from "@/lib/receipt-storage";
 
 const CreateProjectSchema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -52,6 +54,7 @@ export async function createProjectAction(_prevState: string | undefined, formDa
       companyId: user.companyId,
       clientId: client.id,
       name: data.name,
+      number: await nextProjectNumber(user.companyId),
       billingType: data.billingType,
       budgetAmount: data.budgetAmount,
       budgetHours: data.budgetHours,
@@ -131,6 +134,95 @@ export async function updateProjectAction(_prevState: string | undefined, formDa
   revalidatePath(`/projects/${projectId}`);
   revalidatePath("/projects");
   redirect(`/projects/${projectId}`);
+}
+
+// ---------- UAT / customer acceptance (phased workflow + history) ----------
+
+const UatAdvanceSchema = z.object({
+  projectId: z.string().min(1),
+  toStatus: z.enum(["NOT_STARTED", "SENT", "ACCEPTED", "CHANGES_REQUESTED"]),
+  note: z.string().max(2000).optional().nullable(),
+  signatory: z.string().max(200).optional().nullable(), // only meaningful when moving to ACCEPTED
+  acceptedDate: z.string().optional().nullable(),
+});
+export type AdvanceProjectUatInput = z.infer<typeof UatAdvanceSchema>;
+
+/** Moves the project's UAT to a new phase and logs the transition in its history. Soft signal only —
+ *  never blocks anything; invoicing just warns when a project isn't accepted. `uatAccepted` mirrors
+ *  the ACCEPTED phase so the badge + invoice warning keep working. */
+export async function advanceProjectUatAction(input: AdvanceProjectUatInput): Promise<{ error?: string }> {
+  const user = await requirePermission("projects:view");
+  const parsed = UatAdvanceSchema.safeParse(input);
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Invalid input." };
+  const d = parsed.data;
+  if (!(await canManageProject(user, d.projectId))) return { error: "You do not have permission to manage this project." };
+
+  const project = await prisma.project.findFirst({ where: { id: d.projectId, companyId: user.companyId }, select: { id: true } });
+  if (!project) return { error: "Project not found." };
+
+  const dateOnly = /^\d{4}-\d{2}-\d{2}$/;
+  const acceptedDate = d.acceptedDate && dateOnly.test(d.acceptedDate) ? new Date(`${d.acceptedDate}T00:00:00.000Z`) : null;
+  const accepted = d.toStatus === "ACCEPTED";
+  const note = d.note?.trim() || null;
+
+  await prisma.$transaction([
+    prisma.project.update({
+      where: { id: project.id },
+      data: {
+        uatStatus: d.toStatus,
+        uatAccepted: accepted,
+        // Acceptance detail is set on ACCEPTED, cleared when reset to NOT_STARTED, otherwise left as-is.
+        ...(accepted
+          ? { uatAcceptedDate: acceptedDate, uatSignatory: d.signatory?.trim() || null, uatNotes: note, uatRecordedById: user.id, uatRecordedAt: new Date() }
+          : d.toStatus === "NOT_STARTED"
+            ? { uatAcceptedDate: null, uatSignatory: null, uatNotes: null, uatRecordedById: null, uatRecordedAt: null }
+            : {}),
+      },
+    }),
+    prisma.projectUatEvent.create({ data: { projectId: project.id, status: d.toStatus, note, actorId: user.id } }),
+  ]);
+  revalidatePath(`/projects/${project.id}`);
+  revalidatePath("/projects");
+  return {};
+}
+
+// ---------- project documents (signed UAT acceptance / other) ----------
+
+const PROJECT_DOC_KINDS = ["UAT_ACCEPTANCE", "OTHER"] as const;
+type ProjectDocKind = (typeof PROJECT_DOC_KINDS)[number];
+
+export async function uploadProjectDocumentAction(projectId: string, formData: FormData): Promise<{ error?: string }> {
+  const user = await requirePermission("projects:view");
+  if (!(await canManageProject(user, projectId))) return { error: "You do not have permission to manage this project." };
+  const project = await prisma.project.findFirst({ where: { id: projectId, companyId: user.companyId }, select: { id: true } });
+  if (!project) return { error: "Project not found." };
+
+  const kind = String(formData.get("kind") ?? "");
+  if (!PROJECT_DOC_KINDS.includes(kind as ProjectDocKind)) return { error: "Invalid document type." };
+
+  const file = formData.get("file");
+  if (!(file instanceof File) || file.size === 0) return { error: "Pick a file to upload." };
+  if (file.size > MAX_RECEIPT_SIZE_BYTES) return { error: `File is too large (max ${MAX_RECEIPT_SIZE_BYTES / 1024 / 1024}MB).` };
+  if (!isAllowedReceiptType(file.type)) return { error: "Unsupported file type — use a PDF or an image (JPG/PNG/WEBP)." };
+
+  const saved = await saveReceiptFile(file, "documents");
+  await prisma.document.create({
+    data: { companyId: user.companyId, kind: kind as ProjectDocKind, projectId, uploadedById: user.id, ...saved },
+  });
+  revalidatePath(`/projects/${projectId}`);
+  return {};
+}
+
+export async function deleteProjectDocumentAction(documentId: string): Promise<{ error?: string }> {
+  const user = await requirePermission("projects:view");
+  const doc = await prisma.document.findFirst({ where: { id: documentId, companyId: user.companyId, projectId: { not: null } } });
+  if (!doc || !doc.projectId) return { error: "Document not found." };
+  if (!(await canManageProject(user, doc.projectId))) return { error: "You do not have permission to manage this project." };
+
+  await prisma.document.delete({ where: { id: doc.id } });
+  await deleteReceiptFile(doc.fileName, "documents");
+  revalidatePath(`/projects/${doc.projectId}`);
+  return {};
 }
 
 export async function deleteProjectAction(projectId: string) {
