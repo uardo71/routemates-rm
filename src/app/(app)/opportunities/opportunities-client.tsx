@@ -17,6 +17,7 @@ import type { OpportunityStage, ProjectBillingType } from "@prisma/client";
 export type OppRow = {
   id: string;
   name: string;
+  number: string | null;
   clientName: string;
   ownerName: string;
   stage: OpportunityStage;
@@ -159,7 +160,10 @@ export function OpportunitiesClient({
                   className="cursor-pointer"
                   onClick={() => router.push(`/opportunities/${r.id}`)}
                 >
-                  <TableCell className="font-medium">{r.name}</TableCell>
+                  <TableCell className="font-medium">
+                    {r.name}
+                    {r.number && <span className="block font-mono text-xs font-normal text-muted-foreground">{r.number}</span>}
+                  </TableCell>
                   <TableCell>{r.clientName}</TableCell>
                   <TableCell>
                     <Badge variant={STAGE_TONE[r.stage]}>{STAGE_LABELS[r.stage]}</Badge>

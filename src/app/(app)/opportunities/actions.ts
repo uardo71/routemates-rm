@@ -8,6 +8,7 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/session";
 import { computeQuoteTotals, isOpenStage } from "@/lib/opportunity";
+import { nextOpportunityNumber, nextProjectNumber } from "@/lib/numbering";
 import { MAX_RECEIPT_SIZE_BYTES, isAllowedReceiptType, saveReceiptFile, deleteReceiptFile } from "@/lib/receipt-storage";
 
 // ---------- helpers ----------
@@ -84,6 +85,7 @@ export async function createOpportunityAction(
       clientId: client.id,
       contactId: data.contactId ?? null,
       name: data.name,
+      number: await nextOpportunityNumber(caller.companyId),
       reference: data.reference ?? null,
       stage: "QUALIFYING",
       billingType: data.billingType,
@@ -466,6 +468,7 @@ export async function decideOpportunityAction(
         companyId: opp.companyId,
         clientId: opp.clientId,
         name: opp.name,
+        number: await nextProjectNumber(opp.companyId, tx),
         status: "PLANNED",
         billingType: opp.billingType,
         budgetAmount: totals.net,

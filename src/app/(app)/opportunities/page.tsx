@@ -30,6 +30,7 @@ export default async function OpportunitiesPage() {
     return {
       id: o.id,
       name: o.name,
+      number: o.number,
       clientName: o.client.name,
       ownerName: o.owner.name,
       stage: o.stage,

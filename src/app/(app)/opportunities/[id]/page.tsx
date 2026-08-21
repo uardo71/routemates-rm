@@ -48,6 +48,7 @@ export default async function OpportunityDetailPage({ params }: { params: Promis
   const detail: OpportunityDetail = {
     id: opp.id,
     name: opp.name,
+    number: opp.number,
     reference: opp.reference,
     stage: opp.stage,
     billingType: opp.billingType,

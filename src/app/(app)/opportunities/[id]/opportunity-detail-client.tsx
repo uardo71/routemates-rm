@@ -96,6 +96,7 @@ export type AmendmentDTO = {
 export type OpportunityDetail = {
   id: string;
   name: string;
+  number: string | null;
   reference: string | null;
   stage: OpportunityStage;
   billingType: ProjectBillingType;
@@ -192,6 +193,8 @@ export function OpportunityDetailClient({
             <StatusStamp label={STAGE_LABELS[detail.stage]} {...STAGE_STAMP[detail.stage]} />
           </div>
           <p className="text-sm text-muted-foreground">
+            {detail.number && <span className="font-mono text-foreground">{detail.number}</span>}
+            {detail.number && " · "}
             {detail.clientName}
             {detail.contactName ? ` · ${detail.contactName}` : ""} · {detail.billingType.replaceAll("_", " ")} ·{" "}
             Owner: {detail.ownerName}
@@ -439,6 +442,7 @@ export function OpportunityDetailClient({
                 <TableHead>Label</TableHead>
                 <TableHead className="text-right">List</TableHead>
                 <TableHead className="text-right">Discount</TableHead>
+                <TableHead className="text-right">Change</TableHead>
                 <TableHead className="text-right">Net</TableHead>
                 <TableHead>Issued by</TableHead>
                 <TableHead>Date</TableHead>
@@ -454,6 +458,19 @@ export function OpportunityDetailClient({
                   </TableCell>
                   <TableCell className="text-right tabular-nums">{formatMoney(r.grossAmount, c)}</TableCell>
                   <TableCell className="text-right tabular-nums text-amber-500">−{formatMoney(r.discountAmount, c)}</TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {(() => {
+                      // Incremental discount vs the previous version — shows what this revision added
+                      // (or gave back), so successive discounts read naturally instead of as a running total.
+                      const prev = detail.revisions.find((x) => x.version === r.version - 1);
+                      if (!prev) return <span className="text-muted-foreground">—</span>;
+                      const delta = Math.round((r.discountAmount - prev.discountAmount) * 100) / 100;
+                      if (delta === 0) return <span className="text-muted-foreground">—</span>;
+                      return delta > 0
+                        ? <span className="text-amber-500">−{formatMoney(delta, c)}</span>
+                        : <span className="text-emerald-600">+{formatMoney(-delta, c)}</span>;
+                    })()}
+                  </TableCell>
                   <TableCell className="text-right tabular-nums font-medium">{formatMoney(r.netAmount, c)}</TableCell>
                   <TableCell className="text-muted-foreground">{r.issuedByName}</TableCell>
                   <TableCell className="text-muted-foreground">{r.createdAt}</TableCell>
@@ -461,7 +478,7 @@ export function OpportunityDetailClient({
               ))}
               {detail.revisions.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center text-muted-foreground">
+                  <TableCell colSpan={8} className="text-center text-muted-foreground">
                     No proposals issued yet.
                   </TableCell>
                 </TableRow>
