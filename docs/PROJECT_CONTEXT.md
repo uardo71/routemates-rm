@@ -851,3 +851,82 @@ Verification status of what IS built this session: typecheck + lint + production
 PWA assets serve (manifest/sw/icons 200); capture flow's authenticated UI + the OCR + the nudge email
 could NOT be runtime-verified here (no SSO login available to the agent, no Azure key, no Graph
 permission). Treat those three as **"needs a live smoke test once provisioned."**
+
+---
+
+## Session update — 2026-08-17…19 (this PC: finance suite — expenses merge, Taxes, Vendor payments, UAT phases, numbering)
+
+One long session on this PC. Six new migrations (all applied to erp_dev; run `migrate deploy` on the
+other PC). Same bootstrap caveat — trust the code over this doc. Everything below typechecks + lints
+clean; could NOT be runtime-verified by the agent (SSO-only login), so treat as "needs a live click-through".
+
+### Migrations added (apply with `pnpm exec prisma migrate deploy`)
+- `20260817120000_uat_acceptance` + `20260817120100_document_kind_uat` — project-level UAT fields +
+  Document.projectId + `UAT_ACCEPTANCE` kind.
+- `20260818120000_tax_payments` + `20260818120100_document_kind_tax` — TaxCategory/TaxPayment +
+  Document.taxPaymentId + `TAX_NOTICE`/`PAYMENT_RECEIPT` kinds.
+- `20260819120000_vendor_payments` + `20260819120100_document_kind_vendor` — Vendor/VendorPayment +
+  Document.vendorPaymentId + `VENDOR_INVOICE` kind.
+- `20260819130000_internal_numbering` — Opportunity.number + Project.number (unique per company),
+  backfilled in creation order.
+- `20260819140000_project_uat_phases` — `ProjectUatStatus` enum + Project.uatStatus + ProjectUatEvent
+  (history), backfilled (accepted → ACCEPTED + a seeded history event).
+
+### Expenses — categories merged in + redesign (`/expenses`)
+- Deleted the separate `/admin/expense-categories` route; category management now lives in a
+  **"Categories" dialog** on the Expenses page, **admin-only** (`expenses:manage`). Category CRUD moved
+  into `expenses/actions.ts` (returns `{error?}`). Redesigned with KPI StatCards, a by-category donut,
+  a monthly bar, category chips, paid-by pills.
+
+### Taxes module (NEW — `/taxes`, admin-only, perm `taxes:manage`)
+- Track tax obligations & payments (municipality, advance sales tax, rent, social/health, …). Managed
+  **tax categories** (inline dialog). To-pay → Paid workflow; capture tax **period** (primary month
+  dimension), amount, **serial/reference #**, authority, due/payment dates, notes. Attach **tax notice**
+  + **payment receipt** via DocumentsCard. List has KPIs (Outstanding/Overdue/Paid YTD/this month),
+  by-category donut, by-period bar, filters (category/status/month/search), detail page `/taxes/[id]`.
+  Seeded categories: Municipality tax, Advance sales tax, Tax on rent, **Social & health contributions**.
+  `src/lib/tax.ts` helpers.
+
+### Vendor payments module (NEW — `/vendors`, admin-only, perm `vendors:manage`)
+- Accounts-payable: **managed vendor list** + bills. To-pay → Paid; description, invoice/reference #,
+  amount, invoice/due/payment dates, **optional project link** (subcontractor bills), notes. Attach
+  **vendor invoice** + **payment receipt**. Same KPI/donut/bar/filters/detail pattern as Taxes. Seeded
+  one **Accountant** vendor. `src/lib/vendor.ts`. Models Vendor + VendorPayment; project link is
+  stored but NOT yet wired into project cost reports (future).
+
+### Internal numbering (`src/lib/numbering.ts`)
+- **Opportunity `O-########`** (8-digit), **Project `PR-#######`** (7-digit), unique per company,
+  auto-assigned on create (incl. opportunity→project conversion, inside the tx). Derived from current
+  max (not a count) so deletes never collide. Shown on both detail headers + list rows (mono).
+
+### Project UAT — now a phased workflow with history (moved to its own tab)
+- Was a single accepted-bool card on Overview. Now: **`/projects/[id]` → "UAT" tab**. Phases
+  NOT_STARTED → SENT (for signature) → ACCEPTED, plus CHANGES_REQUESTED (re-send). Each transition
+  logged in **ProjectUatEvent** (history timeline: who/when/note). `advanceProjectUatAction` replaces
+  the old `setProjectUatAction`. `uatAccepted` mirrors ACCEPTED so the header phase-pill + the soft
+  invoice-time warning still work. `uat-card.tsx` exports `PhasePill`. Signed acceptance doc attaches
+  in the same tab.
+
+### Fixes
+- **Currency display**: Taxes/Vendors/Expenses aggregate tiles (KPIs, donut, bars, footer) were
+  formatted in the company reporting currency (EUR) while records are in ALL. Now each page formats
+  aggregates in the **predominant currency among its records** (and that's the default for a new
+  record). Single-currency assumption; mixed-currency would need per-currency breakdowns.
+- **Donut center label overlap**: long strings (e.g. `ALL 947,915.00`) overflowed the ring. DonutChart
+  now shrinks the center font by length + clamps to the hole. App-wide.
+- **Opportunity discount confusion**: discount is a single absolute deal-level value; the Proposal
+  history now has a **"Change"** column (incremental Δ vs the previous version) so successive discounts
+  (−1500, then −500) read naturally alongside the running total. Contract math was already correct.
+
+### Also
+- `docs/DEPLOYMENT_AZURE_SHAREPOINT.md` — full plan to host on **Azure App Service + PostgreSQL** and
+  move file storage to **SharePoint via Microsoft Graph** (decided; NOT executed). Azure CLI installed
+  on this PC; `az login` done but **no Azure subscription exists yet** (must create a PAYG sub in the
+  Routemates Srl tenant before provisioning).
+- `start-dev.bat` — double-click launcher for the dev server (sets PATH + `pnpm dev`), since the agent's
+  server gets reaped between turns.
+
+### Open / next (carry-over)
+- Rotate the Entra client secret; create the Azure subscription then execute the deploy plan; wire
+  vendor-payment project links into project cost/margin reports (optional); optional CSV export for
+  Taxes/Vendors (like Expenses). Prior items still stand (regenerate INV-0001, replace Pirelli test data).
