@@ -16,6 +16,8 @@ export type Action =
   | "vacations:manage"
   | "vacations:view:any"
   | "expenses:manage"
+  | "taxes:manage"
+  | "vendors:manage"
   | "opportunities:view"
   | "opportunities:manage"
   | "opportunities:approve"
@@ -41,6 +43,8 @@ const ROLE_PERMISSIONS: Record<SystemRole, Action[]> = {
     "vacations:manage",
     "vacations:view:any",
     "expenses:manage",
+    "taxes:manage",
+    "vendors:manage",
     "opportunities:view",
     "opportunities:manage",
     "opportunities:approve",

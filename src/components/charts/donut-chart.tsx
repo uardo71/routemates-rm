@@ -59,6 +59,12 @@ export function DonutChart({
   const total = segments.reduce((sum, seg) => sum + Math.max(0, seg.value), 0);
   const positive = segments.filter((seg) => seg.value > 0);
 
+  // Keep the center label inside the ring hole: constrain it to the hole diameter and shrink the
+  // font for long strings (e.g. a big "ALL 947,915.00") so it never overlaps the ring.
+  const hole = size - thickness * 2;
+  const labelLen = centerLabel?.length ?? 0;
+  const centerLabelSize = labelLen > 11 ? "text-xs" : labelLen > 8 ? "text-sm" : "text-lg";
+
   let cumulativePercent = 0;
 
   return (
@@ -90,8 +96,12 @@ export function DonutChart({
           )}
         </svg>
         {(centerLabel || centerSublabel) && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center">
-            {centerLabel && <span className="text-lg font-semibold tabular-nums leading-tight">{centerLabel}</span>}
+          <div className="absolute inset-0 flex flex-col items-center justify-center px-1 text-center">
+            {centerLabel && (
+              <span className={cn(centerLabelSize, "font-semibold tabular-nums leading-tight")} style={{ maxWidth: hole }}>
+                {centerLabel}
+              </span>
+            )}
             {centerSublabel && <span className="text-[10px] text-muted-foreground">{centerSublabel}</span>}
           </div>
         )}

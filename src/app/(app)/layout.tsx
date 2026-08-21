@@ -60,8 +60,11 @@ export default async function AppLayout({ children }: { children: React.ReactNod
               ...(can(user, "salaries:manage")
                 ? [{ href: "/admin/exchange-rates", label: "Exchange rates", icon: "exchangeRates" as const }]
                 : []),
-              ...(can(user, "expenses:manage")
-                ? [{ href: "/admin/expense-categories", label: "Expense categories", icon: "expenseCategories" as const }]
+              ...(can(user, "taxes:manage")
+                ? [{ href: "/taxes", label: "Taxes", icon: "taxes" as const }]
+                : []),
+              ...(can(user, "vendors:manage")
+                ? [{ href: "/vendors", label: "Vendor payments", icon: "vendors" as const }]
                 : []),
             ],
           },

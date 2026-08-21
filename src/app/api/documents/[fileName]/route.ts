@@ -18,8 +18,16 @@ export async function GET(_req: Request, { params }: { params: Promise<{ fileNam
   }
 
   // Authorize by parent entity: invoice docs need invoices:manage (Admin/Finance); opportunity
-  // docs need opportunities:view.
-  const allowed = doc.invoiceId ? can(user, "invoices:manage") : can(user, "opportunities:view");
+  // docs need opportunities:view; project docs (e.g. the signed UAT acceptance) need projects:view.
+  const allowed = doc.invoiceId
+    ? can(user, "invoices:manage")
+    : doc.projectId
+      ? can(user, "projects:view")
+      : doc.taxPaymentId
+        ? can(user, "taxes:manage")
+        : doc.vendorPaymentId
+          ? can(user, "vendors:manage")
+          : can(user, "opportunities:view");
   if (!allowed) {
     return NextResponse.json({ error: "Forbidden." }, { status: 403 });
   }
