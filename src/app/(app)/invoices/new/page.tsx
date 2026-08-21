@@ -22,6 +22,7 @@ export default async function NewInvoicePage() {
     name: p.name,
     clientName: p.client.name,
     billingType: p.billingType,
+    uatAccepted: p.uatAccepted,
     contractValue: Number(p.contractValue ?? p.budgetAmount ?? 0),
     milestones: p.milestones.map((m) => ({
       id: m.id,

@@ -4,7 +4,7 @@ import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { format } from "date-fns";
-import { PlusIcon, XIcon } from "lucide-react";
+import { PlusIcon, XIcon, TriangleAlertIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -21,6 +21,7 @@ export type ProjectOption = {
   name: string;
   clientName: string;
   billingType: ProjectBillingType;
+  uatAccepted: boolean;
   contractValue: number;
   milestones: MilestoneOpt[];
 };
@@ -158,6 +159,15 @@ export function NewInvoiceClient({ projects, defaultCurrency, invoices }: { proj
           </Select>
         </div>
       </div>
+
+      {project && !project.uatAccepted && (
+        <div className="flex items-start gap-2 rounded-md border border-amber-300/70 bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-300">
+          <TriangleAlertIcon className="size-4 mt-0.5 shrink-0" />
+          <span>
+            <span className="font-medium">{project.name}</span> hasn&apos;t passed UAT sign-off yet. You can still record this invoice — just confirm that&apos;s intended (e.g. an interim / time invoice).
+          </span>
+        </div>
+      )}
 
       {mode === "TIME" ? (
         <div className="grid grid-cols-2 gap-3">
