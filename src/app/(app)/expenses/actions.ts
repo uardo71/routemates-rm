@@ -96,6 +96,37 @@ export async function createExpenseAction(formData: FormData): Promise<{ error?:
   return {};
 }
 
+// ---------- categories (managed inline on the Expenses page, Admin/Finance only) ----------
+
+const CategoryNameSchema = z.string().trim().min(1, "Name is required.").max(100);
+
+export async function createExpenseCategoryAction(name: string): Promise<{ error?: string }> {
+  const caller = await requirePermission("expenses:manage");
+  const parsed = CategoryNameSchema.safeParse(name);
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Invalid name." };
+
+  const existing = await prisma.expenseCategory.findFirst({ where: { companyId: caller.companyId, name: parsed.data } });
+  if (existing) return { error: "A category with this name already exists." };
+
+  await prisma.expenseCategory.create({ data: { companyId: caller.companyId, name: parsed.data } });
+  revalidatePath("/expenses");
+  return {};
+}
+
+export async function deleteExpenseCategoryAction(categoryId: string): Promise<{ error?: string }> {
+  const caller = await requirePermission("expenses:manage");
+
+  const category = await prisma.expenseCategory.findFirst({ where: { id: categoryId, companyId: caller.companyId } });
+  if (!category) return { error: "Category not found." };
+
+  const count = await prisma.expense.count({ where: { categoryId } });
+  if (count > 0) return { error: `Can't delete — ${count} expense${count === 1 ? "" : "s"} still use this category.` };
+
+  await prisma.expenseCategory.delete({ where: { id: categoryId } });
+  revalidatePath("/expenses");
+  return {};
+}
+
 const DecideSchema = z.object({
   expenseId: z.string().min(1),
   decision: z.enum(["APPROVE", "REJECT"]),

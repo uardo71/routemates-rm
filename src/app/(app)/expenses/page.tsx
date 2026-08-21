@@ -21,7 +21,11 @@ export default async function ExpensesPage() {
       include: { category: true, user: true, submittedBy: true, decidedBy: true, receipts: true },
       orderBy: { date: "desc" },
     }),
-    prisma.expenseCategory.findMany({ where: { companyId: caller.companyId }, orderBy: { name: "asc" } }),
+    prisma.expenseCategory.findMany({
+      where: { companyId: caller.companyId },
+      include: { _count: { select: { expenses: true } } },
+      orderBy: { name: "asc" },
+    }),
     prisma.company.findUniqueOrThrow({ where: { id: caller.companyId }, select: { currency: true } }),
   ]);
 
@@ -54,26 +58,23 @@ export default async function ExpensesPage() {
     people = users.map((u) => ({ id: u.id, name: u.name }));
   }
 
-  const categoryOptions: CategoryOption[] = categories.map((c) => ({ id: c.id, name: c.name }));
+  const categoryOptions: CategoryOption[] = categories.map((c) => ({ id: c.id, name: c.name, expenseCount: c._count.expenses }));
+
+  // Aggregate totals (KPIs, donut, monthly chart, footer) are formatted in the currency the expenses
+  // actually use — they're often logged in ALL, not the company's reporting currency (EUR). Use the
+  // most-common currency among records, falling back to the company default; also the new-expense default.
+  const currencyCounts = new Map<string, number>();
+  for (const e of expenses) currencyCounts.set(e.currency, (currencyCounts.get(e.currency) ?? 0) + 1);
+  const displayCurrency = [...currencyCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? company.currency;
 
   return (
-    <div className="flex flex-col gap-6">
-      <div>
-        <h1 className="text-2xl font-semibold">Expenses</h1>
-        <p className="text-sm text-muted-foreground">
-          {canManage
-            ? "Company-wide expense tracking — company card purchases and reimbursement claims."
-            : "Track what you've paid on the company card, or file a reimbursement claim."}
-        </p>
-      </div>
-      <ExpensesClient
-        callerId={caller.id}
-        canManage={canManage}
-        rows={rows}
-        categories={categoryOptions}
-        people={people}
-        defaultCurrency={company.currency}
-      />
-    </div>
+    <ExpensesClient
+      callerId={caller.id}
+      canManage={canManage}
+      rows={rows}
+      categories={categoryOptions}
+      people={people}
+      defaultCurrency={displayCurrency}
+    />
   );
 }
