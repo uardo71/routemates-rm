@@ -930,3 +930,65 @@ clean; could NOT be runtime-verified by the agent (SSO-only login), so treat as 
 - Rotate the Entra client secret; create the Azure subscription then execute the deploy plan; wire
   vendor-payment project links into project cost/margin reports (optional); optional CSV export for
   Taxes/Vendors (like Expenses). Prior items still stand (regenerate INV-0001, replace Pirelli test data).
+
+---
+
+## Session update — 2026-08-20…22 (this PC: PM Delivery Cockpit + milestone completion/adjustments)
+
+One long session. **Nine migrations** (all applied to erp_dev; `migrate deploy` on the other PC).
+Two new deps: **exceljs** and **pptxgenjs** (set as `serverExternalPackages` in next.config.ts) — so
+`pnpm install` on the other PC after pulling. Typechecks + lints clean; could NOT be runtime-verified
+by the agent (SSO-only login) — needs a live click-through.
+
+### The Delivery Cockpit (NEW — `/delivery`, perm `delivery:manage` = PM + Admin)
+A PM governance workspace, separate from the finance/Projects module.
+- **Overview** (`/delivery`): the PM's projects (managed-only) with RAG health + signals (started,
+  team, checklist %, last status, open RAID, UAT). Admin sees all.
+- **Per-project cockpit** (`/delivery/[projectId]`): tabs **Status reports · Plan · Checklist · RAID ·
+  Minutes · Documents**.
+- **Status reports** realigned to the customer's real deck (see the Zambon PPTX): **Progress %**,
+  **Severity/Timing** (Low/On time · Medium/Delay · High/Business impact), **Current status**,
+  **Next actions** (structured: owner + due + Critical), **Corrective actions**. Exports a **PowerPoint**
+  (pptxgenjs, Title→Agenda→Project Status→Project Plan→Q&A) **and Excel** (exceljs). History kept; mark
+  sent. Routes: `src/app/api/status-reports/[id]/pptx|export`.
+- **Plan**: an editable **Gantt** (`plan-client.tsx`) — WBS table + timeline, phase rollup bars, task
+  bars with progress + owner, milestones as diamonds; reorder up/down; "Add standard SAP plan" seeds a
+  dated baseline. Feeds the PPTX Project Plan slide. Model `PlanTask` + `PlanTaskStatus`.
+- **Checklist**: the company **playbook** (`PlaybookTask`, admin-editable at `/admin/playbook`)
+  auto-applied to every new project (`src/lib/playbook.ts#applyPlaybookToProject`, called from project
+  create + opportunity→project). Project-level (not per engagement).
+- **RAID** (`RaidItem`), **Minutes** (`MeetingMinutes` + action items), **Documents** (extended
+  `Document` kinds + accepts Office/email files by extension in the delivery lib).
+- **Engagements** (`Engagement`) — **the Tungsten model**: end customers (Zambon, Bonfiglioli, Q8) are
+  **cockpit-only** streams under ONE project, **never separate Projects**. An engagement bar switches
+  the view; status/plan/RAID/minutes/documents carry an optional `engagementId` and filter to the
+  selected engagement (checklist stays project-level). **Important**: an earlier build wrongly modeled
+  these as real sub-projects (`Project.parentProjectId`/`endCustomer`) — that was reverted; the two
+  ZAMBON shells were converted to engagements under PS – Tungsten Portfolio and the extra Project rows
+  deleted. The parentProjectId/endCustomer columns still exist but are unused (project forms no longer
+  set them).
+- `src/lib/delivery.ts` (labels/RAG/severity), `delivery/actions.ts` (all cockpit CRUD).
+
+### Milestone completion + value adjustments (Pirelli case)
+- **Complete a milestone** → dialog captures a **completion note**, **locks time entry**
+  (`timeEntryOpen=false`), stamps `completedAt`/`completionNote`, and **recognizes the full fixed-price
+  value** even with 0 logged hours (revenue.ts fixed: per-milestone — COMPLETE/INVOICED earn full
+  effective value; in-progress earn their own % of completion). Reversible.
+- **Value adjustments** (`MilestoneAdjustment`): on the milestone page, "Adjust value" records
+  Remove/Absorb amount + reason + **optional link to an Opportunity** (the new PO). Shows Original →
+  Adjustments → Effective value with history; effective value flows into revenue (recognized/earned).
+  Use for the "Austria self-managed / moved to a new €9.3k intercompany PO" flow.
+
+### RBAC tightening
+- **PM sees only their own**: projects they **manage** (`visibleProjectIds` PM branch = managerId), and
+  opportunities they **own/submitted** (opportunities list + detail).
+
+### Migrations added (apply with `pnpm exec prisma migrate deploy`)
+`20260820120000_delivery_cockpit`, `20260820130000_delivery_status_hierarchy_minutes`,
+`20260820130100_document_kind_delivery`, `20260822120000_project_plan`, `20260822130000_engagements`,
+`20260822140000_milestone_completion_adjustments` (+ the earlier `20260819140000_project_uat_phases`,
+`20260819130000_internal_numbering`, `20260812130000_invoice_commission` from prior sessions).
+
+### Open / next (carry-over)
+- Optional drag-to-resize on the Gantt bars (currently edit via row dialog).
+- Rotate the Entra secret; deploy to Azure; wire vendor-payment project links into cost reports.
