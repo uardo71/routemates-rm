@@ -7,9 +7,14 @@ import { OpportunitiesClient, type OppRow } from "./opportunities-client";
 export default async function OpportunitiesPage() {
   const user = await requirePermission("opportunities:view");
 
+  // A PM only sees opportunities they own or submitted — not the whole pipeline. Sales/Admin/Finance
+  // see everything.
+  const scope =
+    user.role === "PM" ? { OR: [{ ownerId: user.id }, { submittedById: user.id }] } : {};
+
   const [opps, company] = await Promise.all([
     prisma.opportunity.findMany({
-      where: { companyId: user.companyId },
+      where: { companyId: user.companyId, ...scope },
       include: {
         client: { select: { name: true } },
         owner: { select: { name: true } },

@@ -26,6 +26,8 @@ export default async function OpportunityDetailPage({ params }: { params: Promis
     },
   });
   if (!opp) notFound();
+  // PMs can only open opportunities they own or submitted (not the whole pipeline).
+  if (user.role === "PM" && opp.ownerId !== user.id && opp.submittedById !== user.id) notFound();
 
   const [clients, contacts, owners] = await Promise.all([
     prisma.client.findMany({ where: { companyId: user.companyId }, orderBy: { name: "asc" }, select: { id: true, name: true } }),

@@ -9,6 +9,7 @@ import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/session";
 import { computeQuoteTotals, isOpenStage } from "@/lib/opportunity";
 import { nextOpportunityNumber, nextProjectNumber } from "@/lib/numbering";
+import { applyPlaybookToProject } from "@/lib/playbook";
 import { MAX_RECEIPT_SIZE_BYTES, isAllowedReceiptType, saveReceiptFile, deleteReceiptFile } from "@/lib/receipt-storage";
 
 // ---------- helpers ----------
@@ -501,6 +502,8 @@ export async function decideOpportunityAction(
         },
       });
     }
+
+    await applyPlaybookToProject(opp.companyId, created.id, created.startDate, tx);
 
     await tx.opportunity.update({
       where: { id: opp.id },
