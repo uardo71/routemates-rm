@@ -7,6 +7,7 @@ import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/session";
 import { canManageProject } from "@/lib/permissions";
 import { nextProjectNumber } from "@/lib/numbering";
+import { applyPlaybookToProject } from "@/lib/playbook";
 import { MAX_RECEIPT_SIZE_BYTES, isAllowedReceiptType, saveReceiptFile, deleteReceiptFile } from "@/lib/receipt-storage";
 
 const CreateProjectSchema = z.object({
@@ -18,6 +19,10 @@ const CreateProjectSchema = z.object({
   startDate: z.string().optional(),
   managerId: z.string().optional(),
   isInternal: z.boolean(),
+  // Program hierarchy: optionally nest this project under a parent "program" (e.g. Tungsten) and
+  // name the end customer it delivers to (e.g. Zambon).
+  parentProjectId: z.string().optional(),
+  endCustomer: z.string().max(200).optional(),
 });
 
 export async function createProjectAction(_prevState: string | undefined, formData: FormData) {
@@ -32,12 +37,21 @@ export async function createProjectAction(_prevState: string | undefined, formDa
     startDate: formData.get("startDate") || undefined,
     managerId: formData.get("managerId") || undefined,
     isInternal: formData.get("isInternal") === "on",
+    parentProjectId: (() => { const v = formData.get("parentProjectId"); return v && v !== "NONE" ? v : undefined; })(),
+    endCustomer: formData.get("endCustomer") || undefined,
   });
   if (!parsed.success) return parsed.error.issues[0]?.message ?? "Invalid input";
 
   const data = parsed.data;
   const managerId = user.role === "PM" ? user.id : data.managerId;
   if (!managerId) return "A project manager is required.";
+
+  let parentProjectId: string | undefined;
+  if (data.parentProjectId) {
+    const parent = await prisma.project.findFirst({ where: { id: data.parentProjectId, companyId: user.companyId }, select: { id: true } });
+    if (!parent) return "Invalid parent project.";
+    parentProjectId = parent.id;
+  }
 
   const manager = await prisma.user.findFirst({
     where: { id: managerId, companyId: user.companyId },
@@ -62,8 +76,11 @@ export async function createProjectAction(_prevState: string | undefined, formDa
       managerId: manager.id,
       status: "ACTIVE",
       isInternal: data.isInternal,
+      parentProjectId,
+      endCustomer: data.endCustomer?.trim() || null,
     },
   });
+  await applyPlaybookToProject(user.companyId, project.id, project.startDate);
 
   revalidatePath("/projects");
   redirect(`/projects/${project.id}`);
@@ -81,6 +98,8 @@ const UpdateProjectSchema = z.object({
   endDate: z.string().optional(),
   managerId: z.string().optional(),
   isInternal: z.boolean(),
+  parentProjectId: z.string().optional(),
+  endCustomer: z.string().max(200).optional(),
 });
 
 export async function updateProjectAction(_prevState: string | undefined, formData: FormData) {
@@ -101,6 +120,8 @@ export async function updateProjectAction(_prevState: string | undefined, formDa
     endDate: formData.get("endDate") || undefined,
     managerId: formData.get("managerId") || undefined,
     isInternal: formData.get("isInternal") === "on",
+    parentProjectId: (() => { const v = formData.get("parentProjectId"); return v && v !== "NONE" ? v : undefined; })(),
+    endCustomer: formData.get("endCustomer") || undefined,
   });
   if (!parsed.success) return parsed.error.issues[0]?.message ?? "Invalid input";
   const data = parsed.data;
@@ -115,6 +136,19 @@ export async function updateProjectAction(_prevState: string | undefined, formDa
     managerId = manager.id;
   }
 
+  // Resolve the program parent: must belong to the company, can't be the project itself, and can't
+  // be one of this project's own sub-projects (no cycles / one level deep).
+  let parentProjectId: string | null = null;
+  if (data.parentProjectId) {
+    if (data.parentProjectId === projectId) return "A project can't be its own program.";
+    const parent = await prisma.project.findFirst({ where: { id: data.parentProjectId, companyId: user.companyId }, select: { id: true, parentProjectId: true } });
+    if (!parent) return "Invalid program project.";
+    if (parent.parentProjectId) return "Pick a top-level program, not a sub-project.";
+    const isChild = await prisma.project.findFirst({ where: { id: data.parentProjectId, parentProjectId: projectId }, select: { id: true } });
+    if (isChild) return "That project is already a sub-project of this one.";
+    parentProjectId = parent.id;
+  }
+
   await prisma.project.update({
     where: { id: projectId },
     data: {
@@ -127,6 +161,8 @@ export async function updateProjectAction(_prevState: string | undefined, formDa
       startDate: data.startDate ? new Date(data.startDate) : null,
       endDate: data.endDate ? new Date(data.endDate) : null,
       isInternal: data.isInternal,
+      parentProjectId,
+      endCustomer: data.endCustomer?.trim() || null,
       ...(managerId ? { managerId } : {}),
     },
   });

@@ -21,6 +21,9 @@ export type MilestoneRevenueInput = {
   approvedHours: number;
   plannedHours: number;
   billable: boolean;
+  /** Net value adjustments on the milestone (removed/absorbed money). Applied to the fixed-price
+   *  value: effective = salesPrice + adjustment. Optional; defaults to 0. */
+  adjustment?: number;
 };
 
 export type ProjectRevenueInput = {
@@ -70,13 +73,20 @@ export function computeProjectRevenue(input: ProjectRevenueInput): ProjectRevenu
 
   if (input.billingType === "FIXED_PRICE") {
     forecastRevenue = round2(input.contractValue);
-    const ratio = input.budgetHours > 0 ? Math.min(1, approvedHours / input.budgetHours) : 0;
-    earnedRevenue = round2(ratio * input.contractValue);
-    recognizedRevenue = round2(
-      input.milestones
-        .filter((m) => m.status === "COMPLETE" || m.status === "INVOICED")
-        .reduce((s, m) => s + m.salesPrice, 0),
+    // Per-milestone: a COMPLETE/INVOICED milestone earns its full (adjusted) value even with no
+    // logged hours; an in-progress one earns percentage-of-completion by its own hours. Value
+    // adjustments (money removed/absorbed) apply to the milestone's effective lump sum.
+    const done = (m: MilestoneRevenueInput) => m.status === "COMPLETE" || m.status === "INVOICED";
+    const effective = (m: MilestoneRevenueInput) => m.salesPrice + (m.adjustment ?? 0);
+    earnedRevenue = round2(
+      input.milestones.reduce((s, m) => {
+        const value = effective(m);
+        if (done(m)) return s + value;
+        const ratio = m.budgetHours > 0 ? Math.min(1, m.approvedHours / m.budgetHours) : 0;
+        return s + ratio * value;
+      }, 0),
     );
+    recognizedRevenue = round2(input.milestones.filter(done).reduce((s, m) => s + effective(m), 0));
   } else {
     // T&M / RETAINER — only billable milestones generate revenue.
     const billable = input.milestones.filter((m) => m.billable);

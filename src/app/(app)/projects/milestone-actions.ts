@@ -138,18 +138,69 @@ export async function deleteMilestoneAction(milestoneId: string) {
   redirect(`/projects/${milestone.projectId}`);
 }
 
-export async function setMilestoneStatusAction(milestoneId: string, status: "PLANNED" | "ACTIVE" | "COMPLETE") {
+export async function setMilestoneStatusAction(milestoneId: string, status: "PLANNED" | "ACTIVE" | "COMPLETE", completionNote?: string | null): Promise<{ error?: string }> {
   const user = await requireUser();
   if (!(await canManageMilestone(user, milestoneId))) {
-    throw new Error("You do not have permission to manage this milestone.");
+    return { error: "You do not have permission to manage this milestone." };
   }
+  // Completing a milestone locks time entry and stamps who/when + a note; its full value is then
+  // recognized (see revenue). Reverting reopens time entry and clears the completion.
+  const complete = status === "COMPLETE";
   const milestone = await prisma.milestone.update({
     where: { id: milestoneId },
-    data: { status },
+    data: complete
+      ? { status, completedAt: new Date(), completionNote: completionNote?.trim() || null, timeEntryOpen: false }
+      : { status, completedAt: null, completionNote: null, timeEntryOpen: true },
     select: { projectId: true },
   });
   revalidatePath(`/projects/${milestone.projectId}`);
   revalidatePath(`/projects/${milestone.projectId}/milestones/${milestoneId}`);
+  return {};
+}
+
+// ---------- milestone value adjustments ----------
+
+const AdjustmentSchema = z.object({
+  milestoneId: z.string().min(1),
+  amount: z.coerce.number().refine((n) => n !== 0, "Enter a non-zero amount."),
+  reason: z.string().trim().min(1, "A reason is required.").max(500),
+  opportunityId: z.string().optional().nullable(),
+});
+export type MilestoneAdjustmentInput = z.infer<typeof AdjustmentSchema>;
+
+export async function createMilestoneAdjustmentAction(input: MilestoneAdjustmentInput): Promise<{ error?: string }> {
+  const user = await requireUser();
+  const parsed = AdjustmentSchema.safeParse(input);
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Invalid input." };
+  const d = parsed.data;
+  if (!(await canManageMilestone(user, d.milestoneId))) return { error: "You do not have permission to manage this milestone." };
+  const milestone = await prisma.milestone.findFirst({ where: { id: d.milestoneId }, select: { projectId: true } });
+  if (!milestone) return { error: "Milestone not found." };
+
+  let opportunityId: string | null = null;
+  if (d.opportunityId) {
+    const opp = await prisma.opportunity.findFirst({ where: { id: d.opportunityId, companyId: user.companyId }, select: { id: true } });
+    if (!opp) return { error: "Invalid opportunity." };
+    opportunityId = opp.id;
+  }
+
+  await prisma.milestoneAdjustment.create({
+    data: { companyId: user.companyId, milestoneId: d.milestoneId, amount: d.amount, reason: d.reason, opportunityId, createdById: user.id },
+  });
+  revalidatePath(`/projects/${milestone.projectId}`);
+  revalidatePath(`/projects/${milestone.projectId}/milestones/${d.milestoneId}`);
+  return {};
+}
+
+export async function deleteMilestoneAdjustmentAction(id: string): Promise<{ error?: string }> {
+  const user = await requireUser();
+  const adj = await prisma.milestoneAdjustment.findFirst({ where: { id, companyId: user.companyId }, include: { milestone: { select: { id: true, projectId: true } } } });
+  if (!adj) return { error: "Adjustment not found." };
+  if (!(await canManageMilestone(user, adj.milestone.id))) return { error: "You do not have permission to manage this milestone." };
+  await prisma.milestoneAdjustment.delete({ where: { id } });
+  revalidatePath(`/projects/${adj.milestone.projectId}`);
+  revalidatePath(`/projects/${adj.milestone.projectId}/milestones/${adj.milestone.id}`);
+  return {};
 }
 
 export async function toggleMilestoneTimeEntryOpenAction(milestoneId: string, open: boolean) {

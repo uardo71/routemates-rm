@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ClockIcon, UsersIcon, CheckSquareIcon, WalletIcon, Building2Icon, ReceiptIcon } from "lucide-react";
+import { ClockIcon, UsersIcon, CheckSquareIcon, WalletIcon, Building2Icon, ReceiptIcon, LockIcon, CheckCircle2Icon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -19,6 +19,7 @@ import { MilestoneStatusSelect } from "./milestone-status-select";
 import { TimeEntryOpenToggle } from "./time-entry-open-toggle";
 import { TaskRow } from "./task-row";
 import { ReallocateHoursForm } from "../../reallocate-hours-form";
+import { MilestoneAdjustments, type AdjustmentRow, type OppOption } from "./milestone-adjustments";
 
 type Tone = "secondary" | "default" | "outline" | "destructive";
 const ASSIGNMENT_STATUS_TONE: Record<string, Tone> = { ACTIVE: "default", PAUSED: "secondary", CLOSED: "outline" };
@@ -41,6 +42,7 @@ export default async function MilestoneDetailPage({
       project: { include: { client: true, company: true } },
       assignments: { include: { user: true }, orderBy: { createdAt: "asc" } },
       tasks: { include: { assignee: true }, orderBy: { createdAt: "asc" } },
+      adjustments: { include: { opportunity: { select: { id: true, number: true, name: true } }, createdBy: { select: { name: true } } }, orderBy: { createdAt: "desc" } },
     },
   });
   if (!milestone) notFound();
@@ -72,6 +74,21 @@ export default async function MilestoneDetailPage({
       take: 10,
     }),
   ]);
+
+  // Milestone "value": lump sum for fixed price, rate × budget hours for T&M/retainer. Adjustments
+  // (money removed/absorbed) apply on top → effective value used for the project's remaining budget.
+  const baseValue = milestone.project.billingType === "FIXED_PRICE"
+    ? Number(milestone.salesPrice)
+    : Number(milestone.salesPrice) * Number(milestone.budgetHours ?? 0);
+  const adjustmentRows: AdjustmentRow[] = milestone.adjustments.map((a) => ({
+    id: a.id, amount: Number(a.amount), reason: a.reason,
+    opportunity: a.opportunity ? { id: a.opportunity.id, number: a.opportunity.number, name: a.opportunity.name } : null,
+    byName: a.createdBy.name, at: a.createdAt.toLocaleDateString(),
+  }));
+  const oppOptions: OppOption[] = canManage
+    ? (await prisma.opportunity.findMany({ where: { companyId: user.companyId }, orderBy: { updatedAt: "desc" }, select: { id: true, number: true, name: true } }))
+        .map((o) => ({ id: o.id, label: `${o.number ? `${o.number} · ` : ""}${o.name}` }))
+    : [];
   const usedByAssignment = new Map(hoursByAssignment.map((h) => [h.assignmentId, Number(h._sum.hours ?? 0)]));
   const usedByTask = new Map(hoursByTask.map((h) => [h.taskId as string, Number(h._sum.hours ?? 0)]));
   const totalUsed = [...usedByAssignment.values()].reduce((a, b) => a + b, 0);
@@ -115,6 +132,17 @@ export default async function MilestoneDetailPage({
           </div>
         </div>
         {milestone.description && <p className="text-sm text-muted-foreground mt-1">{milestone.description}</p>}
+        {milestone.completedAt && (
+          <div className="mt-2 flex items-start gap-2 rounded-md border border-emerald-300/60 bg-emerald-500/5 px-3 py-2 text-sm">
+            <CheckCircle2Icon className="size-4 mt-0.5 text-emerald-600 shrink-0" />
+            <div>
+              <span className="font-medium">Completed &amp; locked</span>
+              <span className="text-muted-foreground"> · {milestone.completedAt.toLocaleDateString()} · full value recognized, </span>
+              <span className="inline-flex items-center gap-1 text-muted-foreground"><LockIcon className="size-3" /> time entry locked</span>
+              {milestone.completionNote && <p className="text-muted-foreground mt-0.5 whitespace-pre-wrap">{milestone.completionNote}</p>}
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
@@ -205,6 +233,17 @@ export default async function MilestoneDetailPage({
           </CardContent>
         </Card>
       </div>
+
+      {canViewRates && (
+        <MilestoneAdjustments
+          milestoneId={milestone.id}
+          currency={milestone.project.company.currency}
+          baseValue={baseValue}
+          adjustments={adjustmentRows}
+          opportunities={oppOptions}
+          canManage={canManage}
+        />
+      )}
 
       {canReallocate && (
         <Card>

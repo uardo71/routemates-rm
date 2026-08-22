@@ -32,7 +32,7 @@ export default async function RevenuePage() {
     : [];
   const assignmentIds = assignments.map((a) => a.id);
 
-  const [apprByMs, costEntries, planByAsg, planDetail] = await Promise.all([
+  const [apprByMs, costEntries, planByAsg, planDetail, adjByMs] = await Promise.all([
     milestoneIds.length
       ? prisma.timeEntry.groupBy({
           by: ["milestoneId"],
@@ -55,10 +55,14 @@ export default async function RevenuePage() {
     assignmentIds.length
       ? prisma.assignmentPlan.findMany({ where: { assignmentId: { in: assignmentIds } }, select: { assignmentId: true, weekStartDate: true, hours: true } })
       : Promise.resolve([]),
+    milestoneIds.length
+      ? prisma.milestoneAdjustment.groupBy({ by: ["milestoneId"], where: { milestoneId: { in: milestoneIds } }, _sum: { amount: true } })
+      : Promise.resolve([]),
   ]);
 
   const companyCurrency = company?.currency ?? "USD";
   const apprMsMap = new Map(apprByMs.map((x) => [x.milestoneId, Number(x._sum.hours ?? 0)]));
+  const adjByMsMap = new Map(adjByMs.map((x) => [x.milestoneId, Number(x._sum.amount ?? 0)]));
   // Actual cost per milestone = Σ approved hours × the entry's historical rate (or snapshot fallback).
   const costByMs = new Map<string, number>();
   for (const e of costEntries) {
@@ -166,6 +170,7 @@ export default async function RevenuePage() {
         salesPrice: Number(m.salesPrice),
         budgetHours: m.budgetHours ? Number(m.budgetHours) : 0,
         status: m.status,
+        adjustment: adjByMsMap.get(m.id) ?? 0,
         approvedHours: apprMsMap.get(m.id) ?? 0,
         plannedHours,
         billable: m.billable,
