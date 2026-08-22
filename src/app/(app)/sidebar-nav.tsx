@@ -22,6 +22,8 @@ import {
   PiggyBankIcon,
   LandmarkIcon,
   HandCoinsIcon,
+  CompassIcon,
+  ListChecksIcon,
   SettingsIcon,
 } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -43,6 +45,8 @@ const ICONS = {
   expenseCategories: TagIcon,
   taxes: LandmarkIcon,
   vendors: HandCoinsIcon,
+  delivery: CompassIcon,
+  playbook: ListChecksIcon,
   myPlanning: CalendarDaysIcon,
   opportunities: TargetIcon,
   revenue: TrendingUpIcon,

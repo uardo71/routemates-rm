@@ -12,6 +12,7 @@ export type Action =
   | "rates:view:any"
   | "invoices:manage"
   | "planning:view"
+  | "delivery:manage"
   | "salaries:manage"
   | "vacations:manage"
   | "vacations:view:any"
@@ -39,6 +40,7 @@ const ROLE_PERMISSIONS: Record<SystemRole, Action[]> = {
     "rates:view:any",
     "invoices:manage",
     "planning:view",
+    "delivery:manage",
     "salaries:manage",
     "vacations:manage",
     "vacations:view:any",
@@ -52,7 +54,7 @@ const ROLE_PERMISSIONS: Record<SystemRole, Action[]> = {
   ],
   FINANCE: ["clients:view", "projects:view", "rates:view:any", "invoices:manage", "salaries:manage", "expenses:manage", "opportunities:view", "reports:view"],
   SALES: ["clients:manage", "clients:view", "opportunities:view", "opportunities:manage"],
-  PM: ["projects:view", "projects:create", "planning:view", "vacations:view:any", "opportunities:view", "opportunities:manage"],
+  PM: ["projects:view", "projects:create", "planning:view", "delivery:manage", "vacations:view:any", "opportunities:view", "opportunities:manage"],
   EMPLOYEE: [],
   CONTRACTOR: [],
 };
@@ -68,21 +70,16 @@ export function can(user: SessionUser | null | undefined, action: Action): boole
   return ROLE_PERMISSIONS[user.role]?.includes(action) ?? false;
 }
 
-/** Project IDs a user is allowed to see: admin/finance see all; PMs see projects they manage;
+/** Project IDs a user is allowed to see: admin/finance see all; PMs see only projects they manage;
  *  everyone else sees only projects where they hold at least one milestone assignment. */
 export async function visibleProjectIds(user: SessionUser): Promise<string[] | "ALL"> {
   if (user.role === "ADMIN" || user.role === "FINANCE") return "ALL";
 
-  const projects = await prisma.project.findMany({
-    where: {
-      companyId: user.companyId,
-      OR: [
-        { managerId: user.id },
-        { milestones: { some: { assignments: { some: { userId: user.id } } } } },
-      ],
-    },
-    select: { id: true },
-  });
+  const where =
+    user.role === "PM"
+      ? { companyId: user.companyId, managerId: user.id }
+      : { companyId: user.companyId, milestones: { some: { assignments: { some: { userId: user.id } } } } };
+  const projects = await prisma.project.findMany({ where, select: { id: true } });
   return projects.map((p) => p.id);
 }
 

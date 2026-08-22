@@ -27,6 +27,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     {
       label: "Delivery",
       items: [
+        ...(can(user, "delivery:manage")
+          ? [{ href: "/delivery", label: "Delivery cockpit", icon: "delivery" as const }]
+          : []),
         ...(can(user, "projects:view")
           ? [{ href: "/projects", label: "Projects", icon: "projects" as const }]
           : []),
@@ -91,6 +94,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
                 : []),
               ...(can(user, "clients:view")
                 ? [{ href: "/admin/clients", label: "Clients", icon: "clients" as const }]
+                : []),
+              ...(can(user, "projects:manage:any")
+                ? [{ href: "/admin/playbook", label: "Project playbook", icon: "playbook" as const }]
                 : []),
               ...(can(user, "users:manage")
                 ? [{ href: "/admin/settings", label: "Settings", icon: "settings" as const }]
