@@ -23,7 +23,7 @@ import { LinkButton } from "@/components/link-button";
 import { StatCard } from "@/components/stat-card";
 import { InitialsAvatar } from "@/components/initials-avatar";
 import { InfoField } from "@/components/info-field";
-import { DonutChart, DONUT_COLORS } from "@/components/charts/donut-chart";
+import { DonutChart } from "@/components/charts/donut-chart";
 import { MiniBarChart } from "@/components/charts/mini-bar-chart";
 import { prisma } from "@/lib/prisma";
 import { can, canManageProject, visibleProjectIds } from "@/lib/permissions";
@@ -48,6 +48,40 @@ const MILESTONE_STATUS_TONE: Record<string, Tone> = {
   ACTIVE: "default",
   COMPLETE: "outline",
   INVOICED: "secondary",
+};
+// Visual language for the Milestones overview: label, donut/dot fill, and a very light row tint per
+// status. ABSORBED is a *derived* state (whole value moved onto another deal), not a DB status.
+type MsDisplayStatus = "PLANNED" | "ACTIVE" | "COMPLETE" | "INVOICED" | "ABSORBED";
+const MS_STATUS_ORDER: MsDisplayStatus[] = ["ACTIVE", "PLANNED", "COMPLETE", "INVOICED", "ABSORBED"];
+const MS_STATUS_LABEL: Record<MsDisplayStatus, string> = {
+  PLANNED: "Planned",
+  ACTIVE: "In progress",
+  COMPLETE: "Completed",
+  INVOICED: "Invoiced",
+  ABSORBED: "Absorbed",
+};
+const MS_STATUS_FILL: Record<MsDisplayStatus, string> = {
+  PLANNED: "fill-amber-500 dark:fill-amber-400",
+  ACTIVE: "fill-blue-500 dark:fill-blue-400",
+  COMPLETE: "fill-emerald-500 dark:fill-emerald-400",
+  INVOICED: "fill-cyan-500 dark:fill-cyan-400",
+  ABSORBED: "fill-violet-500 dark:fill-violet-400",
+};
+const MS_STATUS_DOT: Record<MsDisplayStatus, string> = {
+  PLANNED: "bg-amber-500 dark:bg-amber-400",
+  ACTIVE: "bg-blue-500 dark:bg-blue-400",
+  COMPLETE: "bg-emerald-500 dark:bg-emerald-400",
+  INVOICED: "bg-cyan-500 dark:bg-cyan-400",
+  ABSORBED: "bg-violet-500 dark:bg-violet-400",
+};
+// Whole-row tint by status so the Milestones table reads at a glance. A left accent border plus a
+// light fill (kept subtle enough that the row text stays legible in both themes).
+const MS_STATUS_ROW: Record<MsDisplayStatus, string> = {
+  PLANNED: "bg-amber-500/[0.07] border-l-2 border-l-amber-500 hover:bg-amber-500/[0.12]",
+  ACTIVE: "bg-blue-500/[0.07] border-l-2 border-l-blue-500 hover:bg-blue-500/[0.12]",
+  COMPLETE: "bg-emerald-500/[0.08] border-l-2 border-l-emerald-500 hover:bg-emerald-500/[0.13]",
+  INVOICED: "bg-cyan-500/[0.08] border-l-2 border-l-cyan-500 hover:bg-cyan-500/[0.13]",
+  ABSORBED: "bg-violet-500/[0.1] border-l-2 border-l-violet-500 hover:bg-violet-500/[0.15]",
 };
 const ASSIGNMENT_STATUS_TONE: Record<string, Tone> = {
   ACTIVE: "default",
@@ -165,7 +199,57 @@ export default async function ProjectDetailPage({
     plannedByMilestone.set(a.milestoneId, (plannedByMilestone.get(a.milestoneId) ?? 0) + (plannedAsgMap.get(a.id) ?? 0));
   }
 
-  const allocatedHours = project.milestones.reduce((sum, m) => sum + Number(m.budgetHours ?? 0), 0);
+  // Milestone value adjustments (money removed/absorbed) → effective value per milestone, plus a
+  // "fully absorbed" flag when the whole value was taken out and moved onto another deal. Drives the
+  // overview status donut, the Milestones-tab highlights, and the effective-value column.
+  const msAdjustments = milestoneIds.length
+    ? await prisma.milestoneAdjustment.findMany({
+        where: { milestoneId: { in: milestoneIds } },
+        select: { milestoneId: true, amount: true, opportunity: { select: { id: true, number: true, name: true } } },
+      })
+    : [];
+  const adjByMs = new Map<string, number>();
+  const absorbedOppByMs = new Map<string, { id: string; number: string | null; name: string }>();
+  for (const a of msAdjustments) {
+    const amt = Number(a.amount);
+    adjByMs.set(a.milestoneId, (adjByMs.get(a.milestoneId) ?? 0) + amt);
+    if (amt < 0 && a.opportunity && !absorbedOppByMs.has(a.milestoneId)) absorbedOppByMs.set(a.milestoneId, a.opportunity);
+  }
+  type ProjMilestone = (typeof project.milestones)[number];
+  const baseValueOf = (m: ProjMilestone) =>
+    project.billingType === "FIXED_PRICE" ? Number(m.salesPrice) : Number(m.salesPrice) * Number(m.budgetHours ?? 0);
+  const effValueOf = (m: ProjMilestone) => baseValueOf(m) + (adjByMs.get(m.id) ?? 0);
+  const isFullyAbsorbed = (m: ProjMilestone) => {
+    const base = baseValueOf(m);
+    return base > 0 && (adjByMs.get(m.id) ?? 0) < 0 && effValueOf(m) <= 0.005;
+  };
+  const displayStatus = (m: ProjMilestone): MsDisplayStatus =>
+    isFullyAbsorbed(m) && m.status !== "COMPLETE" && m.status !== "INVOICED" ? "ABSORBED" : (m.status as MsDisplayStatus);
+
+  // Status distribution for the overview donut + the highlight strip. Sized by value for rate-viewers
+  // (money is the reality the owner cares about), by milestone count otherwise (keeps rates hidden).
+  const statusCount = new Map<MsDisplayStatus, number>();
+  const statusValue = new Map<MsDisplayStatus, number>();
+  for (const m of project.milestones) {
+    const st = displayStatus(m);
+    statusCount.set(st, (statusCount.get(st) ?? 0) + 1);
+    // Sized by EFFECTIVE value: an absorbed milestone's worth has moved onto another deal, so it
+    // contributes 0 here and the total reflects the project's real remaining value (not the pre-
+    // adjustment scope).
+    statusValue.set(st, (statusValue.get(st) ?? 0) + effValueOf(m));
+  }
+  const totalMsValue = Math.round([...statusValue.values()].reduce((a, b) => a + b, 0) * 100) / 100;
+  // Absorbed milestones hold €0 effective value (moved onto another deal) so they don't appear in the
+  // value donut — surface their count + the value that moved out as a caption instead.
+  const absorbedCount = statusCount.get("ABSORBED") ?? 0;
+  const absorbedValueOut =
+    Math.round(
+      project.milestones.filter((m) => displayStatus(m) === "ABSORBED").reduce((s, m) => s + baseValueOf(m), 0) * 100,
+    ) / 100;
+
+  // Round the roll-up: summing per-milestone budget hours (often repeating-decimal even-splits)
+  // otherwise surfaces float noise like 2959.999999999999h.
+  const allocatedHours = Math.round(project.milestones.reduce((sum, m) => sum + Number(m.budgetHours ?? 0), 0) * 100) / 100;
   const projectBudgetHours = project.budgetHours ? Number(project.budgetHours) : null;
   const assignmentsCount = project.milestones.reduce((sum, m) => sum + m._count.assignments, 0);
   const teamSize = new Set(assignments.map((a) => a.userId)).size;
@@ -355,22 +439,39 @@ export default async function ProjectDetailPage({
 
             <Card className="lg:col-span-2">
               <CardHeader>
-                <CardTitle>Logged hours by milestone</CardTitle>
-                <p className="text-xs text-muted-foreground">Share of hours logged so far — not budget consumption.</p>
+                <CardTitle>Milestones by status</CardTitle>
+                <p className="text-xs text-muted-foreground">
+                  {canViewRates ? "Share of milestone value by delivery status." : "Milestones grouped by delivery status."}
+                </p>
               </CardHeader>
               <CardContent>
                 {project.milestones.length === 0 ? (
                   <p className="text-sm text-muted-foreground">No milestones yet.</p>
                 ) : (
                   <DonutChart
-                    centerLabel={`${totalLoggedHours}h`}
-                    centerSublabel="logged"
-                    segments={project.milestones.map((m, i) => ({
-                      label: m.name,
-                      value: usedHoursMap.get(m.id) ?? 0,
-                      colorClass: DONUT_COLORS[i % DONUT_COLORS.length],
+                    centerLabel={
+                      canViewRates
+                        ? formatMoney(totalMsValue, project.company.currency)
+                        : String(project.milestones.length)
+                    }
+                    centerSublabel={canViewRates ? "total value" : "milestones"}
+                    segments={MS_STATUS_ORDER.filter((s) =>
+                      (canViewRates ? statusValue.get(s) ?? 0 : statusCount.get(s) ?? 0) > 0,
+                    ).map((s) => ({
+                      label: `${MS_STATUS_LABEL[s]} · ${statusCount.get(s) ?? 0}`,
+                      value: canViewRates ? statusValue.get(s) ?? 0 : statusCount.get(s) ?? 0,
+                      colorClass: MS_STATUS_FILL[s],
                     }))}
                   />
+                )}
+                {absorbedCount > 0 && (
+                  <div className="mt-3 flex items-center gap-2 border-t pt-3 text-xs text-muted-foreground">
+                    <span className="size-2 shrink-0 rounded-full bg-violet-500 dark:bg-violet-400" />
+                    <span>
+                      {absorbedCount} milestone{absorbedCount === 1 ? "" : "s"} absorbed
+                      {canViewRates ? ` · ${formatMoney(absorbedValueOut, project.company.currency)} moved to other deals` : ""} — excluded from total
+                    </span>
+                  </div>
                 )}
               </CardContent>
             </Card>
@@ -387,7 +488,21 @@ export default async function ProjectDetailPage({
                 </LinkButton>
               )}
             </CardHeader>
-            <CardContent>
+            <CardContent className="flex flex-col gap-4">
+              {project.milestones.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {MS_STATUS_ORDER.filter((s) => (statusCount.get(s) ?? 0) > 0).map((s) => (
+                    <span
+                      key={s}
+                      className="inline-flex items-center gap-2 rounded-md border bg-muted/30 px-2.5 py-1 text-xs font-medium"
+                    >
+                      <span className={cn("size-2 rounded-full", MS_STATUS_DOT[s])} />
+                      {MS_STATUS_LABEL[s]}
+                      <span className="tabular-nums text-muted-foreground">{statusCount.get(s) ?? 0}</span>
+                    </span>
+                  ))}
+                </div>
+              )}
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -402,19 +517,31 @@ export default async function ProjectDetailPage({
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {project.milestones.map((m, i) => (
-                    <TableRow key={m.id}>
+                  {project.milestones.map((m) => {
+                    const st = displayStatus(m);
+                    const absorbedOpp = absorbedOppByMs.get(m.id);
+                    return (
+                    <TableRow key={m.id} className={MS_STATUS_ROW[st]}>
                       <TableCell>
                         <Link
                           href={`/projects/${project.id}/milestones/${m.id}`}
                           className="flex items-center gap-2.5 font-medium hover:underline"
                         >
-                          <span className={cn("size-2 shrink-0 rounded-full", DONUT_COLORS[i % DONUT_COLORS.length].replaceAll("fill-", "bg-"))} />
+                          <span className={cn("size-2 shrink-0 rounded-full", MS_STATUS_DOT[st])} />
                           {m.name}
                         </Link>
                       </TableCell>
                       <TableCell>
-                        <Badge variant={MILESTONE_STATUS_TONE[m.status] ?? "secondary"}>{m.status}</Badge>
+                        <div className="flex flex-col items-start gap-1">
+                          <Badge variant={st === "ABSORBED" ? "outline" : MILESTONE_STATUS_TONE[m.status] ?? "secondary"} className={cn(st === "ABSORBED" && "border-violet-400/60 bg-violet-500/10 text-violet-600 dark:text-violet-300")}>
+                            {MS_STATUS_LABEL[st]}
+                          </Badge>
+                          {st === "ABSORBED" && absorbedOpp && (
+                            <Link href={`/opportunities/${absorbedOpp.id}`} className="font-mono text-[11px] text-primary hover:underline">
+                              → {absorbedOpp.number ?? absorbedOpp.name}
+                            </Link>
+                          )}
+                        </div>
                       </TableCell>
                       <TableCell>
                         <Badge variant={m.billable ? "outline" : "secondary"}>{m.billable ? "Billable" : "Internal"}</Badge>
@@ -457,18 +584,29 @@ export default async function ProjectDetailPage({
                       )}
                       {canViewRates && (
                         <TableCell className="text-right tabular-nums whitespace-nowrap">
-                          {project.billingType === "FIXED_PRICE"
-                            ? formatMoney(m.salesPrice, project.company.currency)
-                            : m.budgetHours
-                              ? formatMoney(Number(m.salesPrice) * Number(m.budgetHours), project.company.currency)
-                              : `${formatMoney(m.salesPrice, project.company.currency)}/h`}
+                          {(() => {
+                            if (project.billingType !== "FIXED_PRICE" && !m.budgetHours) {
+                              return `${formatMoney(m.salesPrice, project.company.currency)}/h`;
+                            }
+                            const base = baseValueOf(m);
+                            const eff = effValueOf(m);
+                            const adjusted = Math.abs(eff - base) > 0.005;
+                            if (!adjusted) return formatMoney(base, project.company.currency);
+                            return (
+                              <span className="flex flex-col items-end leading-tight">
+                                <span className="text-xs text-muted-foreground line-through">{formatMoney(base, project.company.currency)}</span>
+                                <span className={cn(eff <= 0.005 && "text-violet-600 dark:text-violet-300")}>{formatMoney(eff, project.company.currency)}</span>
+                              </span>
+                            );
+                          })()}
                         </TableCell>
                       )}
                       <TableCell className="text-muted-foreground">
                         {m._count.assignments} people · {m._count.tasks} tasks
                       </TableCell>
                     </TableRow>
-                  ))}
+                    );
+                  })}
                   {project.milestones.length === 0 && (
                     <TableRow>
                       <TableCell colSpan={canViewRates ? 8 : 6} className="text-center text-muted-foreground">

@@ -5,12 +5,22 @@ import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/session";
 import { can, canManageProject } from "@/lib/permissions";
 import { SEVERITY_LABEL } from "@/lib/delivery";
-import type { RagStatus } from "@prisma/client";
+import type { RagStatus, PlanTaskStatus } from "@prisma/client";
 
-const fmt = (d: Date | null) => (d ? format(d, "dd/MM/yyyy") : "—");
+const fmt = (d: Date | null) => (d ? format(d, "dd MMM yyyy") : "—");
+const fmtShort = (d: Date | null) => (d ? format(d, "dd MMM") : "—");
+
+// Brass & paper palette — matches the app so the deck feels of a piece.
 const INK = "141F2B";
+const BRASS = "A9812F";
+const PAPER = "EBEFF1";
+const LINE = "D9DEE2";
 const MUTE = "6B7280";
-const SEV_HEX: Record<RagStatus, string> = { GREEN: "16A34A", AMBER: "D97706", RED: "DC2626" };
+const WHITE = "FFFFFF";
+const SEV_HEX: Record<RagStatus, string> = { GREEN: "2F8F5B", AMBER: "BD8420", RED: "B4462F" };
+const STATUS_HEX: Record<PlanTaskStatus, string> = { NOT_STARTED: "94A3B8", IN_PROGRESS: "3B6EA8", COMPLETED: "2F8F5B", BLOCKED: "B4462F" };
+// Progress drives the status shown (0 = not started, 100 = completed), preserving a manual BLOCKED.
+const deriveStatus = (pr: number, cur: PlanTaskStatus): PlanTaskStatus => cur === "BLOCKED" ? "BLOCKED" : pr >= 100 ? "COMPLETED" : pr <= 0 ? "NOT_STARTED" : "IN_PROGRESS";
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -28,7 +38,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
           id: true, name: true, number: true,
           client: { select: { name: true } },
           manager: { select: { name: true } },
-          milestones: { select: { name: true, status: true }, orderBy: { createdAt: "asc" } },
+          company: { select: { name: true } },
           planTasks: { orderBy: { sortOrder: "asc" } },
         },
       },
@@ -37,92 +47,203 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   if (!report) return NextResponse.json({ error: "Not found." }, { status: 404 });
   if (!(await canManageProject(user, report.project.id))) return NextResponse.json({ error: "Forbidden." }, { status: 403 });
 
-  // Plan/RAID scoped to the report's engagement (or project-level when null).
   const p = { ...report.project, planTasks: report.project.planTasks.filter((t) => (t.engagementId ?? null) === (report.engagementId ?? null)) };
   const endCustomer = report.engagement?.name ?? p.client.name;
+  const provider = p.company?.name ?? "Professional Services";
+  const pct = report.progressPercent ?? 0;
+
   const pptx = new pptxgen();
   pptx.layout = "LAYOUT_WIDE"; // 13.33 x 7.5
+  pptx.defineLayout({ name: "W", width: 13.33, height: 7.5 });
 
-  // Slide 1 — Title
+  const footer = (s: pptxgen.Slide, n: number) => {
+    s.addShape("line", { x: 0.6, y: 7.05, w: 12.13, h: 0, line: { color: LINE, width: 0.75 } });
+    s.addText([
+      { text: `${p.name}`, options: { color: MUTE } },
+      { text: `   ·   ${fmt(report.reportDate)}   ·   Confidential`, options: { color: MUTE } },
+    ], { x: 0.6, y: 7.1, w: 10, h: 0.3, fontSize: 8, align: "left", valign: "middle" });
+    s.addText(String(n), { x: 12.3, y: 7.1, w: 0.4, h: 0.3, fontSize: 8, color: MUTE, align: "right", valign: "middle" });
+  };
+  const sectionTitle = (s: pptxgen.Slide, title: string) => {
+    s.addShape("rect", { x: 0.6, y: 0.55, w: 0.11, h: 0.5, fill: { color: BRASS } });
+    s.addText(title, { x: 0.85, y: 0.5, w: 11, h: 0.6, fontSize: 24, bold: true, color: INK, valign: "middle" });
+  };
+
+  // ---------------- Slide 1 — Title ----------------
   const s1 = pptx.addSlide();
-  s1.addShape("rect", { x: 0, y: 0, w: "100%", h: 1.1, fill: { color: INK } });
-  s1.addText(endCustomer, { x: 0.6, y: 0.28, w: 12, fontSize: 16, color: "FFFFFF", bold: true });
-  s1.addText(`PM ${p.manager?.name ?? report.author.name}`, { x: 0.6, y: 0.62, w: 12, fontSize: 12, color: "C9D1D9" });
-  s1.addText("Status Update", { x: 0.6, y: 2.7, w: 12, fontSize: 34, bold: true, color: INK });
-  s1.addText(p.name, { x: 0.6, y: 3.6, w: 12, fontSize: 22, color: MUTE });
-  s1.addText(`${fmt(report.reportDate)}${p.number ? ` · ${p.number}` : ""}`, { x: 0.6, y: 4.4, w: 12, fontSize: 14, color: MUTE });
+  s1.background = { color: INK };
+  s1.addShape("rect", { x: 0, y: 3.4, w: 1.4, h: 0.08, fill: { color: BRASS } });
+  s1.addText(endCustomer.toUpperCase(), { x: 0.9, y: 1.5, w: 11.5, fontSize: 14, color: "C9B27A", bold: true, charSpacing: 2 });
+  s1.addText("Project Status Update", { x: 0.85, y: 2.2, w: 11.6, fontSize: 40, bold: true, color: WHITE });
+  s1.addText(p.name, { x: 0.9, y: 3.7, w: 11.5, fontSize: 20, color: "AEB9C4" });
+  s1.addText([
+    { text: `${fmt(report.reportDate)}`, options: { color: WHITE, bold: true } },
+    { text: p.number ? `    ·    ${p.number}` : "", options: { color: "8B95A0" } },
+    { text: `    ·    PM ${p.manager?.name ?? report.author.name}`, options: { color: "8B95A0" } },
+  ], { x: 0.9, y: 5.1, w: 11.5, fontSize: 14 });
+  s1.addText(`${provider}  ·  Professional Services`, { x: 0.9, y: 6.7, w: 11.5, fontSize: 11, color: "6B7783" });
 
-  // Slide 2 — Agenda
+  // ---------------- Slide 2 — Project Status ----------------
   const s2 = pptx.addSlide();
-  s2.addText("Agenda", { x: 0.6, y: 0.4, fontSize: 26, bold: true, color: INK });
-  s2.addText(
-    [{ text: "Project Status" }, { text: "Project Plan" }, { text: "Scope" }, { text: "Q&A" }].map((t) => ({ text: t.text, options: { bullet: true, fontSize: 18, color: INK, paraSpaceAfter: 12 } })),
-    { x: 0.9, y: 1.4, w: 11, h: 4 },
-  );
+  sectionTitle(s2, "Project Status");
 
-  // Slide 3 — Project Status
-  const s3 = pptx.addSlide();
-  s3.addText("Project Status", { x: 0.6, y: 0.4, fontSize: 26, bold: true, color: INK });
-  // Meta line: Type / Status / Severity
-  s3.addText(
-    [
-      { text: "Type: ", options: { bold: true, color: MUTE } }, { text: "Project    ", options: { color: INK } },
-      { text: "Status: ", options: { bold: true, color: MUTE } }, { text: report.progressPercent != null ? `Progress (${report.progressPercent}%)    ` : "In progress    ", options: { color: INK } },
-      { text: "Severity/Timing: ", options: { bold: true, color: MUTE } },
-    ],
-    { x: 0.6, y: 1.15, w: 12, fontSize: 12 },
-  );
-  s3.addText(SEVERITY_LABEL[report.overallRag], { x: 0.6, y: 1.45, w: 3.2, h: 0.4, fontSize: 12, bold: true, color: "FFFFFF", align: "center", valign: "middle", fill: { color: SEV_HEX[report.overallRag] } });
+  // top strip: three stat cards (Progress / Severity / Period)
+  const cardY = 1.35, cardH = 1.25;
+  const card = (x: number, w: number) => s2.addShape("rect", { x, y: cardY, w, h: cardH, fill: { color: WHITE }, line: { color: LINE, width: 1 } });
+  // progress card
+  card(0.6, 5.5);
+  s2.addText("PROGRESS", { x: 0.8, y: cardY + 0.12, fontSize: 9, bold: true, color: MUTE, charSpacing: 1 });
+  s2.addText(`${pct}%`, { x: 0.8, y: cardY + 0.32, w: 1.6, fontSize: 30, bold: true, color: INK });
+  s2.addShape("roundRect", { x: 2.5, y: cardY + 0.55, w: 3.4, h: 0.16, rectRadius: 0.08, fill: { color: PAPER } });
+  if (pct > 0) s2.addShape("roundRect", { x: 2.5, y: cardY + 0.55, w: Math.max(0.16, (3.4 * pct) / 100), h: 0.16, rectRadius: 0.08, fill: { color: BRASS } });
+  // severity card
+  card(6.3, 3.1);
+  s2.addText("SEVERITY / TIMING", { x: 6.5, y: cardY + 0.12, fontSize: 9, bold: true, color: MUTE, charSpacing: 1 });
+  s2.addShape("roundRect", { x: 6.5, y: cardY + 0.45, w: 2.7, h: 0.55, rectRadius: 0.06, fill: { color: SEV_HEX[report.overallRag] } });
+  s2.addText(SEVERITY_LABEL[report.overallRag], { x: 6.5, y: cardY + 0.45, w: 2.7, h: 0.55, fontSize: 13, bold: true, color: WHITE, align: "center", valign: "middle" });
+  // period card
+  card(9.6, 3.13);
+  s2.addText("REPORTING", { x: 9.8, y: cardY + 0.12, fontSize: 9, bold: true, color: MUTE, charSpacing: 1 });
+  s2.addText(report.periodStart && report.periodEnd ? `${fmtShort(report.periodStart)} – ${fmtShort(report.periodEnd)}` : fmt(report.reportDate), { x: 9.8, y: cardY + 0.38, w: 2.8, fontSize: 15, bold: true, color: INK });
+  s2.addText(report.cadence ? `${report.cadence.toLowerCase()} cadence` : "", { x: 9.8, y: cardY + 0.78, w: 2.8, fontSize: 10, color: MUTE });
 
-  s3.addText("Current Status", { x: 0.6, y: 2.05, fontSize: 13, bold: true, color: INK });
-  s3.addText(report.summary || "—", { x: 0.6, y: 2.4, w: 7.4, h: 4.4, fontSize: 11, color: INK, valign: "top" });
+  // current status (left) + next actions (right)
+  const bodyY = 2.95;
+  s2.addText("CURRENT STATUS", { x: 0.6, y: bodyY, fontSize: 11, bold: true, color: BRASS, charSpacing: 1 });
+  s2.addShape("rect", { x: 0.6, y: bodyY + 0.35, w: 5.7, h: 3.4, fill: { color: WHITE }, line: { color: LINE, width: 1 } });
+  s2.addText(report.summary || "—", { x: 0.8, y: bodyY + 0.5, w: 5.3, h: 3.1, fontSize: 12, color: INK, valign: "top", lineSpacingMultiple: 1.15 });
 
-  s3.addText("Next Actions", { x: 8.3, y: 2.05, fontSize: 13, bold: true, color: INK });
-  const actionRuns = report.actions.length
-    ? report.actions.map((a) => ({
-        text: `${a.description}${a.owner ? ` — ${a.owner}` : ""}${a.dueDate ? ` (by ${fmt(a.dueDate)})` : ""}${a.critical ? "  [Critical]" : ""}`,
-        options: { bullet: true, fontSize: 11, color: a.critical ? SEV_HEX.RED : INK, paraSpaceAfter: 8 },
-      }))
-    : [{ text: "Nothing to report", options: { fontSize: 11, color: MUTE } }];
-  s3.addText(actionRuns, { x: 8.3, y: 2.4, w: 4.4, h: 2.6, valign: "top" });
-
-  s3.addText("Corrective Actions", { x: 8.3, y: 5.2, fontSize: 13, bold: true, color: INK });
-  s3.addText(report.correctiveActions || "Nothing to report", { x: 8.3, y: 5.55, w: 4.4, h: 1.2, fontSize: 11, color: INK, valign: "top" });
-
-  // Legend
-  const legend: [string, RagStatus][] = [["Low / On time", "GREEN"], ["Medium / Delay", "AMBER"], ["High / Business impact", "RED"]];
-  legend.forEach(([label, rag], i) => {
-    s3.addShape("rect", { x: 0.6 + i * 2.7, y: 7.0, w: 0.2, h: 0.2, fill: { color: SEV_HEX[rag] } });
-    s3.addText(label, { x: 0.85 + i * 2.7, y: 6.93, w: 2.5, fontSize: 9, color: MUTE });
-  });
-
-  // Slide 4 — Project Plan (real plan table when present, else milestones)
-  const s4 = pptx.addSlide();
-  s4.addText("Project Plan", { x: 0.6, y: 0.4, fontSize: 26, bold: true, color: INK });
-  const PLAN_STATUS: Record<string, string> = { NOT_STARTED: "Not started", IN_PROGRESS: "In progress", COMPLETED: "Completed", BLOCKED: "Blocked" };
-  if (p.planTasks.length > 0) {
-    const header = ["Phase", "Task", "Owner", "Start", "Due", "%", "Status"].map((t) => ({ text: t, options: { bold: true, color: "FFFFFF", fill: { color: INK }, fontSize: 9 } }));
-    const rows = p.planTasks.map((t) => [
-      { text: t.phase ?? "", options: { fontSize: 8, color: MUTE } },
-      { text: `${t.isMilestone ? "◆ " : ""}${t.name}`, options: { fontSize: 8, bold: t.isMilestone, color: INK } },
-      { text: t.owner ?? "", options: { fontSize: 8, color: INK } },
-      { text: fmt(t.startDate), options: { fontSize: 8, color: INK } },
-      { text: fmt(t.dueDate), options: { fontSize: 8, color: INK } },
-      { text: t.isMilestone ? "" : `${t.progress}%`, options: { fontSize: 8, color: INK } },
-      { text: PLAN_STATUS[t.status] ?? t.status, options: { fontSize: 8, color: INK } },
+  s2.addText("NEXT ACTIONS", { x: 6.6, y: bodyY, fontSize: 11, bold: true, color: BRASS, charSpacing: 1 });
+  if (report.actions.length) {
+    const head = ["Action", "Owner", "Due", ""].map((t) => ({ text: t, options: { bold: true, color: WHITE, fill: { color: INK }, fontSize: 9, align: "left" as const } }));
+    const rows = report.actions.map((a) => [
+      { text: a.description, options: { fontSize: 9.5, color: INK, valign: "middle" as const } },
+      { text: a.owner ?? "—", options: { fontSize: 9.5, color: MUTE, valign: "middle" as const } },
+      { text: a.dueDate ? fmtShort(a.dueDate) : "—", options: { fontSize: 9.5, color: MUTE, valign: "middle" as const } },
+      { text: a.critical ? "!" : "", options: { fontSize: 11, bold: true, color: WHITE, fill: { color: a.critical ? SEV_HEX.RED : WHITE }, align: "center" as const, valign: "middle" as const } },
     ]);
-    s4.addTable([header, ...rows], { x: 0.5, y: 1.2, w: 12.3, colW: [2.0, 3.9, 1.9, 1.3, 1.3, 0.6, 1.3], border: { type: "solid", color: "E5E7EB", pt: 0.5 }, valign: "middle", autoPage: true });
+    s2.addTable([head, ...rows], { x: 6.6, y: bodyY + 0.35, w: 6.13, colW: [3.5, 1.4, 0.93, 0.3], border: { type: "solid", color: LINE, pt: 0.5 }, rowH: 0.32, valign: "middle" });
   } else {
-    if (report.milestoneNotes) s4.addText(report.milestoneNotes, { x: 0.6, y: 1.2, w: 12, h: 1.4, fontSize: 12, color: INK, valign: "top" });
-    const mRuns = p.milestones.length
-      ? p.milestones.map((m) => ({ text: `${m.name} — ${m.status}`, options: { bullet: true, fontSize: 13, color: INK, paraSpaceAfter: 8 } }))
-      : [{ text: "No plan defined yet.", options: { fontSize: 12, color: MUTE } }];
-    s4.addText(mRuns, { x: 0.9, y: report.milestoneNotes ? 2.8 : 1.4, w: 11, h: 4 });
+    s2.addShape("rect", { x: 6.6, y: bodyY + 0.35, w: 6.13, h: 0.6, fill: { color: WHITE }, line: { color: LINE, width: 1 } });
+    s2.addText("Nothing outstanding.", { x: 6.8, y: bodyY + 0.35, w: 5.8, h: 0.6, fontSize: 10, color: MUTE, valign: "middle" });
   }
 
-  // Slide 5 — Q&A
-  const s5 = pptx.addSlide();
-  s5.addText("Q&A", { x: 0.6, y: 3.2, fontSize: 40, bold: true, color: INK });
+  // corrective actions strip
+  s2.addText("CORRECTIVE ACTIONS", { x: 6.6, y: 5.35, fontSize: 11, bold: true, color: BRASS, charSpacing: 1 });
+  s2.addShape("rect", { x: 6.6, y: 5.7, w: 6.13, h: 1.05, fill: { color: WHITE }, line: { color: LINE, width: 1 } });
+  s2.addText(report.correctiveActions || "None required.", { x: 6.8, y: 5.78, w: 5.8, h: 0.9, fontSize: 10.5, color: INK, valign: "top" });
+  footer(s2, 2);
+
+  // ---------------- Slide 3 — Project Plan (Gantt, mirrors the print PDF) ----------------
+  const s3 = pptx.addSlide();
+  sectionTitle(s3, "Project Plan");
+  const DAY = 86_400_000;
+  const allT = p.planTasks.flatMap((t) => [t.startDate?.getTime(), t.dueDate?.getTime()]).filter((n): n is number => n != null);
+  if (allT.length === 0) {
+    s3.addText("No project plan has been built yet.", { x: 0.6, y: 1.6, fontSize: 13, color: MUTE });
+  } else {
+    // flat rows: phase summary (with rollup %) + its tasks
+    const phaseList = [...new Set(p.planTasks.map((t) => t.phase ?? "General"))];
+    type FR = { kind: "phase"; label: string; wbs: string; s: number; e: number; progress: number } | { kind: "task"; wbs: string; t: (typeof p.planTasks)[number] };
+    const flat: FR[] = [];
+    phaseList.forEach((ph, pi) => {
+      const g = p.planTasks.filter((t) => (t.phase ?? "General") === ph);
+      const ss = g.map((t) => t.startDate?.getTime()).filter((n): n is number => n != null);
+      const ee = g.map((t) => (t.dueDate ?? t.startDate)?.getTime()).filter((n): n is number => n != null);
+      const real = g.filter((t) => !t.isMilestone);
+      const progress = real.length ? Math.round(real.reduce((s, t) => s + t.progress, 0) / real.length) : 0;
+      flat.push({ kind: "phase", label: ph, wbs: String(pi + 1), s: ss.length ? Math.min(...ss) : NaN, e: ee.length ? Math.max(...ee) : NaN, progress });
+      g.forEach((t, ti) => flat.push({ kind: "task", wbs: `${pi + 1}.${ti + 1}`, t }));
+    });
+    const rowsAll = flat.slice(0, 30);
+
+    // month-snapped window
+    const a = new Date(Math.min(...allT)); a.setUTCDate(1); a.setUTCHours(0, 0, 0, 0);
+    const b = new Date(Math.max(...allT)); b.setUTCMonth(b.getUTCMonth() + 1, 1); b.setUTCHours(0, 0, 0, 0);
+    const min = a.getTime(), max = b.getTime();
+    const totalDays = Math.max(1, Math.round((max - min) / DAY));
+
+    // layout
+    const TOP = 1.35, HDR = 0.28;
+    const WBSX = 0.5, NAMEX = 0.82, STARTX = 3.55, DUEX = 4.17, LEFTW = 4.27;
+    const TLX = 4.95, TLW = 7.8;
+    const ROWSY = TOP + HDR;
+    const rowH = Math.min(0.2, (6.75 - ROWSY) / Math.max(1, rowsAll.length));
+    const xOf = (ms: number) => TLX + (TLW * (ms - min)) / (totalDays * DAY);
+
+    // header band
+    s3.addShape("rect", { x: WBSX, y: TOP, w: LEFTW, h: HDR, fill: { color: INK } });
+    s3.addShape("rect", { x: TLX, y: TOP, w: TLW, h: HDR, fill: { color: INK } });
+    ([["#", WBSX + 0.03], ["Task", NAMEX], ["Start", STARTX], ["Due", DUEX]] as [string, number][]).forEach(([t, x]) => s3.addText(t, { x, y: TOP, w: 1, h: HDR, fontSize: 8, bold: true, color: WHITE, valign: "middle" }));
+    // month labels + gridlines
+    const months: number[] = [];
+    { const d = new Date(min); let gi = 0; while (d.getTime() <= max && gi++ < 40) { months.push(d.getTime()); d.setUTCMonth(d.getUTCMonth() + 1); } }
+    months.forEach((mm) => {
+      const gxp = xOf(mm);
+      s3.addText(format(new Date(mm), "MMM ''yy"), { x: gxp + 0.03, y: TOP, w: 1, h: HDR, fontSize: 7.5, color: "C9D1D9", valign: "middle" });
+    });
+
+    // row backgrounds + left text
+    rowsAll.forEach((r, i) => {
+      const y = ROWSY + i * rowH;
+      if (r.kind === "phase") {
+        s3.addShape("rect", { x: WBSX, y, w: LEFTW, h: rowH, fill: { color: "EEF1F3" } });
+        s3.addShape("rect", { x: TLX, y, w: TLW, h: rowH, fill: { color: "EEF1F3" } });
+        s3.addText(r.wbs, { x: WBSX + 0.03, y, w: 0.3, h: rowH, fontSize: 7.5, color: MUTE, valign: "middle" });
+        s3.addText(r.label, { x: NAMEX, y, w: 2.7, h: rowH, fontSize: 8, bold: true, color: INK, valign: "middle" });
+      } else {
+        const t = r.t;
+        s3.addText(r.wbs, { x: WBSX + 0.03, y, w: 0.3, h: rowH, fontSize: 7, color: MUTE, valign: "middle" });
+        s3.addText(`${t.isMilestone ? "◆ " : ""}${t.name}`, { x: NAMEX + 0.12, y, w: 2.55, h: rowH, fontSize: 7.5, bold: t.isMilestone, color: INK, valign: "middle" });
+        s3.addText(fmtShort(t.startDate), { x: STARTX, y, w: 0.6, h: rowH, fontSize: 7, color: MUTE, valign: "middle" });
+        s3.addText(fmtShort(t.dueDate ?? t.startDate), { x: DUEX, y, w: 0.6, h: rowH, fontSize: 7, color: MUTE, valign: "middle" });
+      }
+    });
+
+    // gridlines over the timeline + left/timeline divider
+    const gridH = rowsAll.length * rowH;
+    months.forEach((mm) => s3.addShape("line", { x: xOf(mm), y: ROWSY, w: 0, h: gridH, line: { color: "E8ECEF", width: 0.5 } }));
+    s3.addShape("line", { x: TLX, y: TOP, w: 0, h: HDR + gridH, line: { color: LINE, width: 0.75 } });
+
+    // bars / diamonds
+    rowsAll.forEach((r, i) => {
+      const cy = ROWSY + i * rowH + rowH / 2;
+      if (r.kind === "phase") {
+        if (!Number.isNaN(r.s) && !Number.isNaN(r.e)) {
+          const bx = xOf(r.s), bw = Math.max(0.06, xOf(r.e) - bx);
+          s3.addShape("roundRect", { x: bx, y: cy - 0.045, w: bw, h: 0.09, rectRadius: 0.02, fill: { color: "DDE2E6" } });
+          if (r.progress > 0) s3.addShape("roundRect", { x: bx, y: cy - 0.045, w: Math.max(0.03, (bw * r.progress) / 100), h: 0.09, rectRadius: 0.02, fill: { color: r.progress >= 100 ? STATUS_HEX.COMPLETED : "3B6EA8" } });
+        }
+      } else {
+        const t = r.t;
+        const s = t.startDate?.getTime(); const e = (t.dueDate ?? t.startDate)?.getTime();
+        if (t.isMilestone && e != null) {
+          s3.addShape("diamond", { x: xOf(e) - 0.055, y: cy - 0.055, w: 0.11, h: 0.11, fill: { color: BRASS } });
+          s3.addText(fmtShort(new Date(e)), { x: xOf(e) + 0.08, y: cy - 0.09, w: 0.8, h: 0.18, fontSize: 6.5, bold: true, color: INK, valign: "middle" });
+        } else if (s != null && e != null) {
+          const bx = xOf(s), bw = Math.max(0.06, xOf(e) - bx);
+          s3.addShape("roundRect", { x: bx, y: cy - 0.055, w: bw, h: 0.11, rectRadius: 0.02, fill: { color: "E6EAEE" } });
+          if (t.progress > 0) s3.addShape("roundRect", { x: bx, y: cy - 0.055, w: Math.max(0.03, (bw * t.progress) / 100), h: 0.11, rectRadius: 0.02, fill: { color: STATUS_HEX[deriveStatus(t.progress, t.status)] } });
+        }
+      }
+    });
+    if (flat.length > 30) s3.addText(`+ ${flat.length - 30} more rows`, { x: WBSX, y: ROWSY + gridH + 0.05, fontSize: 7.5, italic: true, color: MUTE });
+  }
+  // legend
+  ([["Not started", "NOT_STARTED"], ["In progress", "IN_PROGRESS"], ["Completed", "COMPLETED"], ["Blocked", "BLOCKED"]] as [string, PlanTaskStatus][]).forEach(([label, st], i) => {
+    s3.addShape("rect", { x: 0.6 + i * 1.7, y: 6.9, w: 0.14, h: 0.14, fill: { color: STATUS_HEX[st] } });
+    s3.addText(label, { x: 0.8 + i * 1.7, y: 6.85, w: 1.5, fontSize: 7.5, color: MUTE });
+  });
+  s3.addShape("diamond", { x: 0.6 + 4 * 1.7, y: 6.9, w: 0.13, h: 0.13, fill: { color: BRASS } });
+  s3.addText("Milestone", { x: 0.8 + 4 * 1.7, y: 6.85, w: 1.5, fontSize: 7.5, color: MUTE });
+  footer(s3, 3);
+
+  // ---------------- Slide 4 — Thank you ----------------
+  const s4 = pptx.addSlide();
+  s4.background = { color: INK };
+  s4.addShape("rect", { x: 0.9, y: 3.5, w: 1.2, h: 0.08, fill: { color: BRASS } });
+  s4.addText("Questions & discussion", { x: 0.85, y: 2.6, w: 11.6, fontSize: 34, bold: true, color: WHITE });
+  s4.addText(`${p.manager?.name ?? report.author.name}  ·  ${provider}`, { x: 0.9, y: 3.8, w: 11.5, fontSize: 14, color: "AEB9C4" });
 
   const buf = (await pptx.write({ outputType: "nodebuffer" })) as Buffer;
   const safe = (p.number ?? p.name).replace(/[^\w-]+/g, "_").slice(0, 40);

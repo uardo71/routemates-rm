@@ -53,7 +53,7 @@ export function ReallocateHoursForm({ milestones }: { milestones: Option[] }) {
         </div>
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="hours">Hours to move</Label>
-          <Input id="hours" name="hours" type="number" step="0.5" min="0" required />
+          <Input id="hours" name="hours" type="number" step="any" min="0" required />
         </div>
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="reason">Reason (optional)</Label>

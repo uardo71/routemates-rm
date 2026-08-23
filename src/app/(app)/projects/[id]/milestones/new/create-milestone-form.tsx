@@ -49,7 +49,7 @@ export function CreateMilestoneForm({
         </div>
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="msBudgetHours">Budget hours (optional)</Label>
-          <Input id="msBudgetHours" name="budgetHours" type="number" step="0.5" min="0" />
+          <Input id="msBudgetHours" name="budgetHours" type="number" step="0.01" min="0" />
         </div>
       </div>
       <p className="text-xs text-muted-foreground -mt-1">

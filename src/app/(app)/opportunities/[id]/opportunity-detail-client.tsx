@@ -4,7 +4,7 @@ import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { toast } from "sonner";
-import { PlusIcon, PencilIcon, XIcon, SendIcon, FileTextIcon, ArrowRightIcon } from "lucide-react";
+import { PlusIcon, PencilIcon, XIcon, SendIcon, FileTextIcon, ArrowRightIcon, ArrowLeftRightIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -125,6 +125,9 @@ export type OpportunityDetail = {
   gross: number;
   discountAmount: number;
   net: number;
+  /** Value taken out of other projects' milestones and absorbed into this deal (indication only —
+   *  NOT added to the contract total). Combined/real value = net + Σ amount. */
+  absorbedFrom: { id: string; amount: number; reason: string; milestoneId: string; milestoneName: string; projectId: string; projectName: string }[];
   lines: QuoteLineDTO[];
   revisions: RevisionDTO[];
   documents: { id: string; kind: string; fileName: string; originalName: string }[];
@@ -256,6 +259,47 @@ export function OpportunityDetailClient({
           </CardContent>
         </Card>
       </div>
+
+      {/* Absorbed value — real/combined value of the deal including milestone value moved in from
+          other projects. The absorbed amount is an INDICATION only; it is not part of the contract. */}
+      {detail.absorbedFrom.length > 0 && (() => {
+        const absorbed = detail.absorbedFrom.reduce((s, a) => s + a.amount, 0);
+        return (
+          <Card className="border-primary/40 bg-primary/5">
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <ArrowLeftRightIcon className="size-4 text-primary" /> Real value of the deal
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-3">
+              <div className="flex flex-wrap items-end gap-x-3 gap-y-1">
+                <span className="text-3xl font-semibold tabular-nums text-primary">{formatMoney(detail.net + absorbed, c)}</span>
+                <span className="pb-1 text-sm text-muted-foreground">
+                  = {formatMoney(detail.net, c)} contract <span className="text-primary">+ {formatMoney(absorbed, c)} absorbed</span> from other milestones
+                </span>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                The absorbed value is delivered &amp; billed under another project&apos;s milestone — it is shown here to reflect
+                the deal&apos;s true worth and is <strong>not</strong> added to the contract value carried to the project.
+              </p>
+              <div className="flex flex-col divide-y rounded-md border bg-background">
+                {detail.absorbedFrom.map((a) => (
+                  <div key={a.id} className="flex items-start gap-3 p-2.5 text-sm">
+                    <span className="w-28 shrink-0 text-right font-medium tabular-nums text-primary">+{formatMoney(a.amount, c)}</span>
+                    <div className="min-w-0 flex-1">
+                      <Link href={`/projects/${a.projectId}/milestones/${a.milestoneId}`} className="font-medium text-primary hover:underline">
+                        {a.milestoneName}
+                      </Link>
+                      <span className="text-muted-foreground"> · {a.projectName}</span>
+                      {a.reason && <div className="text-xs text-muted-foreground">{a.reason}</div>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        );
+      })()}
 
       {/* Action bar */}
       {(canManage || canApprove) && detail.stage !== "WON" && detail.stage !== "LOST" && detail.stage !== "CANCELLED" && (
@@ -750,7 +794,7 @@ function AmendmentDialog({
                 </div>
                 <div className="col-span-2 flex flex-col gap-1">
                   <Label className="text-xs text-muted-foreground">Hours</Label>
-                  <Input type="number" step="0.5" min="0" value={l.hours} onChange={(e) => setLine(i, { hours: e.target.value })} />
+                  <Input type="number" step="any" min="0" value={l.hours} onChange={(e) => setLine(i, { hours: e.target.value })} />
                 </div>
                 <div className="col-span-2 flex flex-col gap-1">
                   <Label className="text-xs text-muted-foreground">{rateLabel}</Label>
@@ -873,7 +917,7 @@ function LineDialog({
           <div className="grid grid-cols-2 gap-3">
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="line-hours">Hours</Label>
-              <Input id="line-hours" type="number" step="0.5" min="0" value={hours} onChange={(e) => setHours(e.target.value)} />
+              <Input id="line-hours" type="number" step="any" min="0" value={hours} onChange={(e) => setHours(e.target.value)} />
             </div>
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="line-price">Unit price</Label>

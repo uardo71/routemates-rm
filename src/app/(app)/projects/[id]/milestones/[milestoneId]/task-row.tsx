@@ -156,7 +156,7 @@ export function TaskRow({
       <TableCell>
         <Input
           type="number"
-          step="0.5"
+          step="any"
           min="0"
           value={hours}
           onChange={(e) => setHours(e.target.value)}

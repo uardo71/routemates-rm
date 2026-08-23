@@ -420,7 +420,7 @@ export function PlannerGrid({
                                   <td key={w.key} className={cn("p-1 relative", weekBorderClass(w.key))}>
                                     <Input
                                       type="number"
-                                      step="0.5"
+                                      step="any"
                                       min="0"
                                       className={cn("h-8 text-center", pendingRemove && "border-destructive bg-destructive/10")}
                                       value={levelValue || ""}
@@ -477,7 +477,7 @@ export function PlannerGrid({
                                       <td key={w.key} className={cn("p-1", weekBorderClass(w.key))}>
                                         <Input
                                           type="number"
-                                          step="0.5"
+                                          step="any"
                                           min="0"
                                           className="h-8 text-center"
                                           value={value || ""}

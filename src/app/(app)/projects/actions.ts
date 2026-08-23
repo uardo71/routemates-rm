@@ -7,7 +7,6 @@ import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/session";
 import { canManageProject } from "@/lib/permissions";
 import { nextProjectNumber } from "@/lib/numbering";
-import { applyPlaybookToProject } from "@/lib/playbook";
 import { MAX_RECEIPT_SIZE_BYTES, isAllowedReceiptType, saveReceiptFile, deleteReceiptFile } from "@/lib/receipt-storage";
 
 const CreateProjectSchema = z.object({
@@ -80,7 +79,6 @@ export async function createProjectAction(_prevState: string | undefined, formDa
       endCustomer: data.endCustomer?.trim() || null,
     },
   });
-  await applyPlaybookToProject(user.companyId, project.id, project.startDate);
 
   revalidatePath("/projects");
   redirect(`/projects/${project.id}`);

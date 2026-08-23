@@ -51,7 +51,7 @@ export function EditAssignmentForm({
         )}
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="allocatedHours">Allocated hours</Label>
-          <Input id="allocatedHours" name="allocatedHours" type="number" step="0.5" min="0" defaultValue={assignment.allocatedHours ?? undefined} />
+          <Input id="allocatedHours" name="allocatedHours" type="number" step="any" min="0" defaultValue={assignment.allocatedHours ?? undefined} />
         </div>
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="startDate">Start date</Label>

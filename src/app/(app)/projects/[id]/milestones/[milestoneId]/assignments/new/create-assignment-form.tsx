@@ -53,7 +53,7 @@ export function CreateAssignmentForm({
         )}
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="asgAllocatedHours">Allocated hours (optional)</Label>
-          <Input id="asgAllocatedHours" name="allocatedHours" type="number" step="0.5" min="0" />
+          <Input id="asgAllocatedHours" name="allocatedHours" type="number" step="any" min="0" />
         </div>
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="asgStartDate">Start date</Label>

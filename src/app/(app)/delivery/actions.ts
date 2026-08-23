@@ -71,6 +71,30 @@ export async function deleteEngagementAction(id: string): Promise<{ error?: stri
   return {};
 }
 
+// Move an engagement up/down in the switcher by swapping sortOrder with its adjacent sibling.
+export async function reorderEngagementAction(id: string, direction: "up" | "down"): Promise<{ error?: string }> {
+  const eng = await prisma.engagement.findUnique({ where: { id }, select: { projectId: true, sortOrder: true } });
+  if (!eng) return { error: "Engagement not found." };
+  const ctx = await assertManage(eng.projectId);
+  if (ctx.error) return { error: ctx.error };
+  const siblings = await prisma.engagement.findMany({
+    where: { projectId: eng.projectId },
+    orderBy: { sortOrder: "asc" },
+    select: { id: true, sortOrder: true },
+  });
+  const idx = siblings.findIndex((s) => s.id === id);
+  const swapIdx = direction === "up" ? idx - 1 : idx + 1;
+  if (swapIdx < 0 || swapIdx >= siblings.length) return {}; // already at the edge — no-op
+  const a = siblings[idx];
+  const b = siblings[swapIdx];
+  await prisma.$transaction([
+    prisma.engagement.update({ where: { id: a.id }, data: { sortOrder: b.sortOrder } }),
+    prisma.engagement.update({ where: { id: b.id }, data: { sortOrder: a.sortOrder } }),
+  ]);
+  revalidatePath(`/delivery/${eng.projectId}`);
+  return {};
+}
+
 // ---------- status reports ----------
 
 const RAG = z.enum(["GREEN", "AMBER", "RED"]);
@@ -184,64 +208,6 @@ export async function deleteStatusReportAction(id: string): Promise<{ error?: st
   return {};
 }
 
-// ---------- checklist ----------
-
-export async function toggleChecklistItemAction(id: string, done: boolean): Promise<{ error?: string }> {
-  const item = await prisma.projectChecklistItem.findUnique({ where: { id }, select: { projectId: true } });
-  if (!item) return { error: "Item not found." };
-  const ctx = await assertManage(item.projectId);
-  if (ctx.error) return { error: ctx.error };
-  await prisma.projectChecklistItem.update({
-    where: { id },
-    data: { done, completedAt: done ? new Date() : null, completedById: done ? ctx.userId! : null },
-  });
-  revalidatePath(`/delivery/${item.projectId}`);
-  revalidatePath("/delivery");
-  return {};
-}
-
-const AddItemSchema = z.object({
-  projectId: z.string().min(1),
-  phase: z.string().min(1).max(50),
-  title: z.string().trim().min(1, "Title is required.").max(300),
-  dueDate: z.string().optional().nullable(),
-});
-export async function addChecklistItemAction(input: z.infer<typeof AddItemSchema>): Promise<{ error?: string }> {
-  const parsed = AddItemSchema.safeParse(input);
-  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Invalid input." };
-  const ctx = await assertManage(parsed.data.projectId);
-  if (ctx.error) return { error: ctx.error };
-  const max = await prisma.projectChecklistItem.aggregate({ where: { projectId: parsed.data.projectId }, _max: { sortOrder: true } });
-  await prisma.projectChecklistItem.create({
-    data: { projectId: parsed.data.projectId, phase: parsed.data.phase, title: parsed.data.title, dueDate: toUtc(parsed.data.dueDate), sortOrder: (max._max.sortOrder ?? 0) + 10 },
-  });
-  revalidatePath(`/delivery/${parsed.data.projectId}`);
-  return {};
-}
-
-export async function updateChecklistItemAction(input: { id: string; title?: string; dueDate?: string | null }): Promise<{ error?: string }> {
-  const item = await prisma.projectChecklistItem.findUnique({ where: { id: input.id }, select: { projectId: true } });
-  if (!item) return { error: "Item not found." };
-  const ctx = await assertManage(item.projectId);
-  if (ctx.error) return { error: ctx.error };
-  await prisma.projectChecklistItem.update({
-    where: { id: input.id },
-    data: { ...(input.title != null ? { title: input.title.trim() } : {}), ...(input.dueDate !== undefined ? { dueDate: toUtc(input.dueDate) } : {}) },
-  });
-  revalidatePath(`/delivery/${item.projectId}`);
-  return {};
-}
-
-export async function deleteChecklistItemAction(id: string): Promise<{ error?: string }> {
-  const item = await prisma.projectChecklistItem.findUnique({ where: { id }, select: { projectId: true } });
-  if (!item) return { error: "Item not found." };
-  const ctx = await assertManage(item.projectId);
-  if (ctx.error) return { error: ctx.error };
-  await prisma.projectChecklistItem.delete({ where: { id } });
-  revalidatePath(`/delivery/${item.projectId}`);
-  return {};
-}
-
 // ---------- RAID ----------
 
 const RaidSchema = z.object({
@@ -314,6 +280,12 @@ const MinutesActionSchema = z.object({
   dueDate: z.string().optional().nullable(),
   done: z.boolean().optional(),
 });
+const MinutesParticipantSchema = z.object({
+  name: z.string().trim().min(1).max(200),
+  company: z.string().max(200).optional().nullable(),
+  role: z.string().max(200).optional().nullable(),
+  group: z.string().max(200).optional().nullable(),
+});
 const MinutesSchema = z.object({
   projectId: z.string().min(1),
   engagementId: z.string().optional().nullable(),
@@ -321,15 +293,32 @@ const MinutesSchema = z.object({
   title: z.string().trim().min(1, "Title is required.").max(300),
   attendees: z.string().max(2000).optional().nullable(),
   notes: z.string().max(8000).optional().nullable(),
+  timeFrom: z.string().max(20).optional().nullable(),
+  timeTo: z.string().max(20).optional().nullable(),
+  location: z.string().max(200).optional().nullable(),
+  minuteTaker: z.string().max(200).optional().nullable(),
+  agendaTopic: z.string().max(1000).optional().nullable(),
+  agendaWho: z.string().max(200).optional().nullable(),
+  agendaDuration: z.string().max(50).optional().nullable(),
+  participants: z.array(MinutesParticipantSchema).optional(),
   actions: z.array(MinutesActionSchema).optional(),
 });
 export type MinutesInput = z.infer<typeof MinutesSchema>;
 
 function minutesData(d: MinutesInput) {
-  return { date: toUtc(d.date)!, title: d.title.trim(), attendees: d.attendees?.trim() || null, notes: d.notes?.trim() || null };
+  return {
+    date: toUtc(d.date)!, title: d.title.trim(),
+    attendees: d.attendees?.trim() || null, notes: d.notes?.trim() || null,
+    timeFrom: d.timeFrom?.trim() || null, timeTo: d.timeTo?.trim() || null,
+    location: d.location?.trim() || null, minuteTaker: d.minuteTaker?.trim() || null,
+    agendaTopic: d.agendaTopic?.trim() || null, agendaWho: d.agendaWho?.trim() || null, agendaDuration: d.agendaDuration?.trim() || null,
+  };
 }
 function minutesActionCreate(d: MinutesInput) {
   return (d.actions ?? []).map((a, i) => ({ description: a.description.trim(), owner: a.owner?.trim() || null, dueDate: toUtc(a.dueDate), done: a.done ?? false, sortOrder: i * 10 }));
+}
+function participantsCreate(d: MinutesInput) {
+  return (d.participants ?? []).filter((p) => p.name.trim()).map((p, i) => ({ name: p.name.trim(), company: p.company?.trim() || null, role: p.role?.trim() || null, group: p.group?.trim() || null, sortOrder: i * 10 }));
 }
 
 export async function createMeetingAction(input: MinutesInput): Promise<{ error?: string; id?: string }> {
@@ -339,7 +328,7 @@ export async function createMeetingAction(input: MinutesInput): Promise<{ error?
   if (ctx.error) return { error: ctx.error };
   const engagementId = await resolveEngagement(parsed.data.projectId, parsed.data.engagementId);
   const created = await prisma.meetingMinutes.create({
-    data: { companyId: ctx.companyId!, projectId: parsed.data.projectId, createdById: ctx.userId!, engagementId, ...minutesData(parsed.data), actions: { create: minutesActionCreate(parsed.data) } },
+    data: { companyId: ctx.companyId!, projectId: parsed.data.projectId, createdById: ctx.userId!, engagementId, ...minutesData(parsed.data), actions: { create: minutesActionCreate(parsed.data) }, participants: { create: participantsCreate(parsed.data) } },
   });
   revalidatePath(`/delivery/${parsed.data.projectId}`);
   return { id: created.id };
@@ -353,9 +342,11 @@ export async function updateMeetingAction(input: z.infer<typeof MinutesUpdateSch
   if (!existing) return { error: "Minutes not found." };
   const ctx = await assertManage(existing.projectId);
   if (ctx.error) return { error: ctx.error };
+  const engId = await resolveEngagement(existing.projectId, parsed.data.engagementId);
   await prisma.$transaction([
     prisma.meetingActionItem.deleteMany({ where: { minutesId: parsed.data.id } }),
-    prisma.meetingMinutes.update({ where: { id: parsed.data.id }, data: { ...minutesData(parsed.data), engagementId: await resolveEngagement(existing.projectId, parsed.data.engagementId), actions: { create: minutesActionCreate(parsed.data) } } }),
+    prisma.meetingParticipant.deleteMany({ where: { minutesId: parsed.data.id } }),
+    prisma.meetingMinutes.update({ where: { id: parsed.data.id }, data: { ...minutesData(parsed.data), engagementId: engId, actions: { create: minutesActionCreate(parsed.data) }, participants: { create: participantsCreate(parsed.data) } } }),
   ]);
   revalidatePath(`/delivery/${existing.projectId}`);
   return {};
@@ -473,23 +464,39 @@ export async function deletePlanTaskAction(id: string): Promise<{ error?: string
 // ready baseline to adjust and share.
 // Standard SAP delivery plan with a baseline schedule (day offsets from the project start), so the
 // seeded plan renders as a real Gantt out of the box. `dur` 0 = a milestone/gate.
+// Standard delivery baseline aligned to the Tungsten Drive / KDM phases used across the PS SOPs:
+// Initiation → Design → Build → Validate → Realize, with a cross-cutting Governance stream
+// (status reporting, steering, PS→TS transition and closure/CSAT). Adjust after seeding.
 const DEFAULT_PLAN: { phase: string; name: string; milestone?: boolean; start: number; dur: number }[] = [
-  { phase: "Mobilize", name: "Final scoping & SoW signature", milestone: true, start: 0, dur: 0 },
-  { phase: "Mobilize", name: "Project kickoff", start: 3, dur: 2 },
-  { phase: "Analysis & Design", name: "Analysis workshop", start: 5, dur: 5 },
-  { phase: "Analysis & Design", name: "Solution Design Document", start: 10, dur: 14 },
-  { phase: "Analysis & Design", name: "Solution Design acceptance", milestone: true, start: 25, dur: 0 },
-  { phase: "Build", name: "Setup DEV environment", start: 25, dur: 5 },
-  { phase: "Build", name: "Configure the solution", start: 30, dur: 15 },
-  { phase: "Build", name: "Custom adjustments", start: 40, dur: 15 },
-  { phase: "Build", name: "Integration test", start: 55, dur: 10 },
-  { phase: "Validate", name: "User training", start: 60, dur: 5 },
-  { phase: "Validate", name: "User Acceptance Test (UAT)", start: 65, dur: 10 },
-  { phase: "Validate", name: "Quality ready", milestone: true, start: 75, dur: 0 },
-  { phase: "Deploy & Golive", name: "Deployment to Production", start: 75, dur: 5 },
-  { phase: "Deploy & Golive", name: "Go-live", milestone: true, start: 80, dur: 0 },
-  { phase: "Deploy & Golive", name: "Golive support / Hypercare", start: 80, dur: 15 },
-  { phase: "Deploy & Golive", name: "Project closure", milestone: true, start: 95, dur: 0 },
+  // Initiation (Mobilize)
+  { phase: "Initiation", name: "SoW signed & PO received", milestone: true, start: 0, dur: 0 },
+  { phase: "Initiation", name: "Project kickoff", start: 2, dur: 2 },
+  { phase: "Initiation", name: "Project governance plan", start: 2, dur: 5 },
+  { phase: "Initiation", name: "Environments & access setup", start: 4, dur: 6 },
+  // Design
+  { phase: "Design", name: "Discovery workshops", start: 5, dur: 8 },
+  { phase: "Design", name: "Solution Design Document (SDD)", start: 12, dur: 12 },
+  { phase: "Design", name: "Design sign-off", milestone: true, start: 26, dur: 0 },
+  // Build
+  { phase: "Build", name: "Solution configuration", start: 26, dur: 18 },
+  { phase: "Build", name: "Custom development", start: 34, dur: 16 },
+  { phase: "Build", name: "Unit & string testing", start: 46, dur: 8 },
+  { phase: "Build", name: "System integration test (SIT)", start: 52, dur: 10 },
+  // Validate
+  { phase: "Validate", name: "UAT preparation & test scripts", start: 60, dur: 6 },
+  { phase: "Validate", name: "Key-user training", start: 62, dur: 5 },
+  { phase: "Validate", name: "User Acceptance Test (UAT)", start: 66, dur: 12 },
+  { phase: "Validate", name: "UAT sign-off / Quality ready", milestone: true, start: 78, dur: 0 },
+  // Realize (Deploy & Go-live)
+  { phase: "Realize", name: "Cutover plan & readiness", start: 74, dur: 8 },
+  { phase: "Realize", name: "Deploy to production", start: 82, dur: 4 },
+  { phase: "Realize", name: "Go-live", milestone: true, start: 86, dur: 0 },
+  { phase: "Realize", name: "Hypercare", start: 86, dur: 15 },
+  // Governance (runs across the project)
+  { phase: "Governance", name: "Weekly status reporting", start: 2, dur: 99 },
+  { phase: "Governance", name: "Steering committee (bi-weekly)", start: 5, dur: 96 },
+  { phase: "Governance", name: "PS → TS transition", milestone: true, start: 101, dur: 0 },
+  { phase: "Governance", name: "Project closure & CSAT", milestone: true, start: 103, dur: 0 },
 ];
 
 export async function seedDefaultPlanAction(projectId: string, engagementIdInput?: string | null): Promise<{ error?: string }> {

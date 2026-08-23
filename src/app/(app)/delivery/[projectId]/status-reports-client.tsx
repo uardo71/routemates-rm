@@ -3,13 +3,13 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { PlusIcon, PencilIcon, Trash2Icon, DownloadIcon, SendIcon, XIcon, PresentationIcon } from "lucide-react";
+import { PlusIcon, PencilIcon, Trash2Icon, DownloadIcon, SendIcon, XIcon, PresentationIcon, ChevronDownIcon, SearchIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
@@ -37,6 +37,21 @@ export type ReportRow = {
 const RAGS: RagStatus[] = ["GREEN", "AMBER", "RED"];
 const todayIso = () => new Date().toISOString().slice(0, 10);
 
+const RAG_STROKE: Record<RagStatus, string> = { GREEN: "stroke-emerald-500", AMBER: "stroke-amber-500", RED: "stroke-rose-500" };
+function DeckRing({ pct, rag }: { pct: number; rag: RagStatus }) {
+  const r = 18, c = 2 * Math.PI * r;
+  const off = c * (1 - Math.max(0, Math.min(100, pct)) / 100);
+  return (
+    <div className="relative size-14 shrink-0">
+      <svg viewBox="0 0 48 48" className="size-14 -rotate-90">
+        <circle cx="24" cy="24" r={r} fill="none" strokeWidth="5" className="stroke-muted" />
+        <circle cx="24" cy="24" r={r} fill="none" strokeWidth="5" strokeLinecap="round" className={RAG_STROKE[rag]} strokeDasharray={c} strokeDashoffset={off} />
+      </svg>
+      <span className="absolute inset-0 grid place-items-center font-mono text-sm font-bold">{pct}%</span>
+    </div>
+  );
+}
+
 type DraftAction = { description: string; owner: string; dueDate: string; critical: boolean };
 type Draft = {
   id?: string;
@@ -55,6 +70,10 @@ export function StatusReportsClient({ projectId, engagementId, reports }: { proj
   const router = useRouter();
   const [pending, start] = useTransition();
   const [draft, setDraft] = useState<Draft | null>(null);
+  const [q, setQ] = useState("");
+  const [open, setOpen] = useState<Set<string>>(() => new Set(reports[0] ? [reports[0].id] : []));
+  const toggle = (id: string) => setOpen((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const shown = reports.filter((r) => !q.trim() || `${r.reportDate} ${SEVERITY_LABEL[r.overallRag]} ${r.summary ?? ""} ${r.authorName}`.toLowerCase().includes(q.trim().toLowerCase()));
 
   function save() {
     if (!draft) return;
@@ -94,62 +113,94 @@ export function StatusReportsClient({ projectId, engagementId, reports }: { proj
   const removeAction = (i: number) => setDraft((d) => (d ? { ...d, actions: d.actions.filter((_, idx) => idx !== i) } : d));
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">Build the status update, keep the history, and export a customer-ready PowerPoint (or Excel).</p>
+    <div className="flex flex-col gap-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="relative">
+          <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search status updates…" className="w-64 pl-8" />
+        </div>
         <Button size="sm" onClick={() => setDraft(emptyDraft())}><PlusIcon className="size-3.5" /> New status update</Button>
       </div>
 
       {reports.length === 0 && (
-        <Card><CardContent className="py-10 text-center text-muted-foreground">No status updates yet — click <span className="font-medium">New status update</span>.</CardContent></Card>
+        <Card><CardContent className="py-12 text-center text-muted-foreground">No status updates yet — click <span className="font-medium text-foreground">New status update</span> to build the first customer-ready report.</CardContent></Card>
       )}
+      {reports.length > 0 && shown.length === 0 && <Card><CardContent className="py-8 text-center text-muted-foreground">No updates match “{q}”.</CardContent></Card>}
 
-      {reports.map((r) => (
-        <Card key={r.id}>
-          <CardHeader className="flex flex-row items-start justify-between gap-3">
-            <div className="flex flex-col gap-1.5">
-              <CardTitle className="text-base flex items-center gap-2 flex-wrap">
-                <span className={cn("inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium", RAG_PILL[r.overallRag])}><span className={cn("size-2 rounded-full", RAG_DOT[r.overallRag])} /> {SEVERITY_LABEL[r.overallRag]}</span>
-                {r.progressPercent != null && <span className="text-sm font-normal">Progress {r.progressPercent}%</span>}
-                <span className="text-sm font-normal text-muted-foreground">· {r.reportDate}{r.cadence ? ` · ${CADENCE_LABEL[r.cadence] ?? r.cadence}` : ""}</span>
-                {r.sentAt ? <Badge variant="outline" className="text-[10px]">Sent {r.sentAt}</Badge> : <Badge variant="secondary" className="text-[10px]">Draft</Badge>}
-              </CardTitle>
-              {r.progressPercent != null && (
-                <div className="h-1.5 w-40 rounded-full bg-muted overflow-hidden"><div className="h-full rounded-full bg-primary" style={{ width: `${r.progressPercent}%` }} /></div>
-              )}
-              <div className="text-xs text-muted-foreground">{r.periodStart && r.periodEnd ? `Period ${r.periodStart} – ${r.periodEnd} · ` : ""}by {r.authorName}</div>
+      {shown.map((r) => {
+        const isOpen = open.has(r.id);
+        return (
+        <Card key={r.id} className="overflow-hidden p-0 gap-0">
+          {/* header band (click to expand) */}
+          <div className={cn("flex flex-wrap items-center gap-4 px-5 py-3.5 cursor-pointer hover:bg-muted/40", isOpen && "border-b bg-muted/25")} onClick={() => toggle(r.id)}>
+            <ChevronDownIcon className={cn("size-4 shrink-0 text-muted-foreground transition-transform", isOpen && "rotate-180")} />
+            <DeckRing pct={r.progressPercent ?? 0} rag={r.overallRag} />
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className={cn("inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold", RAG_PILL[r.overallRag])}><span className={cn("size-2 rounded-full", RAG_DOT[r.overallRag])} /> {SEVERITY_LABEL[r.overallRag]}</span>
+                {r.id === reports[0]?.id && <Badge variant="secondary" className="text-[10px]">Latest</Badge>}
+                {r.sentAt ? <Badge variant="outline" className="gap-1 text-[10px]"><SendIcon className="size-2.5" /> Sent {r.sentAt}</Badge> : <Badge variant="secondary" className="text-[10px]">Draft — not sent</Badge>}
+              </div>
+              <div className="mt-1.5 text-xs text-muted-foreground">
+                {r.reportDate}{r.cadence ? ` · ${CADENCE_LABEL[r.cadence] ?? r.cadence}` : ""}
+                {r.periodStart && r.periodEnd ? ` · period ${r.periodStart} – ${r.periodEnd}` : ""} · by {r.authorName}
+              </div>
             </div>
-            <div className="flex items-center gap-1.5 shrink-0">
+            <div className="flex items-center gap-1.5 shrink-0" onClick={(e) => e.stopPropagation()}>
               <a href={`/api/status-reports/${r.id}/pptx`}><Button size="sm" variant="outline"><PresentationIcon className="size-3.5" /> PPT</Button></a>
               <a href={`/api/status-reports/${r.id}/export`}><Button size="sm" variant="outline"><DownloadIcon className="size-3.5" /> Excel</Button></a>
-              {!r.sentAt && <Button size="sm" variant="outline" onClick={() => markSent(r.id)} disabled={pending}><SendIcon className="size-3.5" /></Button>}
-              <Button size="sm" variant="outline" onClick={() => edit(r)}><PencilIcon className="size-3.5" /></Button>
-              <Button size="sm" variant="outline" className="text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => remove(r.id)} disabled={pending}><Trash2Icon className="size-3.5" /></Button>
+              {!r.sentAt && <Button size="sm" variant="outline" onClick={() => markSent(r.id)} disabled={pending} title="Mark as sent to customer"><SendIcon className="size-3.5" /></Button>}
+              <Button size="sm" variant="outline" onClick={() => edit(r)} title="Edit"><PencilIcon className="size-3.5" /></Button>
+              <Button size="sm" variant="outline" className="text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => remove(r.id)} disabled={pending} title="Delete"><Trash2Icon className="size-3.5" /></Button>
             </div>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-3 text-sm">
-            {r.summary && <div><span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Current status</span><p className="whitespace-pre-wrap">{r.summary}</p></div>}
-            {r.actions.length > 0 && (
-              <div>
-                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Next actions</span>
-                <ul className="mt-1 flex flex-col gap-1">
+          </div>
+
+          {/* body — three deck columns */}
+          {isOpen && (
+          <div className="grid divide-y md:grid-cols-3 md:divide-x md:divide-y-0">
+            <section className="flex flex-col gap-2 p-5">
+              <h4 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Current status</h4>
+              {r.summary ? <p className="text-sm leading-relaxed whitespace-pre-wrap">{r.summary}</p> : <p className="text-sm text-muted-foreground/60">—</p>}
+            </section>
+
+            <section className="flex flex-col gap-2 p-5">
+              <h4 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Next actions</h4>
+              {r.actions.length > 0 ? (
+                <ul className="flex flex-col gap-2">
                   {r.actions.map((a, i) => (
-                    <li key={i} className="flex items-start gap-2">
-                      <span className="mt-1.5 size-1.5 rounded-full bg-muted-foreground shrink-0" />
-                      <span>{a.description}{a.owner ? ` — ${a.owner}` : ""}{a.dueDate ? ` (by ${a.dueDate})` : ""} {a.critical && <Badge variant="destructive" className="ml-1 text-[10px]">Critical</Badge>}</span>
+                    <li key={i} className="flex items-start gap-2.5 text-sm">
+                      <span className={cn("mt-0.5 grid size-4 shrink-0 place-items-center rounded-[3px] border", a.critical ? "border-rose-400 bg-rose-500/10" : "border-muted-foreground/30")} />
+                      <span className="min-w-0">
+                        <span className="leading-snug">{a.description}</span>
+                        {a.critical && <span className="ml-1.5 rounded-full bg-rose-500/12 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-rose-600 dark:text-rose-400">Critical</span>}
+                        {(a.owner || a.dueDate) && <span className="mt-0.5 block text-xs text-muted-foreground">{a.owner}{a.owner && a.dueDate ? " · " : ""}{a.dueDate ? `due ${a.dueDate}` : ""}</span>}
+                      </span>
                     </li>
                   ))}
                 </ul>
+              ) : <p className="text-sm text-muted-foreground/60">—</p>}
+            </section>
+
+            <section className="flex flex-col gap-3 p-5">
+              <div className="flex flex-col gap-2">
+                <h4 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Corrective actions</h4>
+                {r.correctiveActions ? <p className="text-sm leading-relaxed whitespace-pre-wrap">{r.correctiveActions}</p> : <p className="text-sm text-muted-foreground/60">—</p>}
               </div>
-            )}
-            {r.correctiveActions && <div><span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Corrective actions</span><p className="whitespace-pre-wrap">{r.correctiveActions}</p></div>}
-            {r.milestoneNotes && <div><span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Plan / milestones</span><p className="whitespace-pre-wrap">{r.milestoneNotes}</p></div>}
-          </CardContent>
+              {r.milestoneNotes && (
+                <div className="flex flex-col gap-2 border-t pt-3">
+                  <h4 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Plan / milestones</h4>
+                  <p className="text-sm leading-relaxed whitespace-pre-wrap">{r.milestoneNotes}</p>
+                </div>
+              )}
+            </section>
+          </div>
+          )}
         </Card>
-      ))}
+        );
+      })}
 
       {draft && (
-        <Dialog open onOpenChange={(v) => !v && setDraft(null)}>
+        <Dialog open disablePointerDismissal onOpenChange={(v) => !v && setDraft(null)}>
           <DialogContent className="sm:max-w-2xl max-h-[88vh] flex flex-col overflow-hidden">
             <DialogHeader><DialogTitle>{draft.id ? "Edit status update" : "New status update"}</DialogTitle></DialogHeader>
             <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-3 pr-1">

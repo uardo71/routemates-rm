@@ -75,7 +75,7 @@ export function CreateProjectForm({
         </div>
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="budgetHours">Budget pool (hours, optional)</Label>
-          <Input id="budgetHours" name="budgetHours" type="number" step="0.5" min="0" />
+          <Input id="budgetHours" name="budgetHours" type="number" step="0.01" min="0" />
         </div>
       </div>
       <div className="grid grid-cols-3 gap-3">

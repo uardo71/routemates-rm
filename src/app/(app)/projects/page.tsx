@@ -77,8 +77,10 @@ export default async function ProjectsPage({
   const usedMap = new Map(hoursByMilestone.map((h) => [h.milestoneId, Number(h._sum.hours ?? 0)]));
 
   const rows = projects.map((p) => {
-    const budgetHours = p.milestones.reduce((sum, m) => sum + Number(m.budgetHours ?? 0), 0);
-    const usedHours = p.milestones.reduce((sum, m) => sum + (usedMap.get(m.id) ?? 0), 0);
+    // Round the roll-ups — summing repeating-decimal even-split budget hours otherwise shows float
+    // noise like 2959.9999999999986h.
+    const budgetHours = Math.round(p.milestones.reduce((sum, m) => sum + Number(m.budgetHours ?? 0), 0) * 100) / 100;
+    const usedHours = Math.round(p.milestones.reduce((sum, m) => sum + (usedMap.get(m.id) ?? 0), 0) * 100) / 100;
     const teamSize = p.milestones.reduce((sum, m) => sum + m._count.assignments, 0);
     return { project: p, budgetHours, usedHours, teamSize };
   });

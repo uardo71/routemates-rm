@@ -1,24 +1,34 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { format, differenceInCalendarDays } from "date-fns";
+import { TriangleAlertIcon, CalendarIcon, MessageSquareIcon, DiamondIcon, RocketIcon, ClipboardCheckIcon } from "lucide-react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { InitialsAvatar } from "@/components/initials-avatar";
 import { LinkButton } from "@/components/link-button";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/session";
 import { canManageProject } from "@/lib/permissions";
+import { cn } from "@/lib/utils";
+import { RAG_DOT, RAG_LABEL, RAG_PILL } from "@/lib/delivery";
+import { cadenceDays } from "@/lib/delivery-day";
+import type { RagStatus } from "@prisma/client";
 import { StatusReportsClient, type ReportRow } from "./status-reports-client";
-import { ChecklistClient, type ChecklistRow } from "./checklist-client";
-import { RaidClient, type RaidRow } from "./raid-client";
+import { type RaidRow } from "./raid-client";
 import { MinutesClient, type MinutesRow } from "./minutes-client";
 import { DocumentsLibraryClient, type LibraryDoc } from "./documents-client";
 import { PlanClient, type PlanRow } from "./plan-client";
 import { EngagementBar } from "./engagement-bar";
+import { CockpitShell, type CockpitTab } from "./cockpit-shell";
 
 const iso = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : null);
 
-export default async function DeliveryProjectPage({ params, searchParams }: { params: Promise<{ projectId: string }>; searchParams: Promise<{ eng?: string }> }) {
+const COCKPIT_TABS = ["overview", "status", "plan", "minutes", "documents"];
+
+export default async function DeliveryProjectPage({ params, searchParams }: { params: Promise<{ projectId: string }>; searchParams: Promise<{ eng?: string; tab?: string; from?: string }> }) {
   const { projectId } = await params;
-  const { eng } = await searchParams;
+  const { eng, tab, from } = await searchParams;
+  const backHref = from === "overview" ? "/delivery?view=workspaces" : "/delivery";
+  const activeTab = COCKPIT_TABS.includes(tab ?? "") ? (tab as string) : "overview";
   const user = await requirePermission("delivery:manage");
   if (!(await canManageProject(user, projectId))) notFound();
 
@@ -28,12 +38,13 @@ export default async function DeliveryProjectPage({ params, searchParams }: { pa
       client: { select: { name: true } },
       manager: { select: { name: true } },
       engagements: { orderBy: { sortOrder: "asc" }, select: { id: true, name: true } },
-      checklistItems: { orderBy: { sortOrder: "asc" } },
       statusReports: { orderBy: { reportDate: "desc" }, include: { author: { select: { name: true } }, actions: { orderBy: { sortOrder: "asc" } } } },
       raidItems: { orderBy: [{ status: "asc" }, { createdAt: "desc" }], include: { createdBy: { select: { name: true } } } },
-      meetings: { orderBy: { date: "desc" }, include: { createdBy: { select: { name: true } }, actions: { orderBy: { sortOrder: "asc" } } } },
+      meetings: { orderBy: { date: "desc" }, include: { createdBy: { select: { name: true } }, actions: { orderBy: { sortOrder: "asc" } }, participants: { orderBy: { sortOrder: "asc" } } } },
       documents: { orderBy: { uploadedAt: "desc" }, include: { uploadedBy: { select: { name: true } } } },
       planTasks: { orderBy: { sortOrder: "asc" } },
+      cutoverTasks: { select: { id: true, parentId: true, status: true } },
+      _count: { select: { uatTestCases: true } },
     },
   });
   if (!project) notFound();
@@ -41,11 +52,6 @@ export default async function DeliveryProjectPage({ params, searchParams }: { pa
   // Selected engagement (null = "Overall", i.e. project-level governance).
   const selectedEng = project.engagements.some((e) => e.id === eng) ? (eng as string) : null;
   const inEng = <T extends { engagementId: string | null }>(x: T) => (x.engagementId ?? null) === selectedEng;
-
-  // Checklist is project-level (the delivery playbook applies to the whole project).
-  const checklist: ChecklistRow[] = project.checklistItems.map((c) => ({
-    id: c.id, phase: c.phase, title: c.title, done: c.done, dueDate: iso(c.dueDate), completedByName: null, completedAt: iso(c.completedAt),
-  }));
 
   const reports: ReportRow[] = project.statusReports.filter(inEng).map((r) => ({
     id: r.id, reportDate: iso(r.reportDate)!, periodStart: iso(r.periodStart), periodEnd: iso(r.periodEnd),
@@ -62,6 +68,9 @@ export default async function DeliveryProjectPage({ params, searchParams }: { pa
 
   const minutes: MinutesRow[] = project.meetings.filter(inEng).map((m) => ({
     id: m.id, date: iso(m.date)!, title: m.title, attendees: m.attendees, notes: m.notes, createdByName: m.createdBy.name,
+    timeFrom: m.timeFrom, timeTo: m.timeTo, location: m.location, minuteTaker: m.minuteTaker,
+    agendaTopic: m.agendaTopic, agendaWho: m.agendaWho, agendaDuration: m.agendaDuration,
+    participants: m.participants.map((p) => ({ name: p.name, company: p.company, role: p.role, group: p.group })),
     actions: m.actions.map((a) => ({ description: a.description, owner: a.owner, dueDate: iso(a.dueDate), done: a.done })),
   }));
   const docs: LibraryDoc[] = project.documents.filter(inEng).map((d) => ({
@@ -71,63 +80,237 @@ export default async function DeliveryProjectPage({ params, searchParams }: { pa
     id: t.id, phase: t.phase, name: t.name, owner: t.owner, startDate: iso(t.startDate), dueDate: iso(t.dueDate), progress: t.progress, status: t.status, isMilestone: t.isMilestone,
   }));
 
-  const openRaid = raid.filter((r) => r.status !== "CLOSED").length;
-  const doneCount = checklist.filter((c) => c.done).length;
+  const openRaidList = raid.filter((r) => r.status !== "CLOSED");
+  const planDone = plan.filter((t) => t.status === "COMPLETED").length;
   const engName = project.engagements.find((e) => e.id === selectedEng)?.name ?? null;
 
+  // ---- workspace health + "needs attention" (same lightweight checks as My Day, scoped here) ----
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const activeProj = project.status === "ACTIVE";
+  const customerFacing = selectedEng !== null || project.engagements.length === 0;
+  const latest = reports[0] ?? null;
+
+  // A task is "done" if marked COMPLETED or at 100% (progress drives status).
+  const planDoneT = (t: (typeof plan)[number]) => t.status === "COMPLETED" || t.progress >= 100;
+  const overdueIssues = openRaidList.filter((r) => r.dueDate != null && r.dueDate < todayIso);
+  const overduePlan = plan.filter((t) => !t.isMilestone && !planDoneT(t) && t.dueDate != null && t.dueDate < todayIso);
+  const upcomingPlan = plan
+    .filter((t) => !planDoneT(t) && t.dueDate != null && t.dueDate >= todayIso)
+    .sort((a, b) => (a.dueDate ?? "").localeCompare(b.dueDate ?? ""))
+    .slice(0, 5);
+  const overdueActions = minutes.flatMap((m) => m.actions).filter((a) => !a.done && a.dueDate != null && a.dueDate < todayIso);
+
+  const lastDays = latest ? differenceInCalendarDays(new Date(todayIso), new Date(latest.reportDate)) : null;
+  const cad = cadenceDays(latest?.cadence);
+  const statusDue = customerFacing && activeProj && (lastDays === null || (cad !== null && lastDays > cad));
+
+  let rag: RagStatus = latest?.overallRag ?? (activeProj && customerFacing ? "AMBER" : "GREEN");
+  if (overdueIssues.some((r) => r.severity === "HIGH" || r.severity === "CRITICAL")) rag = "RED";
+
+  const attention: string[] = [];
+  if (statusDue) attention.push(lastDays === null ? "No status update yet" : "Status update due");
+  if (overduePlan.length) attention.push(`${overduePlan.length} plan task${overduePlan.length === 1 ? "" : "s"} overdue`);
+  if (overdueIssues.length) attention.push(`${overdueIssues.length} issue${overdueIssues.length === 1 ? "" : "s"} past due`);
+  if (overdueActions.length) attention.push(`${overdueActions.length} action${overdueActions.length === 1 ? "" : "s"} overdue`);
+
+  // ---- Cutover readiness: once UAT is accepted (or go-live is near), the cutover to production must
+  // be completed. Surface it here so PM/Admin can push the consultant who owns the go-live. ----
+  const cutover = project.cutoverTasks;
+  const cutoverLeaves = cutover.filter((t) => !cutover.some((c) => c.parentId === t.id));
+  const cutoverDoneCount = cutoverLeaves.filter((t) => t.status === "DONE" || t.status === "SKIPPED").length;
+  const cutoverComplete = cutoverLeaves.length > 0 && cutoverDoneCount === cutoverLeaves.length;
+  const goLiveIso = iso(project.endDate);
+  const daysToGoLive = goLiveIso ? differenceInCalendarDays(new Date(goLiveIso), new Date(todayIso)) : null;
+  const goLiveNear = daysToGoLive != null && daysToGoLive <= 14;
+  // Trigger after UAT acceptance, or when go-live is within two weeks — and the cutover isn't finished.
+  const cutoverDue = !cutoverComplete && (project.uatAccepted || (activeProj && goLiveNear));
+  const cutoverUrgent = cutoverDue && daysToGoLive != null && daysToGoLive <= 3;
+  const cutoverReason = project.uatAccepted
+    ? "UAT is accepted — the project is ready for go-live."
+    : daysToGoLive != null && daysToGoLive >= 0
+      ? `Go-live is ${daysToGoLive === 0 ? "today" : `in ${daysToGoLive} day${daysToGoLive === 1 ? "" : "s"}`}.`
+      : "Go-live date has passed.";
+  const cutoverProgress =
+    cutoverLeaves.length > 0 ? `${cutoverDoneCount}/${cutoverLeaves.length} cutover steps done` : "No cutover plan created yet";
+
+  // ---- UAT test-script readiness: the consultant must prepare & send the test script before UAT.
+  // Surface it so the PM can check it actually reached "Sent". ----
+  const uatWindow = project.uatStatus !== "NOT_STARTED" || (activeProj && daysToGoLive != null && daysToGoLive >= 0 && daysToGoLive <= 30);
+  const uatScriptDue = activeProj && project.uatScriptStatus !== "SENT" && uatWindow;
+  const uatScriptReason = project.uatStatus !== "NOT_STARTED"
+    ? "UAT is under way, but the test script isn't marked sent to the customer."
+    : "UAT is coming up — the customer test script must be prepared and sent first.";
+  const uatCaseInfo = project._count.uatTestCases > 0 ? `${project._count.uatTestCases} test cases drafted` : "no test cases yet";
+
+  const tHref = (t: string) => {
+    const p = new URLSearchParams();
+    if (selectedEng) p.set("eng", selectedEng);
+    p.set("tab", t);
+    return `/delivery/${project.id}?${p.toString()}`;
+  };
+
+  const overview = (
+    <div className="flex flex-col gap-4">
+      {/* hero: health + progress + latest status one-liner */}
+      <div className="flex flex-wrap items-center gap-5 rounded-lg border bg-card p-5 shadow-sm">
+        {(() => {
+          const pctVal = latest?.progressPercent ?? 0;
+          const rr = 20, cc = 2 * Math.PI * rr, oo = cc * (1 - Math.max(0, Math.min(100, pctVal)) / 100);
+          const strokeCls = rag === "RED" ? "stroke-rose-500" : rag === "AMBER" ? "stroke-amber-500" : "stroke-emerald-500";
+          return (
+            <div className="relative size-16 shrink-0">
+              <svg viewBox="0 0 52 52" className="size-16 -rotate-90">
+                <circle cx="26" cy="26" r={rr} fill="none" strokeWidth="5" className="stroke-muted" />
+                <circle cx="26" cy="26" r={rr} fill="none" strokeWidth="5" strokeLinecap="round" className={strokeCls} strokeDasharray={cc} strokeDashoffset={oo} />
+              </svg>
+              <span className="absolute inset-0 grid place-items-center font-mono text-sm font-bold">{pctVal}%</span>
+            </div>
+          );
+        })()}
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className={cn("inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold", RAG_PILL[rag])}><span className={cn("size-2 rounded-full", RAG_DOT[rag])} />{RAG_LABEL[rag]}</span>
+            <span className="text-xs text-muted-foreground">{latest ? `${latest.sentAt ? "Last sent" : "Draft"} ${format(new Date(latest.reportDate), "MMM d")}` : "No status update yet"}</span>
+            <span className="text-xs text-muted-foreground">· {plan.length > 0 ? `${planDone}/${plan.length} plan tasks done` : "no plan yet"}</span>
+          </div>
+          <p className="mt-2 line-clamp-2 text-sm text-muted-foreground">{latest?.summary?.trim() || (statusDue ? "This customer is due a status update — send one so everyone can see where things stand." : "—")}</p>
+        </div>
+        <LinkButton href={tHref("status")} size="sm">{latest ? "Build new update" : "Build first update"}</LinkButton>
+      </div>
+
+      {/* next up + recent meetings */}
+      <div className="grid gap-4 lg:grid-cols-2">
+        {/* next up */}
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-base flex items-center gap-2"><CalendarIcon className="size-4 text-muted-foreground" /> Next up</CardTitle>
+            <Link href={tHref("plan")} className="text-xs font-medium text-primary hover:underline">Plan →</Link>
+          </CardHeader>
+          <CardContent className="pt-1">
+            {overduePlan.length === 0 && upcomingPlan.length === 0 ? (
+              <p className="py-2 text-sm text-muted-foreground">No dated plan tasks.</p>
+            ) : (
+              <div className="flex flex-col">
+                {overduePlan.slice(0, 3).map((t) => (
+                  <div key={t.id} className="flex items-center gap-2.5 border-b py-2 last:border-none">
+                    {t.isMilestone ? <DiamondIcon className="size-3.5 shrink-0 text-rose-500" /> : <span className="size-1.5 shrink-0 rounded-full bg-rose-500" />}
+                    <span className="min-w-0 flex-1 truncate text-sm">{t.name}</span>
+                    <span className="shrink-0 font-mono text-xs text-rose-600 dark:text-rose-400">{t.dueDate ? format(new Date(t.dueDate), "MMM d") : ""}</span>
+                  </div>
+                ))}
+                {upcomingPlan.map((t) => (
+                  <div key={t.id} className="flex items-center gap-2.5 border-b py-2 last:border-none">
+                    {t.isMilestone ? <DiamondIcon className="size-3.5 shrink-0 text-primary" /> : <span className="size-1.5 shrink-0 rounded-full bg-muted-foreground/50" />}
+                    <span className="min-w-0 flex-1 truncate text-sm">{t.name}</span>
+                    <span className="shrink-0 font-mono text-xs text-muted-foreground">{t.dueDate ? format(new Date(t.dueDate), "MMM d") : ""}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* recent meetings */}
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-base flex items-center gap-2"><MessageSquareIcon className="size-4 text-muted-foreground" /> Recent meetings</CardTitle>
+            <Link href={tHref("minutes")} className="text-xs font-medium text-primary hover:underline">All →</Link>
+          </CardHeader>
+          <CardContent className="pt-1">
+            {minutes.length === 0 ? (
+              <p className="py-2 text-sm text-muted-foreground">No meetings logged yet.</p>
+            ) : (
+              minutes.slice(0, 3).map((m) => {
+                const open = m.actions.filter((a) => !a.done).length;
+                return (
+                  <div key={m.id} className="flex items-center gap-2.5 border-b py-2 last:border-none">
+                    <span className="w-14 shrink-0 font-mono text-xs text-muted-foreground">{format(new Date(m.date), "MMM d")}</span>
+                    <span className="min-w-0 flex-1 truncate text-sm">{m.title}</span>
+                    <span className="shrink-0 text-xs text-muted-foreground">{open > 0 ? <span className="text-amber-600 dark:text-amber-400">{open} open</span> : `${m.actions.length} action${m.actions.length === 1 ? "" : "s"}`}</span>
+                  </div>
+                );
+              })
+            )}
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+
+  // Four lean sections built around a junior PM's real jobs — status, plan, meetings/docs — with an
+  // Overview that surfaces the important bits. RAID is intentionally NOT
+  // top-level tabs here (too much ceremony); issues stay lightweight via the My Day / attention nudges.
+  const tabs: CockpitTab[] = [
+    { value: "overview", label: "Overview", content: overview },
+    { value: "status", label: `Status updates (${reports.length})`, content: <StatusReportsClient projectId={project.id} engagementId={selectedEng} reports={reports} /> },
+    { value: "plan", label: `Plan (${plan.length})`, content: <PlanClient projectId={project.id} engagementId={selectedEng} tasks={plan} /> },
+    { value: "minutes", label: `Minutes (${minutes.length})`, content: <MinutesClient projectId={project.id} engagementId={selectedEng} items={minutes} /> },
+    { value: "documents", label: `Documents (${docs.length})`, content: <DocumentsLibraryClient projectId={project.id} engagementId={selectedEng} docs={docs} /> },
+  ];
+
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-5">
       <div>
-        <Link href="/delivery" className="text-sm text-muted-foreground hover:underline">← Delivery cockpit</Link>
+        <Link href={backHref} className="text-sm text-muted-foreground hover:underline">← Delivery</Link>
         <div className="mt-1 flex items-start justify-between flex-wrap gap-3">
           <div className="flex items-center gap-3">
-            <InitialsAvatar name={project.client.name} className="size-11 text-sm" />
+            <InitialsAvatar name={engName ?? project.client.name} className="size-11 text-sm" />
             <div>
-              <h1 className="text-2xl font-semibold">{project.name}</h1>
+              <div className="flex items-center gap-2.5 flex-wrap">
+                <h1 className="text-2xl font-semibold">{engName ?? project.name}</h1>
+                <span className={cn("inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium", RAG_PILL[rag])}><span className={cn("size-2 rounded-full", RAG_DOT[rag])} />{RAG_LABEL[rag]}</span>
+              </div>
               <p className="text-sm text-muted-foreground mt-1">
+                {engName && <span className="font-medium text-foreground">{project.name}</span>}
+                {engName && " · "}
                 {project.number && <span className="font-mono text-foreground">{project.number}</span>}
                 {project.number && " · "}
                 {project.client.name} · PM {project.manager?.name ?? "—"}
               </p>
             </div>
           </div>
-          <LinkButton href={`/projects/${project.id}`} variant="outline" size="sm">Open project</LinkButton>
+          <div className="flex flex-wrap items-center gap-2">
+            <LinkButton href={`/delivery/${project.id}/uat`} variant="outline" size="sm">UAT scripts</LinkButton>
+            <LinkButton href={`/delivery/${project.id}/cutover`} variant="outline" size="sm">Cutover plan</LinkButton>
+            <LinkButton href={`/projects/${project.id}`} variant="outline" size="sm">Open project</LinkButton>
+          </div>
         </div>
       </div>
 
       <EngagementBar projectId={project.id} engagements={project.engagements} selectedId={selectedEng} />
 
-      {engName && <p className="-mt-2 text-sm text-muted-foreground">Showing <span className="font-medium text-foreground">{engName}</span> — status reports, plan, RAID, minutes and documents for this engagement.</p>}
+      {uatScriptDue && (
+        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-amber-500/45 bg-amber-500/[0.07] px-4 py-3">
+          <ClipboardCheckIcon className="size-5 shrink-0 text-amber-600 dark:text-amber-400" />
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-semibold text-amber-700 dark:text-amber-400">UAT test script not sent yet</div>
+            <div className="text-xs text-muted-foreground">{uatScriptReason} Currently {uatCaseInfo}. The consultant prepares it — check it&apos;s ready and sent.</div>
+          </div>
+          <LinkButton href={`/delivery/${project.id}/uat`} size="sm">Open UAT scripts</LinkButton>
+        </div>
+      )}
 
-      <Tabs defaultValue="status">
-        <TabsList className="h-auto flex-wrap">
-          <TabsTrigger value="status">Status reports ({reports.length})</TabsTrigger>
-          <TabsTrigger value="plan">Plan ({plan.length})</TabsTrigger>
-          <TabsTrigger value="checklist">Checklist ({doneCount}/{checklist.length})</TabsTrigger>
-          <TabsTrigger value="raid">RAID ({openRaid} open)</TabsTrigger>
-          <TabsTrigger value="minutes">Minutes ({minutes.length})</TabsTrigger>
-          <TabsTrigger value="documents">Documents ({docs.length})</TabsTrigger>
-        </TabsList>
+      {cutoverDue && (
+        <div className={cn("flex flex-wrap items-center gap-3 rounded-lg border px-4 py-3", cutoverUrgent ? "border-rose-500/45 bg-rose-500/[0.07]" : "border-amber-500/45 bg-amber-500/[0.07]")}>
+          <RocketIcon className={cn("size-5 shrink-0", cutoverUrgent ? "text-rose-600 dark:text-rose-400" : "text-amber-600 dark:text-amber-400")} />
+          <div className="min-w-0 flex-1">
+            <div className={cn("text-sm font-semibold", cutoverUrgent ? "text-rose-700 dark:text-rose-400" : "text-amber-700 dark:text-amber-400")}>
+              Cutover to production still to be done
+            </div>
+            <div className="text-xs text-muted-foreground">{cutoverReason} {cutoverProgress}. The assigned consultant runs the cutover — chase it if needed.</div>
+          </div>
+          <LinkButton href={`/delivery/${project.id}/cutover`} size="sm">Open cutover plan</LinkButton>
+        </div>
+      )}
 
-        <TabsContent value="status" className="pt-4">
-          <StatusReportsClient projectId={project.id} engagementId={selectedEng} reports={reports} />
-        </TabsContent>
-        <TabsContent value="plan" className="pt-4">
-          <PlanClient projectId={project.id} engagementId={selectedEng} tasks={plan} />
-        </TabsContent>
-        <TabsContent value="checklist" className="pt-4">
-          <ChecklistClient projectId={project.id} items={checklist} />
-        </TabsContent>
-        <TabsContent value="raid" className="pt-4">
-          <RaidClient projectId={project.id} engagementId={selectedEng} items={raid} />
-        </TabsContent>
-        <TabsContent value="minutes" className="pt-4">
-          <MinutesClient projectId={project.id} engagementId={selectedEng} items={minutes} />
-        </TabsContent>
-        <TabsContent value="documents" className="pt-4">
-          <DocumentsLibraryClient projectId={project.id} engagementId={selectedEng} docs={docs} />
-        </TabsContent>
-      </Tabs>
+      {attention.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2.5 rounded-md border border-amber-500/40 bg-amber-500/[0.07] px-3.5 py-2.5">
+          <span className="inline-flex items-center gap-1.5 text-sm font-medium text-amber-700 dark:text-amber-400"><TriangleAlertIcon className="size-4" /> Needs attention</span>
+          {attention.map((a) => <span key={a} className="rounded-full border bg-background px-2.5 py-0.5 text-xs">{a}</span>)}
+        </div>
+      )}
+
+      <CockpitShell tabs={tabs} initial={activeTab} />
     </div>
   );
 }

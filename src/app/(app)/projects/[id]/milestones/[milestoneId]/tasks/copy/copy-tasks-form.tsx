@@ -39,7 +39,7 @@ export function CopyTasksForm({
                 <Input name={`task_${i}_name`} defaultValue={t.name} required />
               </TableCell>
               <TableCell>
-                <Input name={`task_${i}_hours`} type="number" step="0.5" min="0" defaultValue={t.estimatedHours} />
+                <Input name={`task_${i}_hours`} type="number" step="any" min="0" defaultValue={t.estimatedHours} />
               </TableCell>
             </TableRow>
           ))}

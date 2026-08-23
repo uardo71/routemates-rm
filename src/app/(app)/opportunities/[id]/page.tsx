@@ -23,6 +23,10 @@ export default async function OpportunityDetailPage({ params }: { params: Promis
       revisions: { orderBy: { version: "desc" }, include: { issuedBy: { select: { name: true } } } },
       amendments: { orderBy: { version: "desc" }, include: { appliedBy: { select: { name: true } } } },
       documents: { orderBy: { uploadedAt: "desc" }, select: { id: true, kind: true, fileName: true, originalName: true } },
+      milestoneAdjustments: {
+        orderBy: { createdAt: "desc" },
+        include: { milestone: { select: { id: true, name: true, project: { select: { id: true, name: true } } } } },
+      },
     },
   });
   if (!opp) notFound();
@@ -79,6 +83,20 @@ export default async function OpportunityDetailPage({ params }: { params: Promis
     gross: totals.gross,
     discountAmount: totals.discountAmount,
     net: totals.net,
+    // Milestone value absorbed into this deal from other projects (indication of real value only —
+    // the removed money is stored as a NEGATIVE adjustment on the milestone; here we surface its
+    // magnitude so "real value = net + absorbed" reads correctly without inflating the contract).
+    absorbedFrom: opp.milestoneAdjustments
+      .filter((adj) => Number(adj.amount) < 0)
+      .map((adj) => ({
+        id: adj.id,
+        amount: -Number(adj.amount),
+        reason: adj.reason,
+        milestoneId: adj.milestone.id,
+        milestoneName: adj.milestone.name,
+        projectId: adj.milestone.project.id,
+        projectName: adj.milestone.project.name,
+      })),
     lines: opp.lines.map((l) => ({
       id: l.id,
       name: l.name,

@@ -65,7 +65,7 @@ export function EditTaskForm({
         </div>
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="estimatedHours">Allocated hours</Label>
-          <Input id="estimatedHours" name="estimatedHours" type="number" step="0.5" min="0" defaultValue={task.estimatedHours ?? undefined} />
+          <Input id="estimatedHours" name="estimatedHours" type="number" step="any" min="0" defaultValue={task.estimatedHours ?? undefined} />
         </div>
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="dueDate">Due date</Label>

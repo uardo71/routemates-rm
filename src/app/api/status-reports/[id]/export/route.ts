@@ -8,7 +8,11 @@ import { SEVERITY_LABEL, RAG_HEX, RAID_TYPE_LABEL, RAID_STATUS_LABEL, RAID_SEVER
 
 const fmt = (d: Date | null) => (d ? format(d, "MMM d, yyyy") : "—");
 const INK = "FF141F2B";
+const BRASS = "FFA9812F";
 const MUTE = "FF6B7280";
+const LINE = "FFD9DEE2";
+const thin = { style: "thin" as const, color: { argb: LINE } };
+const cellBorder = { top: thin, left: thin, bottom: thin, right: thin };
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -36,19 +40,26 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   const endCustomerLabel = report.engagement?.name ?? p.client.name;
   const wb = new ExcelJS.Workbook();
   wb.creator = "RM Ops";
-  const ws = wb.addWorksheet("Status Update");
-  ws.columns = [{ width: 24 }, { width: 26 }, { width: 16 }, { width: 16 }];
+  const ws = wb.addWorksheet("Status Update", { properties: { tabColor: { argb: BRASS } }, pageSetup: { orientation: "landscape", fitToPage: true, fitToWidth: 1, margins: { left: 0.5, right: 0.5, top: 0.6, bottom: 0.6, header: 0.3, footer: 0.3 } } });
+  ws.columns = [{ width: 30 }, { width: 30 }, { width: 18 }, { width: 16 }];
   let row = 1;
 
+  // Title band
   ws.mergeCells(`A${row}:D${row}`);
   const t = ws.getCell(`A${row}`);
   t.value = `${p.name} — Status Update`;
-  t.font = { bold: true, size: 16, color: { argb: INK } };
-  ws.getRow(row).height = 24;
+  t.font = { bold: true, size: 16, color: { argb: "FFFFFFFF" } };
+  t.fill = { type: "pattern", pattern: "solid", fgColor: { argb: INK } };
+  t.alignment = { vertical: "middle", indent: 1 };
+  ws.getRow(row).height = 30;
   row++;
   ws.mergeCells(`A${row}:D${row}`);
-  ws.getCell(`A${row}`).value = `${endCustomerLabel}${p.number ? ` · ${p.number}` : ""}`;
-  ws.getCell(`A${row}`).font = { color: { argb: MUTE }, size: 11 };
+  const sub = ws.getCell(`A${row}`);
+  sub.value = `${endCustomerLabel}${p.number ? ` · ${p.number}` : ""}`;
+  sub.font = { color: { argb: "FFC9D1D9" }, size: 11 };
+  sub.fill = { type: "pattern", pattern: "solid", fgColor: { argb: INK } };
+  sub.alignment = { vertical: "middle", indent: 1 };
+  ws.getRow(row).height = 20;
   row += 2;
 
   const meta: [string, string][] = [
@@ -98,6 +109,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       c.value = h;
       c.font = { bold: true, color: { argb: "FFFFFFFF" } };
       c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: INK } };
+      c.border = cellBorder;
     });
     row++;
     for (const a of report.actions) {
@@ -107,6 +119,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       ws.getCell(row, 3).value = fmt(a.dueDate);
       ws.getCell(row, 4).value = a.critical ? "Critical" : "";
       if (a.critical) ws.getCell(row, 4).font = { bold: true, color: { argb: RAG_HEX.RED } };
+      for (let ci = 1; ci <= 4; ci++) ws.getCell(row, ci).border = cellBorder;
       row++;
     }
     row++;
@@ -125,6 +138,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       c.value = h;
       c.font = { bold: true, color: { argb: "FFFFFFFF" } };
       c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: INK } };
+      c.border = cellBorder;
     });
     row++;
     for (const it of raid) {
@@ -132,6 +146,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       ws.getCell(row, 2).value = it.title;
       ws.getCell(row, 3).value = it.severity ? RAID_SEVERITY_LABEL[it.severity] : "—";
       ws.getCell(row, 4).value = RAID_STATUS_LABEL[it.status];
+      for (let ci = 1; ci <= 4; ci++) ws.getCell(row, ci).border = cellBorder;
       row++;
     }
   }

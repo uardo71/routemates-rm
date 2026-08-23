@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ClockIcon, UsersIcon, CheckSquareIcon, WalletIcon, Building2Icon, ReceiptIcon, LockIcon, CheckCircle2Icon } from "lucide-react";
+import { ClockIcon, UsersIcon, CheckSquareIcon, WalletIcon, Building2Icon, ReceiptIcon, LockIcon, CheckCircle2Icon, ArrowLeftRightIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -106,6 +106,14 @@ export default async function MilestoneDetailPage({
 
   const priceLabel = milestone.project.billingType === "FIXED_PRICE" ? "Sales price (fixed)" : "Sales price / hr";
 
+  // "Fully absorbed" = the milestone's entire value was taken out via negative adjustments (effective
+  // value collapsed to ~0). Its worth now lives on another opportunity/deal, so we flag it distinctly
+  // rather than leaving it looking like an unstarted PLANNED milestone.
+  const adjTotal = adjustmentRows.reduce((s, a) => s + a.amount, 0);
+  const effectiveValue = baseValue + adjTotal;
+  const fullyAbsorbed = baseValue > 0 && adjTotal < 0 && effectiveValue <= 0.005;
+  const absorbedInto = fullyAbsorbed ? adjustmentRows.find((a) => a.opportunity && a.amount < 0)?.opportunity ?? null : null;
+
   return (
     <div className="flex flex-col gap-6">
       <div>
@@ -118,6 +126,12 @@ export default async function MilestoneDetailPage({
             <h1 className="text-2xl font-semibold">{milestone.name}</h1>
           </div>
           <div className="flex items-center gap-2">
+            {fullyAbsorbed && (
+              <Badge variant="outline" className="border-primary/50 bg-primary/10 text-primary gap-1">
+                <ArrowLeftRightIcon className="size-3" />
+                Value absorbed{absorbedInto ? ` → ${absorbedInto.number ?? absorbedInto.name}` : ""}
+              </Badge>
+            )}
             {canManage && <TimeEntryOpenToggle milestoneId={milestone.id} open={milestone.timeEntryOpen} />}
             {canManage ? (
               <MilestoneStatusSelect milestoneId={milestone.id} status={milestone.status} />
@@ -219,6 +233,8 @@ export default async function MilestoneDetailPage({
           <CardContent>
             {milestone.assignments.length === 0 ? (
               <p className="text-sm text-muted-foreground">No one assigned yet.</p>
+            ) : totalUsed === 0 ? (
+              <p className="text-sm text-muted-foreground">No approved hours logged yet.</p>
             ) : (
               <DonutChart
                 centerLabel={`${totalUsed}h`}

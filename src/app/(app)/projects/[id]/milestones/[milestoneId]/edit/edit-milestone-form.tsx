@@ -62,7 +62,7 @@ export function EditMilestoneForm({
         </div>
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="budgetHours">Budget hours</Label>
-          <Input id="budgetHours" name="budgetHours" type="number" step="0.5" min="0" defaultValue={milestone.budgetHours ?? undefined} />
+          <Input id="budgetHours" name="budgetHours" type="number" step="0.01" min="0" defaultValue={milestone.budgetHours ?? undefined} />
         </div>
       </div>
       <div className="grid grid-cols-2 gap-3">

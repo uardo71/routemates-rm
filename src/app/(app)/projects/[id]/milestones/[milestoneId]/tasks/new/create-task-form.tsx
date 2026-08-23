@@ -43,7 +43,7 @@ export function CreateTaskForm({ milestoneId, members }: { milestoneId: string; 
         </div>
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="taskEstimatedHours">Allocated hours</Label>
-          <Input id="taskEstimatedHours" name="estimatedHours" type="number" step="0.5" min="0" />
+          <Input id="taskEstimatedHours" name="estimatedHours" type="number" step="any" min="0" />
         </div>
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="taskDueDate">Due date</Label>

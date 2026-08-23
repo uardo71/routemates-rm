@@ -174,7 +174,10 @@ export async function createMilestoneAdjustmentAction(input: MilestoneAdjustment
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Invalid input." };
   const d = parsed.data;
   if (!(await canManageMilestone(user, d.milestoneId))) return { error: "You do not have permission to manage this milestone." };
-  const milestone = await prisma.milestone.findFirst({ where: { id: d.milestoneId }, select: { projectId: true } });
+  const milestone = await prisma.milestone.findFirst({
+    where: { id: d.milestoneId },
+    select: { projectId: true, salesPrice: true, budgetHours: true, timeEntryOpen: true, project: { select: { billingType: true } } },
+  });
   if (!milestone) return { error: "Milestone not found." };
 
   let opportunityId: string | null = null;
@@ -187,6 +190,19 @@ export async function createMilestoneAdjustmentAction(input: MilestoneAdjustment
   await prisma.milestoneAdjustment.create({
     data: { companyId: user.companyId, milestoneId: d.milestoneId, amount: d.amount, reason: d.reason, opportunityId, createdById: user.id },
   });
+
+  // When the whole value is taken out (effective value collapses to ~0 — it now lives on another
+  // deal), auto-lock time entry, mirroring a manual completion: there's no work left to log here.
+  const agg = await prisma.milestoneAdjustment.aggregate({ where: { milestoneId: d.milestoneId }, _sum: { amount: true } });
+  const base = milestone.project.billingType === "FIXED_PRICE"
+    ? Number(milestone.salesPrice)
+    : Number(milestone.salesPrice) * Number(milestone.budgetHours ?? 0);
+  const totalAdj = Number(agg._sum.amount ?? 0);
+  const effective = base + totalAdj;
+  if (base > 0 && totalAdj < 0 && effective <= 0.005 && milestone.timeEntryOpen) {
+    await prisma.milestone.update({ where: { id: d.milestoneId }, data: { timeEntryOpen: false } });
+  }
+
   revalidatePath(`/projects/${milestone.projectId}`);
   revalidatePath(`/projects/${milestone.projectId}/milestones/${d.milestoneId}`);
   return {};

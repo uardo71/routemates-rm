@@ -91,17 +91,24 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       });
       return appUser?.active === true;
     },
-    async jwt({ token, user, account }) {
+    async jwt({ token, user, account, profile }) {
       if (!user) return token; // later requests: token already hydrated
 
       if (account?.provider === "microsoft-entra-id") {
         // OAuth identity: user.id is the Entra `sub` (not our User.id) and carries no role/companyId.
         // signIn() already guaranteed an active local user with this email exists — re-key the token
         // onto the LOCAL user so every RBAC/scoping query (visibleProjectIds, assignments, …) resolves.
-        const appUser = await prisma.user.findFirst({
-          where: { email: { equals: user.email!, mode: "insensitive" } },
-          select: { id: true, role: true, companyId: true },
-        });
+        // Entra frequently leaves `user.email` null and delivers the address in the profile claims
+        // (`email` or the UPN in `preferred_username`/`upn`) instead — resolve it the same robust way
+        // signIn() does, or the re-key silently fails and the whole session gets no id/role/company.
+        const p = profile as { email?: string; preferred_username?: string; upn?: string } | undefined;
+        const email = user.email ?? p?.email ?? p?.preferred_username ?? p?.upn ?? (token.email as string | undefined);
+        const appUser = email
+          ? await prisma.user.findFirst({
+              where: { email: { equals: email, mode: "insensitive" } },
+              select: { id: true, role: true, companyId: true },
+            })
+          : null;
         if (appUser) {
           token.sub = appUser.id; // session.user.id reads token.sub
           token.role = appUser.role;
