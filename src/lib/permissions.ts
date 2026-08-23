@@ -112,6 +112,26 @@ export function canDecideApproval(user: SessionUser, card: { approverId: string 
   return can(user, "timesheet:approve:any") || (user.role === "PM" && card.approverId === user.id);
 }
 
+/** Whether `user` may view/edit delivery working docs of a project (cutover plan, UAT test scripts):
+ *  the managing PM/Admin, OR any consultant assigned to one of the project's milestones. */
+export async function canAccessProjectDelivery(user: SessionUser, projectId: string): Promise<boolean> {
+  if (await canManageProject(user, projectId)) return true;
+  const project = await prisma.project.findFirst({
+    where: {
+      id: projectId,
+      companyId: user.companyId,
+      milestones: { some: { assignments: { some: { userId: user.id } } } },
+    },
+    select: { id: true },
+  });
+  return project !== null;
+}
+
+/** @deprecated alias — cutover uses the shared delivery-member check. */
+export async function canAccessProjectCutover(user: SessionUser, projectId: string): Promise<boolean> {
+  return canAccessProjectDelivery(user, projectId);
+}
+
 /** Whether `user` may see bill/cost rate figures for the given project (own projects for PMs). */
 export async function canViewProjectRates(user: SessionUser, projectId: string): Promise<boolean> {
   if (can(user, "rates:view:any")) return true;

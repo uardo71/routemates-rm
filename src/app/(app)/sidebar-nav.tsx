@@ -23,7 +23,9 @@ import {
   LandmarkIcon,
   HandCoinsIcon,
   CompassIcon,
-  ListChecksIcon,
+  LifeBuoyIcon,
+  RocketIcon,
+  ClipboardCheckIcon,
   SettingsIcon,
 } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -31,6 +33,7 @@ import { cn } from "@/lib/utils";
 
 const ICONS = {
   dashboard: LayoutDashboardIcon,
+  command: GaugeIcon,
   projects: FolderKanbanIcon,
   time: ClockIcon,
   vacations: PalmtreeIcon,
@@ -46,7 +49,9 @@ const ICONS = {
   taxes: LandmarkIcon,
   vendors: HandCoinsIcon,
   delivery: CompassIcon,
-  playbook: ListChecksIcon,
+  cutover: RocketIcon,
+  uat: ClipboardCheckIcon,
+  guides: LifeBuoyIcon,
   myPlanning: CalendarDaysIcon,
   opportunities: TargetIcon,
   revenue: TrendingUpIcon,

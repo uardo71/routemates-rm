@@ -15,7 +15,13 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const me = await prisma.user.findUnique({ where: { id: user.id }, select: { avatarUrl: true } });
 
   const groups: NavGroup[] = [
-    { label: "Overview", items: [{ href: "/", label: "Dashboard", icon: "dashboard" }] },
+    {
+      label: "Overview",
+      items: [
+        { href: "/", label: "Dashboard", icon: "dashboard" as const },
+        ...(can(user, "reports:view") ? [{ href: "/command", label: "Command center", icon: "command" as const }] : []),
+      ],
+    },
     ...(can(user, "opportunities:view")
       ? [
           {
@@ -34,6 +40,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           ? [{ href: "/projects", label: "Projects", icon: "projects" as const }]
           : []),
         { href: "/time", label: "Time", icon: "time" as const },
+        { href: "/uat", label: "UAT scripts", icon: "uat" as const },
+        { href: "/cutover", label: "Cutover plans", icon: "cutover" as const },
         { href: "/my-planning", label: "My planning", icon: "myPlanning" as const },
         { href: "/vacations", label: "Vacations", icon: "vacations" as const },
         { href: "/expenses", label: "Expenses", icon: "expenses" as const },
@@ -95,8 +103,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
               ...(can(user, "clients:view")
                 ? [{ href: "/admin/clients", label: "Clients", icon: "clients" as const }]
                 : []),
-              ...(can(user, "projects:manage:any")
-                ? [{ href: "/admin/playbook", label: "Project playbook", icon: "playbook" as const }]
+              ...(can(user, "users:manage")
+                ? [{ href: "/admin/guides", label: "Coaching guides", icon: "guides" as const }]
                 : []),
               ...(can(user, "users:manage")
                 ? [{ href: "/admin/settings", label: "Settings", icon: "settings" as const }]

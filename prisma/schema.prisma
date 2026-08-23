@@ -128,11 +128,16 @@ model Company {
   vendorPayments    VendorPayment[]
   opportunities     Opportunity[]
   documents         Document[]
-  playbookTasks     PlaybookTask[]
   statusReports     StatusReport[]
+  sopGuides         SopGuide[]
   raidItems         RaidItem[]
   meetings          MeetingMinutes[]
   planTasks         PlanTask[]
+  cutoverTasks      CutoverTask[]
+  cutoverLists      CutoverList[]
+  uatAreas          UatArea[]
+  uatTestCases      UatTestCase[]
+  uatIssues         UatIssue[]
   engagements       Engagement[]
   milestoneAdjustments MilestoneAdjustment[]
 }
@@ -184,7 +189,6 @@ model User {
   opportunityRevisions   OpportunityRevision[] @relation("OpportunityRevisionIssuedBy")
   opportunityAmendments  OpportunityAmendment[] @relation("OpportunityAmendmentAppliedBy")
   documents              Document[]
-  checklistCompleted     ProjectChecklistItem[] @relation("ChecklistCompletedBy")
   statusReportsAuthored  StatusReport[]         @relation("StatusReportAuthor")
   raidCreated            RaidItem[]             @relation("RaidCreatedBy")
   meetingsCreated        MeetingMinutes[]       @relation("MinutesCreatedBy")
@@ -325,6 +329,10 @@ model Project {
   uatAcceptedDate DateTime? // the date the customer signed off
   uatSignatory    String? // name (and optionally role) of the client-side signatory
   uatNotes        String? // note captured with the acceptance
+  // Test-script preparation (distinct from acceptance): the consultant prepares it and sends it to
+  // the customer before UAT; the PM governs that it's actually ready/sent.
+  uatScriptStatus UatScriptStatus @default(DRAFT)
+  uatScriptSentAt DateTime?
   uatRecordedById String? // internal user who recorded the acceptance
   uatRecordedBy   User?     @relation("ProjectUatRecordedBy", fields: [uatRecordedById], references: [id])
   uatRecordedAt   DateTime? // when it was recorded in the app
@@ -338,11 +346,15 @@ model Project {
   documents   Document[]
   vendorPayments VendorPayment[]
   uatEvents   ProjectUatEvent[]
-  checklistItems ProjectChecklistItem[]
   statusReports  StatusReport[]
   raidItems      RaidItem[]
   meetings       MeetingMinutes[]
   planTasks      PlanTask[]
+  cutoverTasks   CutoverTask[]
+  cutoverLists   CutoverList[]
+  uatAreas       UatArea[]
+  uatTestCases   UatTestCase[]
+  uatIssues      UatIssue[]
   engagements    Engagement[]
 
   @@unique([companyId, number])
@@ -1206,43 +1218,6 @@ enum RaidSeverity {
 
 // Company master playbook: the standard governance checklist applied to every new project so a
 // junior PM follows the same procedure every time. Admin-managed.
-model PlaybookTask {
-  id          String   @id @default(cuid())
-  companyId   String
-  company     Company  @relation(fields: [companyId], references: [id])
-  phase       String // Initiation | Planning | Execution | Closure (grouping)
-  title       String
-  description String?
-  offsetDays  Int? // suggested due-date offset from the project start date
-  sortOrder   Int      @default(0)
-  active      Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  @@index([companyId])
-}
-
-// A governance checklist item on a specific project (snapshotted from the playbook at creation, or
-// added ad-hoc). Ticked off by the PM as the project progresses.
-model ProjectChecklistItem {
-  id            String    @id @default(cuid())
-  projectId     String
-  project       Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  phase         String
-  title         String
-  description   String?
-  sortOrder     Int       @default(0)
-  done          Boolean   @default(false)
-  dueDate       DateTime?
-  completedAt   DateTime?
-  completedById String?
-  completedBy   User?     @relation("ChecklistCompletedBy", fields: [completedById], references: [id])
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
-
-  @@index([projectId])
-}
-
 // A periodic project status report the PM builds in-app and exports to Excel for the customer.
 model StatusReport {
   id              String    @id @default(cuid())
@@ -1336,14 +1311,23 @@ model MeetingMinutes {
   engagement   Engagement? @relation(fields: [engagementId], references: [id], onDelete: SetNull)
   date        DateTime
   title       String
-  attendees   String?
-  notes       String?
+  attendees   String? // legacy free-text list; superseded by structured `participants`
+  notes       String? // discussion / minutes body
+  // TDM156 header fields
+  timeFrom       String? // e.g. "09:00"
+  timeTo         String? // e.g. "10:00"
+  location       String? // e.g. "MS Teams"
+  minuteTaker    String?
+  agendaTopic    String? // meeting agenda topic(s)
+  agendaWho      String? // e.g. "All"
+  agendaDuration String? // e.g. "1:00"
   createdById String
   createdBy   User     @relation("MinutesCreatedBy", fields: [createdById], references: [id])
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  actions MeetingActionItem[]
+  actions      MeetingActionItem[]
+  participants MeetingParticipant[]
 
   @@index([projectId])
   @@index([companyId])
@@ -1360,6 +1344,42 @@ model MeetingActionItem {
   sortOrder   Int            @default(0)
 
   @@index([minutesId])
+}
+
+// A row in the TDM156 participants table: Name · Company · Role · Group.
+model MeetingParticipant {
+  id        String         @id @default(cuid())
+  minutesId String
+  minutes   MeetingMinutes @relation(fields: [minutesId], references: [id], onDelete: Cascade)
+  name      String
+  company   String?
+  role      String?
+  group     String?
+  sortOrder Int            @default(0)
+
+  @@index([minutesId])
+}
+
+// ---------- SOP coaching guides ("How do I handle this?") ----------
+
+// A short, admin-editable playbook card distilled from a company SOP: a situation a PM might face
+// (a change request, a slipping date, an unhappy customer) and the concrete steps to handle it.
+// Surfaced as contextual help in the Delivery cockpit — guidance, never a gate.
+model SopGuide {
+  id        String   @id @default(cuid())
+  companyId String
+  company   Company  @relation(fields: [companyId], references: [id])
+  title     String // the situation, e.g. "A customer asks for extra work"
+  category  String // grouping/trigger key: change_request | slipping_date | kickoff | unhappy_customer | escalation | status | golive | general
+  summary   String? // one-line "when to use this"
+  steps     String // newline-separated action steps
+  source    String? // SOP citation, e.g. "SOP: Change Requests"
+  sortOrder Int      @default(0)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([companyId])
 }
 
 // ---------- Project plan ----------
@@ -1398,6 +1418,163 @@ model PlanTask {
   @@index([companyId])
 }
 
+// ---------- Cutover plan (go-live runbook) ----------
+
+enum CutoverStatus {
+  PENDING
+  IN_PROGRESS
+  DONE
+  BLOCKED
+  SKIPPED
+}
+
+// One line of a project's cutover/go-live runbook: a concrete activity (get production access, move
+// TRs, run a config step, stop a job…) grouped under a macro activity/phase, with an owner (may be
+// internal, the customer, or another provider), a planned window, effort, and status. Editable by the
+// PM and by any consultant assigned to the project; exportable to Excel for the go-live team.
+model CutoverTask {
+  id              String        @id @default(cuid())
+  companyId       String
+  company         Company       @relation(fields: [companyId], references: [id])
+  projectId       String
+  project         Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  engagementId    String?
+  engagement      Engagement?   @relation(fields: [engagementId], references: [id], onDelete: SetNull)
+  // Parent activity (one level of nesting): a parent step like "Start production configuration" with
+  // child steps "Configure T-code X", "Configure table Y". Deleting a parent removes its children.
+  parentId        String?
+  parent          CutoverTask?  @relation("CutoverChildren", fields: [parentId], references: [id], onDelete: Cascade)
+  children        CutoverTask[] @relation("CutoverChildren")
+  macroActivity   String // grouping/phase, e.g. "Preparation", "Transport to production", "Go-live"
+  activity        String // the concrete step
+  description     String?
+  responsible     String? // free text — internal, customer, or partner (multi-provider go-lives)
+  prerequisite    String? // free text — the step number(s) that must be done first, e.g. "3" or "3.1, 4"
+  referenceList   String? // name of a CutoverList (detail tab) this step points to, e.g. "TRANSPORT LIST"
+  startDate       DateTime?
+  endDate         DateTime?
+  durationMinutes Int? // planned effort/duration for the step
+  status          CutoverStatus @default(PENDING)
+  sortOrder       Int           @default(0) // order among siblings (same parent)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([projectId])
+  @@index([companyId])
+  @@index([parentId])
+}
+
+// A named detail table referenced by cutover steps (e.g. "TRANSPORT LIST", "JOBS", "TABLE ENTRIES").
+// Stored as a simple grid: `columns` = header strings, `rows` = array of value arrays. Exported as its
+// own tab in the cutover workbook so steps can say "import the TRs in tab TRANSPORT LIST".
+model CutoverList {
+  id        String   @id @default(cuid())
+  companyId String
+  company   Company  @relation(fields: [companyId], references: [id])
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name      String
+  columns   Json // string[]
+  rows      Json // string[][]
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([projectId, name])
+  @@index([projectId])
+  @@index([companyId])
+}
+
+// ---------- UAT test scripts (customer-shared test scenarios + results) ----------
+
+enum UatResult {
+  NOT_RUN
+  OK
+  KO
+  REDO
+}
+
+enum UatScriptStatus {
+  DRAFT // being prepared by the consultant
+  READY // prepared, ready to send
+  SENT // shared with the customer
+}
+
+enum UatIssueStatus {
+  OPEN
+  CLOSED
+}
+
+// A functional area / test group (e.g. "Company Code Determination"), holding its own test cases.
+model UatArea {
+  id               String        @id @default(cuid())
+  companyId        String
+  company          Company       @relation(fields: [companyId], references: [id])
+  projectId        String
+  project          Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name             String
+  overview         String?
+  dataRequirements String?
+  sortOrder        Int           @default(0)
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+  cases            UatTestCase[]
+
+  @@index([projectId])
+  @@index([companyId])
+}
+
+// One test case (scenario + expected result + run outcome) inside a functional area.
+model UatTestCase {
+  id               String    @id @default(cuid())
+  companyId        String
+  company          Company   @relation(fields: [companyId], references: [id])
+  projectId        String
+  project          Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  areaId           String
+  area             UatArea   @relation(fields: [areaId], references: [id], onDelete: Cascade)
+  description      String?
+  prerequisites    String?
+  expectedResults  String?
+  runBy            String?
+  dateRun          DateTime?
+  result           UatResult @default(NOT_RUN)
+  reasonForFailure String?
+  docNo            String?
+  comments         String?
+  sortOrder        Int       @default(0)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([areaId])
+  @@index([projectId])
+  @@index([companyId])
+}
+
+// The defect/issue log for a project's UAT (the "Test Issue Summary" tab).
+model UatIssue {
+  id               String         @id @default(cuid())
+  companyId        String
+  company          Company        @relation(fields: [companyId], references: [id])
+  projectId        String
+  project          Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  areaRef          String? // which area/tab
+  testRef          String? // which test #
+  type             String? // OK/KO/Redo/etc.
+  description      String?
+  correctiveAction String?
+  assigned         String?
+  status           UatIssueStatus @default(OPEN)
+  dateRaised       DateTime?
+  dateClosed       DateTime?
+  sortOrder        Int            @default(0)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  @@index([projectId])
+  @@index([companyId])
+}
+
 // ---------- Engagements (end-customer streams inside a project's delivery cockpit) ----------
 
 // A project-management-only breakdown of a project into end-customer streams (e.g. Zambon,
@@ -1416,6 +1593,7 @@ model Engagement {
 
   statusReports StatusReport[]
   planTasks     PlanTask[]
+  cutoverTasks  CutoverTask[]
   raidItems     RaidItem[]
   meetings      MeetingMinutes[]
   documents     Document[]
