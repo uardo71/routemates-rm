@@ -78,15 +78,21 @@ export function computeProjectRevenue(input: ProjectRevenueInput): ProjectRevenu
     // adjustments (money removed/absorbed) apply to the milestone's effective lump sum.
     const done = (m: MilestoneRevenueInput) => m.status === "COMPLETE" || m.status === "INVOICED";
     const effective = (m: MilestoneRevenueInput) => m.salesPrice + (m.adjustment ?? 0);
+    // Milestones keep LIST prices; the deal-level discount lives on the project (contractValue = list
+    // − discount). Distribute the contract value across milestones by their list-value share, so the
+    // discount is respected and a fully-delivered project earns exactly the contract value, not the
+    // pre-discount list total. Fall back to list values when no contract value is set.
+    const totalList = input.milestones.reduce((s, m) => s + effective(m), 0);
+    const scale = totalList > 0 && input.contractValue > 0 ? input.contractValue / totalList : 1;
     earnedRevenue = round2(
       input.milestones.reduce((s, m) => {
-        const value = effective(m);
+        const value = effective(m) * scale;
         if (done(m)) return s + value;
         const ratio = m.budgetHours > 0 ? Math.min(1, m.approvedHours / m.budgetHours) : 0;
         return s + ratio * value;
       }, 0),
     );
-    recognizedRevenue = round2(input.milestones.filter(done).reduce((s, m) => s + effective(m), 0));
+    recognizedRevenue = round2(input.milestones.filter(done).reduce((s, m) => s + effective(m) * scale, 0));
   } else {
     // T&M / RETAINER — only billable milestones generate revenue.
     const billable = input.milestones.filter((m) => m.billable);

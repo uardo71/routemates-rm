@@ -2,6 +2,7 @@
 
 import { useMemo } from "react";
 import { addDays, format } from "date-fns";
+import { cn } from "@/lib/utils";
 
 export type TimeCardGridEntry = {
   id: string;
@@ -9,18 +10,23 @@ export type TimeCardGridEntry = {
   hours: number;
   taskName: string | null;
   description: string;
+  /** Whether this day's hours have been billed on an invoice. Only used when highlightUnbilled is on. */
+  billed?: boolean;
 };
 
 /** Read-only day-by-day breakdown (one row per task, Mon–Sun columns, a Notes column) shared by
- *  the approvals detail dialog and any other "view this TimeCard's week" surface. */
+ *  the approvals detail dialog and any other "view this TimeCard's week" surface. When
+ *  highlightUnbilled is set, days whose hours are not yet on an invoice are tinted amber. */
 export function TimeCardGrid({
   weekStartDate,
   entries,
   totalHours,
+  highlightUnbilled = false,
 }: {
   weekStartDate: string;
   entries: TimeCardGridEntry[];
   totalHours: number;
+  highlightUnbilled?: boolean;
 }) {
   const days = useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(new Date(weekStartDate), i)), [weekStartDate]);
 
@@ -39,7 +45,14 @@ export function TimeCardGrid({
   }
 
   return (
-    <div className="overflow-x-auto rounded-lg border">
+    <div className="flex flex-col gap-2">
+      {highlightUnbilled && (
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <span className="inline-block size-3 rounded-sm bg-amber-500/15 ring-1 ring-amber-500/40" />
+          Amber days are approved but not yet on an invoice.
+        </div>
+      )}
+      <div className="overflow-x-auto rounded-lg border">
       <table className="w-full text-sm border-collapse">
         <thead>
           <tr className="text-left text-muted-foreground bg-muted/50">
@@ -64,8 +77,16 @@ export function TimeCardGrid({
                 {days.map((d) => {
                   const date = format(d, "yyyy-MM-dd");
                   const e = entryFor(row.entries, date);
+                  const unbilled = highlightUnbilled && e != null && e.billed === false;
+                  const cellTitle = unbilled
+                    ? "Not yet billed" + (e?.description ? " — " + e.description : "")
+                    : e?.description || undefined;
                   return (
-                    <td key={date} className="p-2 text-center tabular-nums border-l relative" title={e?.description || undefined}>
+                    <td
+                      key={date}
+                      className={cn("p-2 text-center tabular-nums border-l relative", unbilled && "bg-amber-500/15 font-semibold text-amber-700 dark:text-amber-400")}
+                      title={cellTitle}
+                    >
                       {e ? e.hours : "—"}
                       {e?.description && <span className="absolute top-1 right-1 size-1.5 rounded-full bg-primary/60" />}
                     </td>
@@ -104,6 +125,7 @@ export function TimeCardGrid({
           </tr>
         </tbody>
       </table>
+      </div>
     </div>
   );
 }
