@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { CurrentWeekBadge } from "@/components/current-week-badge";
 import { cn } from "@/lib/utils";
 import { getPublicHoliday } from "@/lib/holidays";
+import { bookingStatus, freeHours, DEFAULT_WEEKLY_CAPACITY_HOURS, type WeekCapacity } from "@/lib/capacity";
 import { savePlanAction, updateAssignmentEndDateAction, type PlanCell } from "./actions";
 
 // Week columns render at a fixed w-20 (5rem = 80px) — used to translate horizontal drag
@@ -29,7 +30,15 @@ function holidaysInWeek(weekKey: string): string[] {
   return names;
 }
 
-const CAPACITY_PER_WEEK = 40;
+/** Fallback when the server didn't supply a capacity cell (e.g. a week outside the loaded range) —
+ *  a plain contracted week with no deductions, which is what the grid assumed for everyone before
+ *  capacity was modelled. */
+const FALLBACK_CAPACITY: WeekCapacity = {
+  gross: DEFAULT_WEEKLY_CAPACITY_HOURS,
+  holiday: 0,
+  leave: 0,
+  available: DEFAULT_WEEKLY_CAPACITY_HOURS,
+};
 
 /** End (Sunday) of the week starting at `weekKey` ("yyyy-MM-dd"), as the same string format —
  *  ISO date strings sort lexicographically the same as chronologically, so callers can compare
@@ -58,29 +67,60 @@ export type PlanAssignmentRow = {
 };
 export type PlanResourceRow = { userId: string; userName: string; role: string; assignments: PlanAssignmentRow[] };
 export type PlanCellInit = { assignmentId: string; taskId: string | null; weekStartDate: string; hours: number };
+/** Per-person, per-week available hours (contracted minus holidays and approved leave). */
+export type CapacityCell = { userId: string; weekKey: string; gross: number; holiday: number; leave: number; available: number };
 
 // Composite key for a plan cell in local state — taskId "" means the assignment-level cell.
 function cellKey(assignmentId: string, taskId: string | null, weekKey: string): string {
   return `${assignmentId}|${taskId ?? ""}|${weekKey}`;
 }
 
-function capacityTone(hours: number): string {
-  if (hours === 0) return "text-muted-foreground";
-  if (hours > CAPACITY_PER_WEEK) return "bg-red-500/20 text-red-700 dark:text-red-400 font-semibold";
-  if (hours === CAPACITY_PER_WEEK) return "bg-emerald-500/20 text-emerald-700 dark:text-emerald-400 font-semibold";
-  return "bg-amber-400/25 text-amber-800 dark:text-amber-300 font-semibold";
+/** Colour a resource-week against that person's REAL available hours for the week, not a flat 40.
+ *  free = nothing booked and hours going spare; partial = room left; full = exactly used up (or no
+ *  capacity at all); over = booked beyond what exists. */
+function capacityTone(booked: number, available: number): string {
+  switch (bookingStatus(booked, available)) {
+    case "OVER":
+      return "bg-red-500/20 text-red-700 dark:text-red-400 font-semibold";
+    case "FULL":
+      return "bg-emerald-500/20 text-emerald-700 dark:text-emerald-400 font-semibold";
+    case "PARTIAL":
+      return "bg-amber-400/25 text-amber-800 dark:text-amber-300 font-semibold";
+    case "FREE":
+      return "text-muted-foreground";
+  }
+}
+
+/** Human explanation of how a week's available hours were arrived at, so a low number (or a zero)
+ *  is never a mystery — it names the holiday and leave deductions that produced it. */
+function capacityTooltip(userName: string, booked: number, cap: WeekCapacity): string {
+  const parts = [`${userName}: ${booked}h booked of ${cap.available}h available`];
+  const deductions: string[] = [];
+  if (cap.holiday > 0) deductions.push(`−${cap.holiday}h public holiday`);
+  if (cap.leave > 0) deductions.push(`−${cap.leave}h approved leave`);
+  parts.push(
+    deductions.length > 0
+      ? `${cap.gross}h contracted ${deductions.join(" ")}`
+      : `${cap.gross}h contracted week`,
+  );
+  if (booked > cap.available) parts.push(`Over by ${Math.round((booked - cap.available) * 100) / 100}h.`);
+  else if (cap.available > booked) parts.push(`${freeHours(booked, cap.available)}h free.`);
+  return parts.join(" · ");
 }
 
 export function PlannerGrid({
   weeks,
   resources,
   initialCells,
+  capacity = [],
   canManage,
   todayWeekKey,
 }: {
   weeks: { key: string; label: string }[];
   resources: PlanResourceRow[];
   initialCells: PlanCellInit[];
+  /** Available hours per person per week. Omitted (e.g. by My Planning) ⇒ a plain contracted week. */
+  capacity?: CapacityCell[];
   canManage: boolean;
   /** The current calendar week's key — draws a highlighted column border there so "now" is
    *  visible at a glance across an 8-week grid. */
@@ -169,6 +209,15 @@ export function PlannerGrid({
     return m;
   }, [resources]);
 
+  const capacityByKey = useMemo(() => {
+    const m = new Map<string, WeekCapacity>();
+    for (const c of capacity) m.set(`${c.userId}|${c.weekKey}`, { gross: c.gross, holiday: c.holiday, leave: c.leave, available: c.available });
+    return m;
+  }, [capacity]);
+  function capacityFor(userId: string, weekKey: string): WeekCapacity {
+    return capacityByKey.get(`${userId}|${weekKey}`) ?? FALLBACK_CAPACITY;
+  }
+
   function cellValue(assignmentId: string, taskId: string | null, weekKey: string): number {
     return cells[cellKey(assignmentId, taskId, weekKey)] ?? 0;
   }
@@ -219,6 +268,29 @@ export function PlannerGrid({
       if (wasLevel > 0 && Math.abs(wasLevel - taskWeekSum(a, weekKey)) > 0.001) mismatch++;
     }
 
+    // Warn — never block — when a touched cell leaves someone booked beyond the hours they
+    // actually have that week. Over-allocating on purpose is legitimate (crunch, a plan you intend
+    // to rebalance later); silently hiding it is not.
+    const touchedResourceWeeks = new Set<string>();
+    for (const key of dirty) {
+      const [assignmentId, , weekKey] = key.split("|");
+      const owner = resources.find((r) => r.assignments.some((a) => a.id === assignmentId));
+      if (owner) touchedResourceWeeks.add(`${owner.userId}::${weekKey}`);
+    }
+    const overAllocated: string[] = [];
+    for (const rw of touchedResourceWeeks) {
+      const [userId, weekKey] = rw.split("::");
+      const resource = resources.find((r) => r.userId === userId);
+      if (!resource) continue;
+      const booked = resourceWeekTotal(resource, weekKey);
+      const cap = capacityFor(userId, weekKey);
+      if (booked > cap.available) {
+        const week = weeks.find((w) => w.key === weekKey);
+        const why = cap.leave > 0 && cap.holiday > 0 ? " (leave + holiday)" : cap.leave > 0 ? " (on leave)" : cap.holiday > 0 ? " (holiday week)" : "";
+        overAllocated.push(`${resource.userName} — ${week?.label ?? weekKey}: ${booked}h of ${cap.available}h${why}`);
+      }
+    }
+
     startTransition(async () => {
       // End-date changes first — an hour cell in a newly-extended week would otherwise fail the
       // server's "within the assignment's window" check, since that window hasn't moved yet.
@@ -243,6 +315,18 @@ export function PlannerGrid({
       }
       if (mismatch > 0) {
         toast.warning(`${mismatch} week${mismatch === 1 ? "" : "s"} converted to task-level hours with a different total than the assignment-level number they replaced.`);
+      }
+      if (overAllocated.length > 0) {
+        // Saved anyway - this is a heads-up, not a rejection.
+        toast.warning(`Over available hours in ${overAllocated.length} week${overAllocated.length === 1 ? "" : "s"}`, {
+          description: (
+            <ul className="mt-1 list-none space-y-0.5 text-xs">
+              {overAllocated.slice(0, 5).map((line) => <li key={line}>{line}</li>)}
+              {overAllocated.length > 5 && <li className="opacity-70">...and {overAllocated.length - 5} more</li>}
+            </ul>
+          ),
+          duration: 8000,
+        });
       }
       toast.success("Plan saved.");
       setDirty(new Set());
@@ -322,12 +406,25 @@ export function PlannerGrid({
                     </td>
                     {weeks.map((w) => {
                       const total = resourceWeekTotal(r, w.key);
+                      const cap = capacityFor(r.userId, w.key);
+                      const reduced = cap.holiday > 0 || cap.leave > 0;
                       return (
                         <td
                           key={w.key}
-                          className={cn("p-2 text-center tabular-nums", capacityTone(total), weekBorderClass(w.key))}
+                          className={cn("p-2 text-center tabular-nums", capacityTone(total, cap.available), weekBorderClass(w.key))}
+                          title={capacityTooltip(r.userName, total, cap)}
                         >
-                          {total > 0 ? total : "—"}
+                          {/* booked / available — the denominator is this person's real capacity for
+                              the week, so a holiday or leave week reads honestly. */}
+                          <span>{total > 0 ? total : "—"}</span>
+                          <span className={cn("text-[10px] font-normal", reduced ? "text-foreground/70" : "opacity-60")}>
+                            {" / "}{cap.available}
+                          </span>
+                          {reduced && (
+                            <span className="block text-[9px] leading-tight font-normal opacity-70">
+                              {cap.leave > 0 && cap.holiday > 0 ? "leave + hol." : cap.leave > 0 ? "on leave" : "holiday"}
+                            </span>
+                          )}
                         </td>
                       );
                     })}

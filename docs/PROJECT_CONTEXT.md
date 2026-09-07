@@ -992,3 +992,120 @@ A PM governance workspace, separate from the finance/Projects module.
 ### Open / next (carry-over)
 - Optional drag-to-resize on the Gantt bars (currently edit via row dialog).
 - Rotate the Entra secret; deploy to Azure; wire vendor-payment project links into cost reports.
+
+---
+
+## Session update — 2026-09-07 (this PC: in-app notifications, test runner, and the finance-accuracy pass)
+
+One long session. **Six migrations** added (all applied to erp_dev; run `migrate deploy` on another PC).
+Adds the repo's **first test runner**. Same bootstrap caveat — when this doc conflicts with code, trust
+the code. Typecheck + lint + build + 109 unit tests all green; the UI could NOT be click-through
+verified by the agent (staff login is SSO-only), so behaviour was verified by unit tests plus
+read-only scripts run against the real `erp_dev` data — see the verification notes per section.
+
+### Migrations added (apply with `pnpm exec prisma migrate deploy`)
+- `20260907150000_ticket_notifications` — in-app notification model.
+- `20260907160000_company_currency_eur` — sets `Company.currency` to EUR (the reporting currency).
+- `20260907170000_assignment_bill_rate` — `Assignment.billRate` + `TimeEntry.billRate`.
+- `20260907180000_client_payment_terms` — `Client.paymentTermsDays`.
+- `20260907190000_employment_weekly_capacity` — `Employment.weeklyCapacityHours` (default 40).
+- `20260907200000_vendor_payment_milestone` — `VendorPayment.milestoneId`.
+
+### In-app notifications + menu fixes
+- `src/lib/notifications.ts`, `ticket-notify.ts`, `notifications-actions.ts`,
+  `components/notification-bell.tsx`.
+- **The bell panel renders through `createPortal` to `document.body`** with fixed positioning and
+  viewport clamping — a 320px panel inside a 240px `overflow-hidden` sidebar was being clipped.
+  Don't move it back inside the sidebar tree.
+- Sidebar shell pinned to `h-dvh` so page scroll no longer drags the menu; nav grouped/collapsible.
+
+### Test runner (NEW — the repo had none)
+- **Vitest 5, node environment (no jsdom)**, `vitest.config.ts` with the `@/` → `./src` alias.
+  `pnpm test` / `pnpm test:watch`. Tests live in `src/lib/__tests__/`.
+- **109 assertions** across revenue, invoice, budget, vacation-calc, fx, wip and capacity.
+- Pure helpers extracted from `cost-rate.ts` (`hourlyRateFromMonthly`) to make them testable.
+- **Note**: `vitest.config.ts` uses ESM syntax and emits a Vite `configLoader: 'native'` warning on
+  every run. Harmless; silence it later by renaming to `.mts` or setting `"type": "module"`.
+
+### Multi-currency reporting (`src/lib/fx.ts`)
+- `convertCurrency` / `convertWith` generalize the old EUR-only `convertToEUR`: identity → direct →
+  inverse → **triangulation through EUR**. `loadRateResolver` resolves a rate *as of a date*.
+- **Every rollup converts at the row's own economic date** (invoice: `recognitionDate ?? issueDate`;
+  vendor bill: `invoiceDate ?? paymentDate ?? createdAt`).
+- **Rows with no rate are NEVER summed at 1:1 and never silently dropped** — they are collected as
+  `ExcludedGroup[]` and rendered by `src/components/fx-warning.tsx`. Keep that contract.
+
+### Bill rate + per-consultant realization
+- `Assignment.billRate` snapshots the milestone sales price for T&M/RETAINER (null for FIXED_PRICE),
+  editable only with `rates:view:any`. `TimeEntry.billRate` is **frozen at approval** in
+  `stampCostRatesForCards`, mirroring the historical cost-rate stamp. **No backfill** — pre-existing
+  entries fall back to the assignment snapshot, then the milestone list rate.
+- Pure `realizationMetrics` in `revenue.ts`; a "Per consultant" tab on `/revenue`
+  (`consultants-tab.tsx`, `src/lib/realization-data.ts`). **Gated on `rates:view:any` at the query
+  layer** — do not expose this data through any path that skips that check.
+
+### Unbilled revenue / WIP (`/revenue/unbilled`)
+- Pure `wipMetrics` (earned / invoiced / unbilled / overBilled). `src/lib/wip.ts` is the **pure** half
+  (grouping, age buckets) and `wip-data.ts` the server half — split because a client component
+  importing a `server-only` module breaks the build.
+- The detail view groups project → milestone → month with age buckets **0-30 / 31-60 / 61-90 / 90+**
+  (inclusive upper edges — 90 is NOT yet "90+"). XLSX export at `/api/revenue/unbilled/export`.
+- **`createTimeInvoiceAction` was rewritten**: it now selects entries, creates lines and claims the
+  entries **inside ONE transaction**, prices lines at the frozen **bill rate** (hours-weighted
+  average, with `amount` as the source of truth), and **refuses to attach an entry already linked to
+  a line** (`updateMany ... WHERE invoiceLineId IS NULL`; a short count rolls the whole invoice back).
+  That closed a real TOCTOU race where two concurrent invoices could steal each other's time entries.
+  Don't "simplify" the guard away.
+- `/invoices/new` offers a project's unbilled time on selection, with a one-click "Bill all of it".
+
+### AR aging, overdue and DSO (`/invoices`)
+- Pure helpers in `invoice.ts`: `agingBucket`, `daysOverdue`, `dso`, `effectiveDueDate`,
+  `countsTowardAR`. **`daysOverdue` is 0 ON the due date** (due today isn't late); buckets have
+  inclusive upper edges at 30/60/90.
+- Per-client aging matrix + a company total row; StatCards for Outstanding / Overdue / Oldest overdue
+  / 90-day DSO. **Outstanding is now signed — credit notes subtract** (it previously added them).
+  The duplicate "Outstanding" card was removed from the register KPI row.
+- `Client.paymentTermsDays` defaults an invoice's due date at creation and back-fills the aging date.
+  Invoices with **neither** land in a **"No due date"** bucket — deliberately never guessed.
+
+### Capacity-aware planner (`/planning`, `/planning/availability`)
+- `Employment.weeklyCapacityHours` (default 40) models part-timers and contractors; **a day is
+  `weeklyCapacityHours / 5`**, so deductions scale with the contract instead of a fixed 8h.
+- `src/lib/capacity.ts` (pure) + `capacity-data.ts` (server). The planner deducts Albanian public
+  holidays **and approved leave**, apportioned per week; a holiday inside a leave range is counted
+  **once** (as a holiday), because `isWorkingDay` already excludes holidays. `LeaveReturn` days are
+  excluded — the person was actually at work.
+- `capacityTone(booked, available)` replaces the hardcoded `CAPACITY_PER_WEEK = 40`. Resource rows
+  read **`booked / available`** with the deduction spelled out in the tooltip. **A zero-capacity week
+  is FULL, not FREE** — nothing to give must never advertise as available.
+- **NEW `/planning/availability`** — the bench view: free hours per person per week, a company bench
+  total, and filters for week range / role / minimum free hours. Answers "who is free in October".
+- Saving a plan **warns without blocking** when a cell pushes someone past their available hours.
+- `/my-planning` shares `PlannerGrid` and was wired to the same capacity, or it would have kept the
+  old flat-40 colouring.
+- **Verified against real data**: Christmas week 2025-12-29 → 24h available (2 holidays), not 40;
+  week of 2026-08-10 → Enida and Indri at 8h (4 days' leave each).
+
+### Subcontractor cost in project margin
+- `computeProjectRevenue` splits cost into **`internalCost` / `externalCost` / `totalCost`**, and
+  **`margin = earned − totalCost`**. `forecastMargin` also carries committed external cost (via
+  `forecastTotalCost`) — otherwise the forecast column reintroduces the same inflated margin.
+- `src/lib/external-cost.ts` loads project-attributed vendor bills, FX-converted at the bill's own
+  date. **Both `TO_PAY` and `PAID` count — committed cost is cost.**
+- `/revenue` shows **Internal cost** and **Subcontractor** as separate columns; `/budgets` annotates
+  actual cost with `(+X ext.)`; the project page gains an **External costs** card (gated on
+  `rates:view:any`, filtered in the query, not the component).
+- `VendorPayment.milestoneId` lets a bill be pinned to a milestone (server-validated to belong to the
+  selected project) so fixed-price milestone margin is accurate.
+- **Verified end-to-end** on real data with a temporary bill that was created, measured and deleted:
+  margin moved by exactly −3000 and the row was removed (DB back to its original 1 vendor bill).
+
+### Open / next (carry-over)
+- **Write-off is not a real state**: every euro of approved work is now either unbilled or invoiced,
+  but nothing can be explicitly written off (no flag/reason on `TimeEntry`), so aged WIP is only a
+  proxy. Add it if the three-way split needs to be genuine.
+- **`nextInvoiceNumber` uses `count + 1`** (`invoices/actions.ts`) — deleting an invoice makes the
+  next number collide with an existing one. It should derive from max, as `numbering.ts` already does.
+- Invoice line editing after DRAFT is still delete + recreate (beyond the commission box).
+- Unchanged from before: rotate the Entra client secret; deploy to Azure; regenerate INV-0001 for
+  July; replace the Pirelli test data.

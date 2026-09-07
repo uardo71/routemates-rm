@@ -19,10 +19,14 @@ export function CreateAssignmentForm({
   milestoneId,
   users,
   canViewCostRate,
+  showBillRate = false,
+  defaultBillRate = null,
 }: {
   milestoneId: string;
   users: Option[];
   canViewCostRate: boolean;
+  showBillRate?: boolean;
+  defaultBillRate?: string | null;
 }) {
   const [error, formAction, pending] = useActionState(createAssignmentAction, undefined);
 
@@ -49,6 +53,12 @@ export function CreateAssignmentForm({
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="asgCostRate">Cost rate (€/hr, optional)</Label>
             <Input id="asgCostRate" name="costRate" type="number" step="0.0001" min="0" placeholder="from employment" />
+          </div>
+        )}
+        {showBillRate && (
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="asgBillRate">Bill rate (/hr, optional)</Label>
+            <Input id="asgBillRate" name="billRate" type="number" step="0.0001" min="0" defaultValue={defaultBillRate ?? ""} placeholder="from milestone rate" />
           </div>
         )}
         <div className="flex flex-col gap-1.5">

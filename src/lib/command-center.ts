@@ -285,7 +285,7 @@ export async function assembleCommandCenter(user: SessionUser): Promise<CommandC
       earned: r.earnedRevenue,
       forecast: r.forecastRevenue,
       recognized: r.recognizedRevenue,
-      cost: r.cost,
+      cost: r.totalCost, // internal time + partner bills
       margin: r.margin,
       marginPct,
       outstanding: round2(outstandingByProject.get(r.projectId) ?? 0),
@@ -318,7 +318,7 @@ export async function assembleCommandCenter(user: SessionUser): Promise<CommandC
   const earned = round2(rows.reduce((s, r) => s + r.earnedRevenue, 0));
   const forecast = round2(rows.reduce((s, r) => s + r.forecastRevenue, 0));
   const recognized = round2(rows.reduce((s, r) => s + r.recognizedRevenue, 0));
-  const cost = round2(rows.reduce((s, r) => s + r.cost, 0));
+  const cost = round2(rows.reduce((s, r) => s + r.totalCost, 0));
   const overheadCost = round2(overhead.reduce((s, o) => s + o.cost, 0));
   const margin = round2(earned - cost);
   const operatingMargin = round2(margin - overheadCost);

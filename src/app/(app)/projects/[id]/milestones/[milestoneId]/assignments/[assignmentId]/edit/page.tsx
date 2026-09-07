@@ -22,7 +22,7 @@ export default async function EditAssignmentPage({
 
   const assignment = await prisma.assignment.findFirst({
     where: { id: assignmentId, milestoneId, milestone: { projectId, project: { companyId: user.companyId } } },
-    include: { user: true, milestone: true, _count: { select: { timeEntries: true } } },
+    include: { user: true, milestone: { include: { project: { select: { billingType: true } } } }, _count: { select: { timeEntries: true } } },
   });
   if (!assignment) notFound();
   if (!(await canManageMilestone(user, milestoneId))) notFound();
@@ -49,6 +49,7 @@ export default async function EditAssignmentPage({
               id: assignment.id,
               userName: assignment.user.name,
               costRate: assignment.costRate.toString(),
+              billRate: assignment.billRate?.toString() ?? null,
               allocatedHours: assignment.allocatedHours?.toString() ?? null,
               startDate: assignment.startDate?.toISOString().slice(0, 10) ?? null,
               endDate: assignment.endDate?.toISOString().slice(0, 10) ?? null,
@@ -56,6 +57,7 @@ export default async function EditAssignmentPage({
             }}
             canDelete={assignment._count.timeEntries === 0}
             canViewCostRate={can(user, "rates:view:any")}
+            showBillRate={can(user, "rates:view:any") && assignment.milestone.project.billingType !== "FIXED_PRICE"}
           />
         </CardContent>
       </Card>

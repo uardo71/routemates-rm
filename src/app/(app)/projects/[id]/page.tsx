@@ -26,6 +26,7 @@ import { InfoField } from "@/components/info-field";
 import { DonutChart } from "@/components/charts/donut-chart";
 import { MiniBarChart } from "@/components/charts/mini-bar-chart";
 import { prisma } from "@/lib/prisma";
+import { loadExternalCost } from "@/lib/external-cost";
 import { can, canManageProject, visibleProjectIds } from "@/lib/permissions";
 import { requirePermission } from "@/lib/session";
 import { formatMoney, formatNumber } from "@/lib/format";
@@ -141,6 +142,16 @@ export default async function ProjectDetailPage({
   // Sales price / monetary value is rate-sensitive — hidden from users who can't view rates
   // (e.g. an assignee viewing a project they're staffed on but don't manage).
   const canViewRates = can(user, "rates:view:any") || canManage;
+
+  // Subcontractor bills booked to this project. Cost data, so it follows the same gate as rates —
+  // filtered in the query, not hidden in the component.
+  const externalBills = canViewRates
+    ? (await loadExternalCost(user.companyId, project.company.currency, [project.id])).bills
+    : [];
+  const externalTotal =
+    Math.round(externalBills.reduce((s, b) => s + (b.baseAmount ?? 0), 0) * 100) / 100;
+  const externalUnconverted = externalBills.filter((b) => b.baseAmount === null).length;
+  const msNameById = new Map(project.milestones.map((m) => [m.id, m.name]));
   const milestoneIds = project.milestones.map((m) => m.id);
 
   const [hoursByMilestone, assignments, hoursByAssignment, invoices, timeCards] = await Promise.all([
@@ -476,6 +487,84 @@ export default async function ProjectDetailPage({
               </CardContent>
             </Card>
           </div>
+
+          {canViewRates && externalBills.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex flex-wrap items-center gap-2 text-base">
+                  <Building2Icon className="size-4 text-muted-foreground" />
+                  External costs
+                  <span className="font-normal text-muted-foreground">({externalBills.length})</span>
+                  <span className="ml-auto font-mono text-sm">
+                    {formatMoney(externalTotal, project.company.currency)}
+                  </span>
+                </CardTitle>
+                <p className="text-xs text-muted-foreground">
+                  Vendor bills attributed to this project. Both to-pay and paid count toward margin — a committed
+                  bill is a real cost.
+                  {externalUnconverted > 0 && (
+                    <span className="ml-1 text-amber-600">
+                      {externalUnconverted} bill{externalUnconverted === 1 ? "" : "s"} excluded from the total (no exchange rate).
+                    </span>
+                  )}
+                </p>
+              </CardHeader>
+              <CardContent className="px-0">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Vendor</TableHead>
+                      <TableHead>Description</TableHead>
+                      <TableHead>Milestone</TableHead>
+                      <TableHead>Invoice date</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead className="text-right">Amount</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {externalBills.map((b) => (
+                      <TableRow key={b.id} className="group/row">
+                        <TableCell>
+                          <Link href={`/vendors/${b.id}`} className="font-medium group-hover/row:underline">
+                            {b.vendorName}
+                          </Link>
+                          {b.invoiceNumber && (
+                            <div className="text-[11px] text-muted-foreground tabular-nums">{b.invoiceNumber}</div>
+                          )}
+                        </TableCell>
+                        <TableCell className="max-w-64 truncate text-muted-foreground">{b.description ?? "—"}</TableCell>
+                        <TableCell className="text-muted-foreground">
+                          {b.milestoneId ? (msNameById.get(b.milestoneId) ?? "—") : <span className="opacity-50">project-level</span>}
+                        </TableCell>
+                        <TableCell className="whitespace-nowrap text-muted-foreground">
+                          {b.invoiceDate ? format(parseISO(b.invoiceDate), "MMM d, yyyy") : "—"}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={b.status === "PAID" ? "secondary" : "outline"}>
+                            {b.status === "PAID" ? "Paid" : "To pay"}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums font-medium">
+                          {formatMoney(b.amount, b.currency)}
+                          {b.baseAmount === null && (
+                            <div className="text-[10px] font-normal text-amber-600">no rate</div>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                    <TableRow className="border-t-2">
+                      <TableCell colSpan={5} className="text-right font-medium">
+                        Total external cost ({project.company.currency})
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums font-semibold">
+                        {formatMoney(externalTotal, project.company.currency)}
+                      </TableCell>
+                    </TableRow>
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          )}
         </TabsContent>
 
         <TabsContent value="milestones" className="pt-4">

@@ -7,6 +7,8 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { RoutematesLogo } from "@/components/routemates-logo";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { NotificationBell } from "@/components/notification-bell";
+import type { NotificationItem } from "@/lib/notifications";
 import { UserMenu } from "./user-menu";
 import { SidebarNav, type NavGroup } from "./sidebar-nav";
 import { cn } from "@/lib/utils";
@@ -34,6 +36,8 @@ export function SidebarShell({
   userRole,
   userAvatar = null,
   defaultCollapsed = false,
+  notifications = [],
+  unreadNotifications = 0,
   children,
 }: {
   groups: NavGroup[];
@@ -41,6 +45,8 @@ export function SidebarShell({
   userRole: string;
   userAvatar?: string | null;
   defaultCollapsed?: boolean;
+  notifications?: NotificationItem[];
+  unreadNotifications?: number;
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
@@ -69,12 +75,12 @@ export function SidebarShell({
 
   return (
     <TooltipProvider>
-      <div className="flex min-h-full flex-1">
-        {/* ---------- DESKTOP SIDEBAR (hidden below md) ---------- */}
+      <div className="flex h-dvh overflow-hidden">
+        {/* ---------- DESKTOP SIDEBAR (hidden below md) — sticky full-height column ---------- */}
         <aside
           data-collapsed={collapsed || undefined}
           className={cn(
-            "group/sidebar relative hidden shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground md:flex",
+            "group/sidebar relative hidden h-full shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground md:flex",
             "transition-[width] duration-200 ease-out motion-reduce:transition-none",
             collapsed ? "w-[4.5rem]" : "w-60",
           )}
@@ -127,7 +133,10 @@ export function SidebarShell({
           </div>
 
           {/* footer */}
-          <div className="border-t border-sidebar-border/70 p-2">
+          <div className="flex flex-col gap-1 border-t border-sidebar-border/70 p-2">
+            <div className={cn("flex", collapsed ? "justify-center" : "px-1")}>
+              <NotificationBell initialItems={notifications} initialUnread={unreadNotifications} basePath="/tickets" openUp tone="sidebar" />
+            </div>
             <UserMenu name={userName} role={userRole} avatarSrc={userAvatar} collapsed={collapsed} />
           </div>
         </aside>
@@ -149,7 +158,8 @@ export function SidebarShell({
             </button>
             <RoutematesLogo variant="color" className="h-7 dark:hidden" />
             <RoutematesLogo variant="negative" className="hidden h-7 dark:block" />
-            <div className="ml-auto">
+            <div className="ml-auto flex items-center gap-1">
+              <NotificationBell initialItems={notifications} initialUnread={unreadNotifications} basePath="/tickets" tone="bar" />
               <ThemeToggle />
             </div>
           </header>

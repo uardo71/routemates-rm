@@ -32,9 +32,14 @@ export type ProjectRevenueInput = {
   contractValue: number;
   /** Project budget hours, or Σ milestone budget hours when the project has none. */
   budgetHours: number;
-  /** Actual cost to date = Σ(approved hours × historical cost rate), computed by the caller. */
-  cost: number;
-  /** Projected cost of the whole plan = Σ(planned hours × current cost rate), computed by the caller. */
+  /** Internal delivery cost to date = Σ(approved hours × historical cost rate), computed by the
+   *  caller. This is our own people's time only. */
+  internalCost: number;
+  /** Money paid (or committed) to partners for this project — vendor bills attributed to it, in
+   *  the reporting currency. Both TO_PAY and PAID count: a committed bill is a real cost.
+   *  Optional; defaults to 0 for projects delivered entirely in-house. */
+  externalCost?: number;
+  /** Projected internal cost of the whole plan = Σ(planned hours × current cost rate). */
   forecastCost: number;
   milestones: MilestoneRevenueInput[];
 };
@@ -49,17 +54,101 @@ export type ProjectRevenueResult = {
   earnedRevenue: number;
   /** Recognized: same as earned for T&M; completed-milestone value for fixed price. */
   recognizedRevenue: number;
-  cost: number;
-  /** Gross margin against earned revenue (earned − actual cost). */
+  /** Our own people's time: Σ(approved hours × historical cost rate). */
+  internalCost: number;
+  /** Subcontractor / partner bills attributed to the project (TO_PAY + PAID). */
+  externalCost: number;
+  /** internalCost + externalCost — what delivering this project actually costs. */
+  totalCost: number;
+  /** Gross margin against earned revenue (earned − TOTAL cost, internal and external). */
   margin: number;
-  /** Projected cost of the whole plan = Σ(planned hours × current cost rate). */
+  /** Projected internal cost of the whole plan = Σ(planned hours × current cost rate). */
   forecastCost: number;
-  /** Projected margin if the whole plan is delivered = forecast revenue − forecast cost. */
+  /** Projected total cost = forecast internal cost + external bills already committed. */
+  forecastTotalCost: number;
+  /** Projected margin if the whole plan is delivered = forecast revenue − forecast TOTAL cost. */
   forecastMargin: number;
 };
 
 function round2(n: number): number {
   return Math.round((n + Number.EPSILON) * 100) / 100;
+}
+
+// ---------- work in progress (earned vs invoiced) ----------
+
+export type WipInput = {
+  /** Earned revenue to date (approved hours × rate, or % completion for fixed price). */
+  earned: number;
+  /** Recognized/invoiced to date — net of issued invoices in the register (credit notes subtract). */
+  invoiced: number;
+  /** Approved hours not yet attached to an invoice line. */
+  unbilledHours: number;
+};
+
+export type WipResult = {
+  earned: number;
+  invoiced: number;
+  /** earned − invoiced. Positive = work delivered but not yet billed (the month-end accrual and
+   *  the leakage signal). Negative = billed ahead of delivery (see `overBilled`). */
+  unbilled: number;
+  /** max(0, invoiced − earned) — deposits, prepaid retainers, and other billing ahead of work. */
+  overBilled: number;
+  unbilledHours: number;
+};
+
+/** Pure earned-vs-invoiced reconciliation (Prisma-free). Every euro of approved work sits in exactly
+ *  one of three states: unbilled (here), invoiced (`invoiced`), or written off (billable hours that
+ *  will never be billed — see {@link realizationMetrics}'s `writeOffHours`). */
+export function wipMetrics(input: WipInput): WipResult {
+  const earned = round2(input.earned);
+  const invoiced = round2(input.invoiced);
+  return {
+    earned,
+    invoiced,
+    unbilled: round2(earned - invoiced),
+    overBilled: round2(Math.max(0, invoiced - earned)),
+    unbilledHours: round2(input.unbilledHours),
+  };
+}
+
+// ---------- per-consultant realization ----------
+
+export type RealizationInput = {
+  /** Total approved hours the person worked in the period (across all milestones). */
+  workedHours: number;
+  /** Of those, hours logged on billable milestones. */
+  billableHours: number;
+  /** Of those, hours already attached to an invoice line (billed). */
+  billedHours: number;
+  /** Revenue attributed to the person for the period (Σ billed hours × frozen bill rate). */
+  revenue: number;
+};
+
+export type RealizationResult = {
+  workedHours: number;
+  billableHours: number;
+  billedHours: number;
+  /** billed ÷ worked, as a percentage (0 when no hours worked — no division by zero). */
+  realizationPct: number;
+  /** revenue ÷ worked (0 when no hours worked). */
+  effectiveHourlyRate: number;
+  /** billable − billed: billable hours that haven't been invoiced (leakage). */
+  writeOffHours: number;
+};
+
+/** Pure per-consultant realization math (Prisma-free). Realization is billed vs worked hours;
+ *  the effective hourly rate is revenue spread over ALL worked hours (so non-billable and unbilled
+ *  time drags it down), and write-off is billable hours not yet billed. */
+export function realizationMetrics(input: RealizationInput): RealizationResult {
+  const worked = input.workedHours;
+  return {
+    workedHours: round2(worked),
+    billableHours: round2(input.billableHours),
+    billedHours: round2(input.billedHours),
+    realizationPct: worked > 0 ? round2((input.billedHours / worked) * 100) : 0,
+    effectiveHourlyRate: worked > 0 ? round2(input.revenue / worked) : 0,
+    writeOffHours: round2(input.billableHours - input.billedHours),
+  };
 }
 
 export function computeProjectRevenue(input: ProjectRevenueInput): ProjectRevenueResult {
@@ -101,6 +190,16 @@ export function computeProjectRevenue(input: ProjectRevenueInput): ProjectRevenu
     recognizedRevenue = earnedRevenue;
   }
 
+  // Cost has two sources and both belong in margin: our own people's time, and whatever we paid a
+  // partner to deliver part of the work. Counting only the first inflates the margin of every
+  // project delivered through a subcontractor.
+  const internalCost = round2(input.internalCost);
+  const externalCost = round2(input.externalCost ?? 0);
+  const totalCost = round2(internalCost + externalCost);
+  // External bills are already committed, so they weigh on the forecast too — otherwise the
+  // forecast column reintroduces exactly the inflated margin this split exists to remove.
+  const forecastTotalCost = round2(input.forecastCost + externalCost);
+
   return {
     plannedHours,
     approvedHours,
@@ -108,9 +207,12 @@ export function computeProjectRevenue(input: ProjectRevenueInput): ProjectRevenu
     forecastRevenue,
     earnedRevenue,
     recognizedRevenue,
-    cost: round2(input.cost),
-    margin: round2(earnedRevenue - input.cost),
+    internalCost,
+    externalCost,
+    totalCost,
+    margin: round2(earnedRevenue - totalCost),
     forecastCost: round2(input.forecastCost),
-    forecastMargin: round2(forecastRevenue - input.forecastCost),
+    forecastTotalCost: forecastTotalCost,
+    forecastMargin: round2(forecastRevenue - forecastTotalCost),
   };
 }

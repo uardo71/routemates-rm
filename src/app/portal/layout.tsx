@@ -1,12 +1,15 @@
 import Link from "next/link";
 import { LifeBuoyIcon, LogOutIcon } from "lucide-react";
 import { requirePortalUser } from "@/lib/portal";
+import { loadNotifications } from "@/lib/notifications";
 import { InitialsAvatar } from "@/components/initials-avatar";
+import { NotificationBell } from "@/components/notification-bell";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { signOutAction } from "../(app)/sign-out-action";
 
 export default async function PortalLayout({ children }: { children: React.ReactNode }) {
   const u = await requirePortalUser();
+  const notif = await loadNotifications(u.id);
   return (
     <div className="min-h-screen bg-background">
       <header className="sticky top-0 z-20 border-b bg-card/80 backdrop-blur">
@@ -19,6 +22,7 @@ export default async function PortalLayout({ children }: { children: React.React
             </span>
           </Link>
           <div className="flex items-center gap-2">
+            <NotificationBell initialItems={notif.items} initialUnread={notif.unread} basePath="/portal" tone="bar" />
             <ThemeToggle />
             <div className="hidden items-center gap-2 sm:flex">
               <InitialsAvatar name={u.name} size="sm" />

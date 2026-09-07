@@ -4,6 +4,7 @@ import { auth } from "@/auth";
 import { can } from "@/lib/permissions";
 import { prisma } from "@/lib/prisma";
 import { avatarSrc } from "@/lib/avatar";
+import { loadNotifications } from "@/lib/notifications";
 import { type NavGroup } from "./sidebar-nav";
 import { SidebarShell } from "./sidebar-shell";
 
@@ -14,7 +15,10 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   if (session.user.role === "CUSTOMER") redirect("/portal");
 
   const user = session.user;
-  const me = await prisma.user.findUnique({ where: { id: user.id }, select: { avatarUrl: true } });
+  const [me, notif] = await Promise.all([
+    prisma.user.findUnique({ where: { id: user.id }, select: { avatarUrl: true } }),
+    loadNotifications(user.id),
+  ]);
 
   const groups: NavGroup[] = [
     {
@@ -41,12 +45,15 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         ...(can(user, "projects:view")
           ? [{ href: "/projects", label: "Projects", icon: "projects" as const }]
           : []),
-        { href: "/time", label: "Time", icon: "time" as const },
         { href: "/uat", label: "UAT scripts", icon: "uat" as const },
         { href: "/cutover", label: "Cutover plans", icon: "cutover" as const },
+      ],
+    },
+    {
+      label: "Time & people",
+      items: [
+        { href: "/time", label: "Time", icon: "time" as const },
         { href: "/my-planning", label: "My planning", icon: "myPlanning" as const },
-        { href: "/vacations", label: "Vacations", icon: "vacations" as const },
-        { href: "/expenses", label: "Expenses", icon: "expenses" as const },
         ...(user.role === "ADMIN" || user.role === "PM"
           ? [{ href: "/approvals", label: "Approvals", icon: "approvals" as const }]
           : []),
@@ -60,6 +67,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
               },
             ]
           : []),
+        { href: "/vacations", label: "Vacations", icon: "vacations" as const },
+        { href: "/expenses", label: "Expenses", icon: "expenses" as const },
       ],
     },
     ...(can(user, "invoices:manage") || can(user, "salaries:manage")
@@ -129,6 +138,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       userRole={user.role}
       userAvatar={avatarSrc(me?.avatarUrl)}
       defaultCollapsed={defaultCollapsed}
+      notifications={notif.items}
+      unreadNotifications={notif.unread}
     >
       {children}
     </SidebarShell>

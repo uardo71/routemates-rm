@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/session";
 import { startOfWeek, parseDateParam, toDateParam } from "@/lib/week";
 import { WeekJump } from "@/components/week-jump";
+import { loadCapacity, toCapacityCells } from "@/lib/capacity-data";
 import { PlannerGrid, type PlanAssignmentRow, type PlanCellInit, type PlanResourceRow } from "../planning/planner-grid";
 
 const WEEKS_VISIBLE = 8;
@@ -55,6 +56,18 @@ export default async function MyPlanningPage({ searchParams }: { searchParams: P
   }));
   const resources: PlanResourceRow[] = [{ userId: user.id, userName: "My schedule", role: user.role, assignments: rows }];
 
+  // Same real capacity the Resource planner uses, so my own week reads honestly during a holiday
+  // week or while I'm on approved leave.
+  const capacity = toCapacityCells(
+    await loadCapacity(
+      user.companyId,
+      [user.id],
+      weeks.map((w) => toDateParam(startOfWeek(w))),
+      timelineStart,
+      timelineEnd,
+    ),
+  );
+
   const prevStart = toDateParam(addWeeks(timelineStart, -WEEKS_VISIBLE));
   const nextStart = toDateParam(addWeeks(timelineStart, WEEKS_VISIBLE));
   const qs = (s: string) => `/my-planning?start=${s}`;
@@ -90,6 +103,7 @@ export default async function MyPlanningPage({ searchParams }: { searchParams: P
         weeks={weeks.map((w) => ({ key: toDateParam(startOfWeek(w)), label: format(w, "MMM d") }))}
         resources={resources}
         initialCells={initialCells}
+        capacity={capacity}
         canManage={false}
         todayWeekKey={toDateParam(startOfWeek(new Date()))}
       />

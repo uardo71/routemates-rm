@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/session";
 import { taxPeriodLabel } from "@/lib/tax";
+import { convertRows } from "@/lib/fx";
 import { TaxesClient, type TaxRow, type TaxCategoryOption } from "./taxes-client";
 
 const iso = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : null);
@@ -22,7 +23,15 @@ export default async function TaxesPage() {
     prisma.company.findUniqueOrThrow({ where: { id: caller.companyId }, select: { currency: true } }),
   ]);
 
-  const rows: TaxRow[] = payments.map((p) => ({
+  // Convert each tax payment to the reporting currency at its economic date (payment date, else the
+  // period start) so aggregates sum one currency; unconvertible rows are surfaced.
+  const reportingCurrency = company.currency;
+  const conv = await convertRows(
+    payments.map((p) => ({ amount: Number(p.amount), currency: p.currency, date: p.paymentDate ?? p.periodStart })),
+    reportingCurrency,
+  );
+
+  const rows: TaxRow[] = payments.map((p, i) => ({
     id: p.id,
     categoryId: p.categoryId,
     categoryName: p.category.name,
@@ -32,6 +41,7 @@ export default async function TaxesPage() {
     periodLabel: taxPeriodLabel(p.periodStart, p.periodEnd),
     periodMonth: iso(p.periodStart)!.slice(0, 7),
     amount: Number(p.amount),
+    baseAmount: conv.rows[i].baseAmount,
     currency: p.currency,
     serialNumber: p.serialNumber,
     authority: p.authority,
@@ -50,5 +60,5 @@ export default async function TaxesPage() {
   for (const p of payments) currencyCounts.set(p.currency, (currencyCounts.get(p.currency) ?? 0) + 1);
   const displayCurrency = [...currencyCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? company.currency;
 
-  return <TaxesClient rows={rows} categories={categoryOptions} defaultCurrency={displayCurrency} />;
+  return <TaxesClient rows={rows} categories={categoryOptions} defaultCurrency={displayCurrency} reportingCurrency={reportingCurrency} excluded={conv.excluded} />;
 }

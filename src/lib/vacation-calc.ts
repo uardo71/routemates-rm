@@ -43,3 +43,42 @@ export function entitlementForYear(joinDate: Date, year: number): number {
   const monthsRemaining = 12 - joinDate.getMonth(); // getMonth() is 0-indexed: July -> 6 -> 6 months left
   return Math.round((ANNUAL_VACATION_ENTITLEMENT * monthsRemaining) / 12);
 }
+
+export type VacationBalanceWalk = {
+  year: number;
+  entitlement: number;
+  carriedIn: number;
+  taken: number;
+  balance: number;
+};
+
+/** Pure year-walk behind computeVacationBalance (the DB provides `takenByYear`). Two paths:
+ *  • Manual opening (openingDays + openingYear set) — start at that baseline year seeded with the
+ *    entered days, and grant the FULL annual entitlement every year (an established employee, no
+ *    first-year proration).
+ *  • Hire-date accrual (no manual opening) — start at the hire year, first year prorated via
+ *    entitlementForYear, full entitlement thereafter.
+ *  Each year: balance = carriedIn + entitlement − taken; the result is the row at asOfYear. If
+ *  asOfYear precedes the start year the loop doesn't run and the seed is returned as-is. */
+export function walkVacationBalance(opts: {
+  joinDate: Date;
+  openingDays: number | null;
+  openingYear: number | null;
+  asOfYear: number;
+  takenByYear: (year: number) => number;
+}): VacationBalanceWalk {
+  const hasManualOpening = opts.openingDays != null && opts.openingYear != null;
+  const startYear = hasManualOpening ? (opts.openingYear as number) : opts.joinDate.getFullYear();
+  const seed = hasManualOpening ? (opts.openingDays as number) : 0;
+
+  let running = seed;
+  let result: VacationBalanceWalk = { year: startYear, entitlement: 0, carriedIn: seed, taken: 0, balance: seed };
+  for (let year = startYear; year <= opts.asOfYear; year++) {
+    const entitlement = hasManualOpening ? ANNUAL_VACATION_ENTITLEMENT : entitlementForYear(opts.joinDate, year);
+    const taken = opts.takenByYear(year);
+    const carriedIn = running;
+    running = carriedIn + entitlement - taken;
+    result = { year, entitlement, carriedIn, taken, balance: running };
+  }
+  return result;
+}

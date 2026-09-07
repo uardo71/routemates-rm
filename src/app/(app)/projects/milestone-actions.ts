@@ -237,6 +237,7 @@ const CreateAssignmentSchema = z
     milestoneId: z.string().min(1),
     userId: z.string().min(1),
     costRate: z.coerce.number().positive().optional(),
+    billRate: z.coerce.number().nonnegative().optional(),
     allocatedHours: z.coerce.number().positive().optional(),
     startDate: z.string().min(1, "Start date is required"),
     endDate: z.string().min(1, "End date is required"),
@@ -257,6 +258,7 @@ export async function createAssignmentAction(_prevState: string | undefined, for
     milestoneId: formData.get("milestoneId"),
     userId: formData.get("userId"),
     costRate: canEditCostRate ? formData.get("costRate") || undefined : undefined,
+    billRate: canEditCostRate ? formData.get("billRate") || undefined : undefined,
     allocatedHours: formData.get("allocatedHours") || undefined,
     startDate: formData.get("startDate"),
     endDate: formData.get("endDate"),
@@ -270,9 +272,16 @@ export async function createAssignmentAction(_prevState: string | undefined, for
 
   const milestone = await prisma.milestone.findUnique({
     where: { id: data.milestoneId },
-    select: { projectId: true },
+    select: { projectId: true, salesPrice: true, project: { select: { billingType: true } } },
   });
   if (!milestone) return "Milestone not found.";
+
+  // Bill (sell) rate snapshot: the milestone's hourly rate for T&M/RETAINER, or an explicit override
+  // from a rates:view:any user; null for FIXED_PRICE (no per-hour sell rate).
+  const billRate =
+    milestone.project.billingType === "FIXED_PRICE"
+      ? null
+      : data.billRate ?? Number(milestone.salesPrice);
 
   const targetUser = await prisma.user.findFirst({
     where: { id: data.userId, companyId: user.companyId },
@@ -295,6 +304,7 @@ export async function createAssignmentAction(_prevState: string | undefined, for
       milestoneId: data.milestoneId,
       userId: data.userId,
       costRate,
+      billRate,
       allocatedHours: data.allocatedHours,
       startDate: new Date(data.startDate),
       endDate: new Date(data.endDate),
@@ -325,6 +335,7 @@ const UpdateAssignmentSchema = z
   .object({
     assignmentId: z.string().min(1),
     costRate: z.coerce.number().positive("Cost rate must be positive").optional(),
+    billRate: z.coerce.number().nonnegative().optional(),
     allocatedHours: z.coerce.number().positive().optional(),
     startDate: z.string().min(1, "Start date is required"),
     endDate: z.string().min(1, "End date is required"),
@@ -342,21 +353,23 @@ export async function updateAssignmentAction(_prevState: string | undefined, for
 
   const assignment = await prisma.assignment.findUnique({
     where: { id: assignmentId },
-    select: { milestoneId: true, milestone: { select: { projectId: true } } },
+    select: { milestoneId: true, milestone: { select: { projectId: true, project: { select: { billingType: true } } } } },
   });
   if (!assignment) return "Assignment not found.";
   if (!(await canManageMilestone(user, assignment.milestoneId))) {
     return "You do not have permission to manage this milestone.";
   }
 
-  // Cost rate is derived from salary and only visible/editable by Admin/Finance — a submitted
-  // value from anyone else is ignored rather than trusted, even though the field is hidden client-side.
+  // Cost & bill rates are only visible/editable by rates:view:any — a submitted value from anyone
+  // else is ignored rather than trusted, even though the fields are hidden client-side.
   const canEditCostRate = can(user, "rates:view:any");
   const rawCostRate = formData.get("costRate");
+  const rawBillRate = formData.get("billRate");
 
   const parsed = UpdateAssignmentSchema.safeParse({
     assignmentId,
     costRate: canEditCostRate && rawCostRate ? rawCostRate : undefined,
+    billRate: canEditCostRate && rawBillRate ? rawBillRate : undefined,
     allocatedHours: formData.get("allocatedHours") || undefined,
     startDate: formData.get("startDate"),
     endDate: formData.get("endDate"),
@@ -377,10 +390,14 @@ export async function updateAssignmentAction(_prevState: string | undefined, for
     }
   }
 
+  // Bill rate is only meaningful on T&M/RETAINER; FIXED_PRICE assignments keep it null.
+  const canSetBillRate = assignment.milestone.project.billingType !== "FIXED_PRICE";
+
   await prisma.assignment.update({
     where: { id: assignmentId },
     data: {
       ...(data.costRate !== undefined ? { costRate: data.costRate } : {}),
+      ...(canSetBillRate && data.billRate !== undefined ? { billRate: data.billRate } : {}),
       allocatedHours: data.allocatedHours ?? null,
       startDate: new Date(data.startDate),
       endDate: new Date(data.endDate),

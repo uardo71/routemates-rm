@@ -6,6 +6,7 @@ import { startOfWeek, parseDateParam, toDateParam } from "@/lib/week";
 import { parseList } from "@/lib/utils";
 import { WeekJump } from "@/components/week-jump";
 import { PlannerFilters } from "./planner-filters";
+import { loadCapacity, toCapacityCells } from "@/lib/capacity-data";
 import { PlannerGrid, type PlanAssignmentRow, type PlanCellInit, type PlanResourceRow } from "./planner-grid";
 
 const WEEKS_VISIBLE = 8;
@@ -112,6 +113,14 @@ export default async function PlanningPage({
   }
   const resources = [...resourcesMap.values()].sort((a, b) => a.userName.localeCompare(b.userName));
 
+  // Real available hours per person per week: contracted capacity minus public holidays and
+  // approved leave. Without this the grid coloured everyone against a flat 40h, which is wrong
+  // every holiday week and all through August.
+  const weekKeys = weeks.map((w) => toDateParam(startOfWeek(w)));
+  const capacity = toCapacityCells(
+    await loadCapacity(user.companyId, allUsers.map((u) => u.id), weekKeys, timelineStart, timelineEnd),
+  );
+
   const prevStart = toDateParam(addWeeks(timelineStart, -WEEKS_VISIBLE));
   const nextStart = toDateParam(addWeeks(timelineStart, WEEKS_VISIBLE));
   const qs = (s: string) => {
@@ -148,6 +157,9 @@ export default async function PlanningPage({
             dateParam="start"
             extraParams={{ projects: projectsParam, roles: rolesParam }}
           />
+          <Link href={`/planning/availability?start=${toDateParam(timelineStart)}`} className="text-muted-foreground hover:underline">
+            Availability →
+          </Link>
         </div>
       </div>
 
@@ -163,6 +175,7 @@ export default async function PlanningPage({
         weeks={weeks.map((w) => ({ key: toDateParam(startOfWeek(w)), label: format(w, "MMM d") }))}
         resources={resources}
         initialCells={initialCells}
+        capacity={capacity}
         canManage={canManage}
         todayWeekKey={toDateParam(startOfWeek(new Date()))}
       />

@@ -9,6 +9,7 @@ import { requirePortalUser } from "@/lib/portal";
 import { nextTicketNumber } from "@/lib/numbering";
 import { addHours } from "@/lib/ticket";
 import { resolveSlaTargets } from "@/lib/sla.server";
+import { notifyTicketParticipants, userName } from "@/lib/ticket-notify";
 import { isOpenCategory } from "@/lib/ticket-config";
 import { loadTicketConfig, findType, initialStatus } from "@/lib/ticket-config.server";
 import { applyFieldValues, fieldRawFromForm } from "@/lib/ticket-fields";
@@ -155,6 +156,7 @@ export async function setPortalStatusAction(ticketId: string, statusId: string):
   await prisma.ticket.update({ where: { id: ticketId }, data });
   const kind = !nowOpen && wasOpen ? "RESOLVED" : nowOpen && !wasOpen ? "REOPENED" : "STATUS";
   await prisma.ticketComment.create({ data: { ticketId, authorId: u.id, kind, body: `${t.statusDef.name} → ${target.name}`, internal: false } });
+  await notifyTicketParticipants({ ticketId, companyId: u.companyId, actorId: u.id, actorName: await userName(u.id), kind: "STATUS", summary: "changed the status" });
   revalidatePath(`/portal/${ticketId}`);
   revalidatePath("/portal");
   return {};

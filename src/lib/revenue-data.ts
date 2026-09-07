@@ -2,7 +2,10 @@ import "server-only";
 import type { ProjectBillingType } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { visibleProjectIds, type SessionUser } from "@/lib/permissions";
-import { computeProjectRevenue } from "@/lib/revenue";
+import { computeProjectRevenue, wipMetrics } from "@/lib/revenue";
+import { loadExternalCost } from "@/lib/external-cost";
+import { loadRateResolver, convertWith, type ExcludedGroup } from "@/lib/fx";
+import { loadUnbilledEntries, totalsByProject } from "@/lib/wip-data";
 
 export type RevenueRow = {
   projectId: string;
@@ -18,8 +21,19 @@ export type RevenueRow = {
   forecastRevenue: number;
   earnedRevenue: number;
   recognizedRevenue: number;
-  cost: number;
+  /** Our own people's time. */
+  internalCost: number;
+  /** Subcontractor / partner bills attributed to this project (TO_PAY + PAID). */
+  externalCost: number;
+  /** internalCost + externalCost — what margin is actually measured against. */
+  totalCost: number;
   margin: number;
+  /** Earned but not yet invoiced (earned − recognized). Negative when billed ahead of delivery. */
+  unbilled: number;
+  /** max(0, invoiced − earned) — deposits / prepaid retainers. */
+  overBilled: number;
+  /** Approved hours on billable milestones not yet attached to an invoice line. */
+  unbilledHours: number;
   /** Projected cost of the whole plan (planned hours × current cost rate). */
   forecastCost: number;
   /** Projected margin if the plan is delivered (forecast revenue − forecast cost). */
@@ -52,6 +66,9 @@ export type CompanyRevenue = {
   /** Display labels for the month buckets, e.g. "Aug '26". */
   monthLabels: string[];
   companyCurrency: string;
+  /** Recognized invoices that couldn't be converted to the reporting currency (no rate) — surfaced,
+   *  never summed at 1:1. */
+  excluded: ExcludedGroup[];
 };
 
 /** Assemble per-project revenue/forecast/cost/margin for every project the user can see, plus the
@@ -127,14 +144,38 @@ export async function computeCompanyRevenue(user: SessionUser): Promise<CompanyR
 
   const recognizedInvoices = await prisma.invoice.findMany({
     where: { companyId: user.companyId, status: { in: ["ISSUED", "RECONCILED", "PAID"] } },
-    select: { projectId: true, type: true, lines: { select: { amount: true } } },
+    select: { projectId: true, type: true, currency: true, recognitionDate: true, issueDate: true, lines: { select: { amount: true } } },
   });
+  // Each invoice can be billed in its own currency; convert its net to the reporting currency at its
+  // economic date (recognition date, else issue date). Unconvertible invoices are excluded + reported.
+  const resolveRate = await loadRateResolver();
   const invoicedByProject = new Map<string, number>();
+  const invExMap = new Map<string, ExcludedGroup>();
   for (const inv of recognizedInvoices) {
     if (!inv.projectId) continue;
     const net = inv.lines.reduce((s, l) => s + Number(l.amount), 0) * (inv.type === "CREDIT_NOTE" ? -1 : 1);
-    invoicedByProject.set(inv.projectId, (invoicedByProject.get(inv.projectId) ?? 0) + net);
+    const date = inv.recognitionDate ?? inv.issueDate;
+    const converted =
+      inv.currency === companyCurrency ? net : await convertWith(net, inv.currency, companyCurrency, (f, t) => resolveRate(f, t, date));
+    if (converted === null) {
+      const d = date.toISOString().slice(0, 10);
+      const k = `${inv.currency}|${d}`;
+      const g = invExMap.get(k) ?? { currency: inv.currency, date: d, count: 0 };
+      g.count++;
+      invExMap.set(k, g);
+      continue;
+    }
+    invoicedByProject.set(inv.projectId, (invoicedByProject.get(inv.projectId) ?? 0) + converted);
   }
+  // Subcontractor / partner bills attributed to these projects, converted at each bill's own
+  // economic date. Unconvertible bills join the same visible exclusion list as invoices — external
+  // cost is never summed at 1:1 or quietly dropped, because dropping it would inflate margin.
+  const external = await loadExternalCost(user.companyId, companyCurrency, projects.map((p) => p.id));
+  const externalByProject = external.byProject;
+  const excluded = [...invExMap.values(), ...external.excluded];
+
+  // Unbilled (WIP) hours per project — approved, billable, not yet on an invoice line.
+  const unbilledByProject = totalsByProject(await loadUnbilledEntries(user));
 
   const overheadProjectIds = new Set(
     projects
@@ -268,9 +309,21 @@ export async function computeCompanyRevenue(user: SessionUser): Promise<CompanyR
       billingType: p.billingType,
       contractValue,
       budgetHours,
-      cost,
+      internalCost: cost,
+      // Money paid to partners for this project. Without it, any project delivered partly through
+      // a subcontractor reports a margin that ignores what the subcontractor was paid.
+      externalCost: externalByProject.get(p.id) ?? 0,
       forecastCost,
       milestones: milestoneInputs,
+    });
+
+    // Earned (accrued) vs invoiced (the register, FX-converted to the reporting currency) — the gap
+    // is unbilled WIP; the reverse gap is billing ahead of delivery.
+    const invoiced = Math.round((invoicedByProject.get(p.id) ?? 0) * 100) / 100;
+    const wip = wipMetrics({
+      earned: rev.earnedRevenue,
+      invoiced,
+      unbilledHours: unbilledByProject.get(p.id)?.hours ?? 0,
     });
 
     rows.push({
@@ -282,7 +335,10 @@ export async function computeCompanyRevenue(user: SessionUser): Promise<CompanyR
       contractValue,
       budgetHours,
       ...rev,
-      recognizedRevenue: Math.round((invoicedByProject.get(p.id) ?? 0) * 100) / 100,
+      recognizedRevenue: invoiced,
+      unbilled: wip.unbilled,
+      overBilled: wip.overBilled,
+      unbilledHours: wip.unbilledHours,
       quarterly: (quarterlyByProj.get(p.id) ?? [0, 0, 0, 0]).map((v) => Math.round(v * 100) / 100),
       monthly: (monthlyByProj.get(p.id) ?? new Array(12).fill(0)).map((v) => Math.round(v * 100) / 100),
     });
@@ -295,5 +351,6 @@ export async function computeCompanyRevenue(user: SessionUser): Promise<CompanyR
     monthKeys: months.map((mo) => mo.key),
     monthLabels: months.map((mo) => mo.label),
     companyCurrency,
+    excluded,
   };
 }

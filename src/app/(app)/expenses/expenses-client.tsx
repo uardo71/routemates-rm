@@ -22,6 +22,8 @@ import { InitialsAvatar } from "@/components/initials-avatar";
 import { DonutChart, DONUT_COLORS, type DonutSegment } from "@/components/charts/donut-chart";
 import { MiniBarChart } from "@/components/charts/mini-bar-chart";
 import { formatMoney } from "@/lib/format";
+import { FxWarning } from "@/components/fx-warning";
+import type { ExcludedGroup } from "@/lib/fx";
 import { cn } from "@/lib/utils";
 import {
   createExpenseAction, decideExpenseAction, deleteExpenseAction,
@@ -38,6 +40,8 @@ export type ExpenseRow = {
   categoryName: string;
   date: string;
   amount: number;
+  /** `amount` converted to the reporting currency at the expense's date; null when no rate exists. */
+  baseAmount: number | null;
   currency: string;
   description: string;
   vendor: string | null;
@@ -472,6 +476,8 @@ export function ExpensesClient({
   categories,
   people,
   defaultCurrency,
+  reportingCurrency,
+  excluded,
 }: {
   callerId: string;
   canManage: boolean;
@@ -479,6 +485,8 @@ export function ExpensesClient({
   categories: CategoryOption[];
   people: PersonOption[];
   defaultCurrency: string;
+  reportingCurrency: string;
+  excluded: ExcludedGroup[];
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -491,18 +499,21 @@ export function ExpensesClient({
   const pendingRows = rows.filter((r) => r.status === "PENDING");
 
   // ---- KPI stats (from ALL rows, not the filtered view, so the headline numbers stay stable) ----
+  // Aggregates sum each expense's amount converted to the reporting currency (baseAmount); rows with
+  // no exchange rate (baseAmount null) contribute nothing and are surfaced in the FX warning above.
+  const base = (r: ExpenseRow) => r.baseAmount ?? 0;
   const approvedRows = rows.filter((r) => r.status === "APPROVED");
-  const approvedTotal = approvedRows.reduce((s, r) => s + r.amount, 0);
-  const pendingAmount = pendingRows.reduce((s, r) => s + r.amount, 0);
-  const toReimburse = approvedRows.filter((r) => r.paidBy === "EMPLOYEE").reduce((s, r) => s + r.amount, 0);
+  const approvedTotal = approvedRows.reduce((s, r) => s + base(r), 0);
+  const pendingAmount = pendingRows.reduce((s, r) => s + base(r), 0);
+  const toReimburse = approvedRows.filter((r) => r.paidBy === "EMPLOYEE").reduce((s, r) => s + base(r), 0);
   const now = new Date();
   const thisMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-  const thisMonthTotal = approvedRows.filter((r) => r.date.startsWith(thisMonthKey)).reduce((s, r) => s + r.amount, 0);
+  const thisMonthTotal = approvedRows.filter((r) => r.date.startsWith(thisMonthKey)).reduce((s, r) => s + base(r), 0);
 
   // ---- Category breakdown (approved) → donut. Plain consts: the React Compiler memoizes these;
   //      a manual useMemo keyed on the derived approvedRows array trips its memoization guard. ----
   const categoryByAmount = new Map<string, number>();
-  for (const r of approvedRows) categoryByAmount.set(r.categoryName, (categoryByAmount.get(r.categoryName) ?? 0) + r.amount);
+  for (const r of approvedRows) categoryByAmount.set(r.categoryName, (categoryByAmount.get(r.categoryName) ?? 0) + base(r));
   const sortedCats = [...categoryByAmount.entries()].sort((a, b) => b[1] - a[1]);
   const categorySegments: DonutSegment[] = sortedCats.slice(0, 6).map(([label, value], i) => ({ label, value, colorClass: DONUT_COLORS[i % DONUT_COLORS.length] }));
   const catRest = sortedCats.slice(6).reduce((s, [, v]) => s + v, 0);
@@ -517,7 +528,7 @@ export function ExpensesClient({
   const monthTotals = new Map(monthKeys.map((k) => [k.key, 0]));
   for (const r of approvedRows) {
     const k = r.date.slice(0, 7);
-    if (monthTotals.has(k)) monthTotals.set(k, monthTotals.get(k)! + r.amount);
+    if (monthTotals.has(k)) monthTotals.set(k, monthTotals.get(k)! + base(r));
   }
   const monthlyBars = monthKeys.map((k) => ({ label: k.label, value: Math.round((monthTotals.get(k.key) ?? 0) * 100) / 100 }));
 
@@ -529,7 +540,7 @@ export function ExpensesClient({
     });
   }, [rows, statusFilter, categoryFilter]);
 
-  const filteredTotal = filteredRows.reduce((s, r) => s + r.amount, 0);
+  const filteredTotal = filteredRows.reduce((s, r) => s + base(r), 0);
 
   function remove(id: string) {
     if (!confirm("Delete this expense?")) return;
@@ -578,12 +589,14 @@ export function ExpensesClient({
         </div>
       </div>
 
-      {/* KPI cards */}
+      <FxWarning excluded={excluded} noun="expenses" reporting={reportingCurrency} />
+
+      {/* KPI cards — totals in the reporting currency ({reportingCurrency}) */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard label={canManage ? "Approved total" : "Your approved"} value={formatMoney(approvedTotal, defaultCurrency)} icon={ReceiptIcon} sublabel={`${approvedRows.length} expense${approvedRows.length === 1 ? "" : "s"}`} />
-        <StatCard label="Pending" value={formatMoney(pendingAmount, defaultCurrency)} icon={ClockIcon} tone={pendingRows.length > 0 ? "warning" : "default"} sublabel={`${pendingRows.length} awaiting${canManage ? " decision" : " approval"}`} />
-        <StatCard label="To reimburse" value={formatMoney(toReimburse, defaultCurrency)} icon={WalletIcon} sublabel="employee-paid, approved" />
-        <StatCard label="This month" value={formatMoney(thisMonthTotal, defaultCurrency)} icon={CalendarIcon} sublabel={`${MONTHS[now.getMonth()]} ${now.getFullYear()}`} />
+        <StatCard label={canManage ? "Approved total" : "Your approved"} value={formatMoney(approvedTotal, reportingCurrency)} icon={ReceiptIcon} sublabel={`${approvedRows.length} expense${approvedRows.length === 1 ? "" : "s"}`} />
+        <StatCard label="Pending" value={formatMoney(pendingAmount, reportingCurrency)} icon={ClockIcon} tone={pendingRows.length > 0 ? "warning" : "default"} sublabel={`${pendingRows.length} awaiting${canManage ? " decision" : " approval"}`} />
+        <StatCard label="To reimburse" value={formatMoney(toReimburse, reportingCurrency)} icon={WalletIcon} sublabel="employee-paid, approved" />
+        <StatCard label="This month" value={formatMoney(thisMonthTotal, reportingCurrency)} icon={CalendarIcon} sublabel={`${MONTHS[now.getMonth()]} ${now.getFullYear()}`} />
       </div>
 
       {/* Charts */}
@@ -592,7 +605,7 @@ export function ExpensesClient({
           <Card>
             <CardHeader><CardTitle className="text-base">By category</CardTitle></CardHeader>
             <CardContent className="flex justify-center">
-              <DonutChart segments={categorySegments} centerLabel={formatMoney(approvedTotal, defaultCurrency)} centerSublabel="approved" size={140} />
+              <DonutChart segments={categorySegments} centerLabel={formatMoney(approvedTotal, reportingCurrency)} centerSublabel="approved" size={140} />
             </CardContent>
           </Card>
           <Card className="lg:col-span-2">
@@ -601,7 +614,7 @@ export function ExpensesClient({
               <p className="text-xs text-muted-foreground">Last 6 months.</p>
             </CardHeader>
             <CardContent>
-              <MiniBarChart data={monthlyBars} height={130} valueFormatter={(v) => formatMoney(v, defaultCurrency)} />
+              <MiniBarChart data={monthlyBars} height={130} valueFormatter={(v) => formatMoney(v, reportingCurrency)} />
             </CardContent>
           </Card>
         </div>
@@ -739,7 +752,7 @@ export function ExpensesClient({
           </div>
           {filteredRows.length > 0 && (
             <div className="mt-3 flex justify-end text-sm text-muted-foreground">
-              {filteredRows.length} shown · <span className="ml-1 font-medium tabular-nums text-foreground">{formatMoney(filteredTotal, defaultCurrency)}</span>
+              {filteredRows.length} shown · <span className="ml-1 font-medium tabular-nums text-foreground">{formatMoney(filteredTotal, reportingCurrency)}</span>
             </div>
           )}
         </CardContent>

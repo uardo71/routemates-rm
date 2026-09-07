@@ -45,6 +45,9 @@ export async function deleteVendorAction(vendorId: string): Promise<{ error?: st
 const PaymentSchema = z.object({
   vendorId: z.string().min(1, "Pick a vendor."),
   projectId: z.string().optional().nullable(),
+  // Optional finer attribution within the project, so a fixed-price milestone's margin can carry
+  // the partner cost incurred for it. Ignored unless a project is set.
+  milestoneId: z.string().optional().nullable(),
   status: z.enum(["TO_PAY", "PAID"]),
   description: z.string().max(300).optional().nullable(),
   invoiceNumber: z.string().max(100).optional().nullable(),
@@ -57,16 +60,29 @@ const PaymentSchema = z.object({
 });
 export type VendorPaymentInput = z.infer<typeof PaymentSchema>;
 
-async function resolveRefs(companyId: string, vendorId: string, projectId: string | null | undefined) {
+async function resolveRefs(
+  companyId: string,
+  vendorId: string,
+  projectId: string | null | undefined,
+  milestoneId?: string | null,
+) {
   const vendor = await prisma.vendor.findFirst({ where: { id: vendorId, companyId } });
   if (!vendor) return { error: "Invalid vendor." as const };
   let projId: string | null = null;
+  let msId: string | null = null;
   if (projectId) {
     const project = await prisma.project.findFirst({ where: { id: projectId, companyId }, select: { id: true } });
     if (!project) return { error: "Invalid project." as const };
     projId = project.id;
+    if (milestoneId) {
+      // The milestone must belong to the project it's being booked against, or the cost would land
+      // on someone else's margin.
+      const ms = await prisma.milestone.findFirst({ where: { id: milestoneId, projectId: project.id }, select: { id: true } });
+      if (!ms) return { error: "That milestone doesn't belong to the selected project." as const };
+      msId = ms.id;
+    }
   }
-  return { vendorId: vendor.id, projectId: projId };
+  return { vendorId: vendor.id, projectId: projId, milestoneId: msId };
 }
 
 export async function createVendorPaymentAction(input: VendorPaymentInput): Promise<{ error?: string; id?: string }> {
@@ -75,7 +91,7 @@ export async function createVendorPaymentAction(input: VendorPaymentInput): Prom
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Invalid input." };
   const d = parsed.data;
 
-  const refs = await resolveRefs(caller.companyId, d.vendorId, d.projectId);
+  const refs = await resolveRefs(caller.companyId, d.vendorId, d.projectId, d.milestoneId);
   if ("error" in refs) return { error: refs.error };
 
   const paymentDate = d.status === "PAID" ? (toUtc(d.paymentDate) ?? new Date()) : null;
@@ -84,6 +100,7 @@ export async function createVendorPaymentAction(input: VendorPaymentInput): Prom
       companyId: caller.companyId,
       vendorId: refs.vendorId,
       projectId: refs.projectId,
+      milestoneId: refs.milestoneId ?? null,
       status: d.status,
       description: d.description?.trim() || null,
       invoiceNumber: d.invoiceNumber?.trim() || null,
@@ -111,7 +128,7 @@ export async function updateVendorPaymentAction(input: VendorPaymentUpdateInput)
 
   const existing = await prisma.vendorPayment.findFirst({ where: { id: d.id, companyId: caller.companyId } });
   if (!existing) return { error: "Payment not found." };
-  const refs = await resolveRefs(caller.companyId, d.vendorId, d.projectId);
+  const refs = await resolveRefs(caller.companyId, d.vendorId, d.projectId, d.milestoneId);
   if ("error" in refs) return { error: refs.error };
 
   const paymentDate = d.status === "PAID" ? (toUtc(d.paymentDate) ?? existing.paymentDate ?? new Date()) : null;
@@ -120,6 +137,7 @@ export async function updateVendorPaymentAction(input: VendorPaymentUpdateInput)
     data: {
       vendorId: refs.vendorId,
       projectId: refs.projectId,
+      milestoneId: refs.milestoneId ?? null,
       status: d.status,
       description: d.description?.trim() || null,
       invoiceNumber: d.invoiceNumber?.trim() || null,

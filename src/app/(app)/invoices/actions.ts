@@ -5,7 +5,7 @@ import { parseISO } from "date-fns";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/session";
-import { invoiceTotals } from "@/lib/invoice";
+import { invoiceTotals, effectiveDueDate } from "@/lib/invoice";
 import { MAX_RECEIPT_SIZE_BYTES, isAllowedReceiptType, saveReceiptFile, deleteReceiptFile } from "@/lib/receipt-storage";
 import type { InvoiceType } from "@prisma/client";
 
@@ -99,6 +99,9 @@ export async function createInvoiceAction(input: CreateInvoiceInput): Promise<{ 
   if (recognitionDate === "invalid") return { error: "Invalid recognition date." };
   const dueDate = parseDate(d.dueDate);
   if (dueDate === "invalid") return { error: "Invalid due date." };
+  // No explicit due date → default it from the client's standard payment terms (net N). Clients with
+  // no agreed terms keep a null due date; AR ages those into their own bucket rather than guessing.
+  const resolvedDueDate = effectiveDueDate(dueDate ?? null, issueDate ?? new Date(), client.paymentTermsDays);
   // Service period stored at UTC midnight so its month reads correctly regardless of timezone.
   const dateOnly = /^\d{4}-\d{2}-\d{2}$/;
   const periodStart = d.periodStart && dateOnly.test(d.periodStart) ? new Date(`${d.periodStart}T00:00:00.000Z`) : null;
@@ -118,7 +121,7 @@ export async function createInvoiceAction(input: CreateInvoiceInput): Promise<{ 
       creditNoteForId: d.creditNoteForId ?? null,
       issueDate,
       recognitionDate: recognitionDate ?? null,
-      dueDate: dueDate ?? null,
+      dueDate: resolvedDueDate,
       periodStart,
       periodEnd,
       currency,
@@ -142,6 +145,71 @@ export async function createInvoiceAction(input: CreateInvoiceInput): Promise<{ 
 
   revalidatePath("/invoices");
   return { invoiceId: invoice.id };
+}
+
+// ---------- unbilled (WIP) preview for the "from approved time" basis ----------
+
+export type UnbilledPreview = {
+  hours: number;
+  value: number;
+  entries: number;
+  /** Age in days of the oldest unbilled entry. */
+  oldestAgeDays: number;
+  /** Earliest / latest unbilled entry dates (yyyy-MM-dd) — the period that would bill all of it. */
+  firstDate: string | null;
+  lastDate: string | null;
+  milestones: { milestoneId: string; name: string; hours: number; value: number }[];
+};
+
+/** What "from approved time" would pull for this project right now, so the user is offered the
+ *  unbilled work rather than having to guess a period. Read-only. */
+export async function unbilledPreviewAction(projectId: string): Promise<{ error?: string; preview?: UnbilledPreview }> {
+  const user = await requirePermission("invoices:manage");
+  const project = await prisma.project.findFirst({ where: { id: projectId, companyId: user.companyId }, select: { id: true } });
+  if (!project) return { error: "Invalid project." };
+
+  const entries = await prisma.timeEntry.findMany({
+    where: { invoiceLineId: null, timeCard: { status: "APPROVED" }, milestone: { billable: true, projectId: project.id } },
+    select: {
+      date: true, hours: true, billRate: true,
+      assignment: { select: { billRate: true } },
+      milestone: { select: { id: true, name: true, salesPrice: true } },
+    },
+    orderBy: { date: "asc" },
+  });
+  if (entries.length === 0) {
+    return { preview: { hours: 0, value: 0, entries: 0, oldestAgeDays: 0, firstDate: null, lastDate: null, milestones: [] } };
+  }
+
+  const byMs = new Map<string, { milestoneId: string; name: string; hours: number; value: number }>();
+  let hours = 0;
+  let value = 0;
+  for (const e of entries) {
+    const h = Number(e.hours);
+    const rate = e.billRate != null ? Number(e.billRate) : e.assignment.billRate != null ? Number(e.assignment.billRate) : Number(e.milestone.salesPrice);
+    const g = byMs.get(e.milestone.id) ?? { milestoneId: e.milestone.id, name: e.milestone.name, hours: 0, value: 0 };
+    g.hours += h;
+    g.value += h * rate;
+    byMs.set(e.milestone.id, g);
+    hours += h;
+    value += h * rate;
+  }
+  const r2 = (n: number) => Math.round(n * 100) / 100;
+  const first = entries[0].date;
+  const last = entries[entries.length - 1].date;
+  const todayUtc = Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate());
+
+  return {
+    preview: {
+      hours: r2(hours),
+      value: r2(value),
+      entries: entries.length,
+      oldestAgeDays: Math.max(0, Math.floor((todayUtc - first.getTime()) / 86_400_000)),
+      firstDate: first.toISOString().slice(0, 10),
+      lastDate: last.toISOString().slice(0, 10),
+      milestones: [...byMs.values()].map((g) => ({ ...g, hours: r2(g.hours), value: r2(g.value) })).sort((a, b) => b.value - a.value),
+    },
+  };
 }
 
 // ---------- create from approved time entries (T&M / Retainer) ----------
@@ -176,32 +244,47 @@ export async function createTimeInvoiceAction(input: CreateTimeInvoiceInput): Pr
   if (end < start) return { error: "End date must be after start date." };
   const queryEnd = new Date(`${d.periodEnd}T23:59:59.999Z`);
 
-  const entries = await prisma.timeEntry.findMany({
-    where: {
-      invoiceLineId: null,
-      date: { gte: start, lte: queryEnd },
-      timeCard: { status: "APPROVED" },
-      milestone: { billable: true, projectId: project.id },
-    },
-    include: { milestone: true },
-  });
-  if (entries.length === 0) return { error: "No approved, billable, un-invoiced time found for this project and period." };
-
-  type Group = { milestoneId: string; description: string; hours: number; rate: number; entryIds: string[] };
-  const groups = new Map<string, Group>();
-  for (const e of entries) {
-    const g = groups.get(e.milestoneId);
-    if (g) {
-      g.hours += Number(e.hours);
-      g.entryIds.push(e.id);
-    } else {
-      groups.set(e.milestoneId, { milestoneId: e.milestoneId, description: e.milestone.name, hours: Number(e.hours), rate: Number(e.milestone.salesPrice), entryIds: [e.id] });
-    }
-  }
-
   const invoiceNumber = await nextInvoiceNumber(user.companyId, "INVOICE");
 
+  // Everything — selecting the entries, creating the lines and claiming the entries — happens inside
+  // ONE transaction. Each claim is conditional on the entry still being unlinked (invoiceLineId
+  // null), and a short count means someone else invoiced it in the meantime → the whole invoice
+  // rolls back rather than silently stealing an entry from another invoice.
+  let emptyPeriod = false;
+  let raced = false;
   const invoiceId = await prisma.$transaction(async (tx) => {
+    const entries = await tx.timeEntry.findMany({
+      where: {
+        invoiceLineId: null,
+        date: { gte: start, lte: queryEnd },
+        timeCard: { status: "APPROVED" },
+        milestone: { billable: true, projectId: project.id },
+      },
+      include: { milestone: true, assignment: { select: { billRate: true } } },
+    });
+    if (entries.length === 0) {
+      emptyPeriod = true;
+      return null;
+    }
+
+    // Group by milestone. The line's rate is the BILL rate frozen on each entry at approval (falling
+    // back to the assignment snapshot, then the milestone's list rate for legacy entries). Different
+    // people on one milestone can carry different bill rates, so the group's rate is the
+    // hours-weighted average and `amount` is the exact Σ(hours × rate) — amount is the source of
+    // truth for the invoice total; the displayed rate is the average that produced it.
+    type Group = { milestoneId: string; description: string; hours: number; value: number; entryIds: string[] };
+    const groups = new Map<string, Group>();
+    for (const e of entries) {
+      const hours = Number(e.hours);
+      const rate =
+        e.billRate != null ? Number(e.billRate) : e.assignment.billRate != null ? Number(e.assignment.billRate) : Number(e.milestone.salesPrice);
+      const g = groups.get(e.milestoneId) ?? { milestoneId: e.milestoneId, description: e.milestone.name, hours: 0, value: 0, entryIds: [] };
+      g.hours += hours;
+      g.value += hours * rate;
+      g.entryIds.push(e.id);
+      groups.set(e.milestoneId, g);
+    }
+
     const invoice = await tx.invoice.create({
       data: {
         companyId: user.companyId,
@@ -218,15 +301,33 @@ export async function createTimeInvoiceAction(input: CreateTimeInvoiceInput): Pr
       },
     });
     for (const g of groups.values()) {
+      const rate = g.hours > 0 ? Math.round((g.value / g.hours) * 10000) / 10000 : 0;
       const line = await tx.invoiceLine.create({
-        data: { invoiceId: invoice.id, milestoneId: g.milestoneId, description: g.description, quantity: g.hours, rate: g.rate, amount: Math.round(g.hours * g.rate * 100) / 100 },
+        data: { invoiceId: invoice.id, milestoneId: g.milestoneId, description: g.description, quantity: g.hours, rate, amount: Math.round(g.value * 100) / 100 },
       });
-      await tx.timeEntry.updateMany({ where: { id: { in: g.entryIds } }, data: { invoiceLineId: line.id } });
+      const claimed = await tx.timeEntry.updateMany({
+        // `invoiceLineId: null` here is the guard: only still-unbilled entries can be claimed.
+        where: { id: { in: g.entryIds }, invoiceLineId: null },
+        data: { invoiceLineId: line.id },
+      });
+      if (claimed.count !== g.entryIds.length) {
+        raced = true;
+        throw new Error("TIME_ENTRY_RACE");
+      }
     }
     return invoice.id;
+  }).catch((e) => {
+    if (raced) return null;
+    throw e;
   });
 
+  if (emptyPeriod) return { error: "No approved, billable, un-invoiced time found for this project and period." };
+  if (raced || !invoiceId) {
+    return { error: "Some of that time was invoiced by someone else just now — nothing was billed. Reload and try again." };
+  }
+
   revalidatePath("/invoices");
+  revalidatePath("/revenue");
   revalidatePath(`/projects/${project.id}`);
   return { invoiceId };
 }

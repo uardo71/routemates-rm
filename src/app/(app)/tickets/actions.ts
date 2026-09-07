@@ -15,6 +15,7 @@ import { loadTicketConfig, findType, initialStatus } from "@/lib/ticket-config.s
 import { applyFieldValues, fieldRawFromForm } from "@/lib/ticket-fields";
 import { extractFiles } from "@/lib/ticket-attachments";
 import { postTicketComment, editCommentBody, softDeleteComment } from "@/lib/ticket-comments";
+import { notifyTicketParticipants, notifyTicketUser, userName } from "@/lib/ticket-notify";
 import { deleteReceiptFile } from "@/lib/receipt-storage";
 
 function utcDate(s: string | null | undefined): Date | null {
@@ -114,6 +115,9 @@ export async function createTicketAction(_prev: unknown, formData: FormData): Pr
   } catch {
     return { error: "Could not create the ticket." };
   }
+  if (manage && d.assigneeId) {
+    await notifyTicketUser({ ticketId: id, companyId: user.companyId, userId: d.assigneeId, actorId: user.id, actorName: await userName(user.id), kind: "ASSIGN", summary: "assigned this ticket to you" });
+  }
   revalidatePath("/tickets");
   redirect(`/tickets/${id}`);
 }
@@ -145,6 +149,7 @@ export async function setTicketStatusAction(ticketId: string, statusId: string):
   await prisma.ticket.update({ where: { id: ticketId }, data });
   const kind = !nowOpen && wasOpen ? "RESOLVED" : nowOpen && !wasOpen ? "REOPENED" : "STATUS";
   await logActivity(ticketId, user.id, kind, `${t.statusDef.name} → ${target.name}`);
+  await notifyTicketParticipants({ ticketId, companyId: user.companyId, actorId: user.id, actorName: await userName(user.id), kind: "STATUS", summary: "changed the status" });
   revalidatePath(`/tickets/${ticketId}`);
   revalidatePath("/tickets");
   return {};
@@ -160,6 +165,7 @@ export async function setTicketAssigneeAction(ticketId: string, assigneeId: stri
   const name = value ? (await prisma.user.findUnique({ where: { id: value }, select: { name: true } }))?.name ?? "someone" : null;
   await prisma.ticket.update({ where: { id: ticketId }, data: { assigneeId: value } });
   await logActivity(ticketId, user.id, "ASSIGN", name ? `assigned to ${name}` : "unassigned");
+  if (value) await notifyTicketUser({ ticketId, companyId: user.companyId, userId: value, actorId: user.id, actorName: await userName(user.id), kind: "ASSIGN", summary: "assigned this ticket to you" });
   revalidatePath(`/tickets/${ticketId}`);
   revalidatePath("/tickets");
   return {};
@@ -266,6 +272,7 @@ export async function applyWorkflowAction(
     await prisma.ticket.update({ where: { id: ticketId }, data });
     const kind = !nowOpen && wasOpen ? "RESOLVED" : nowOpen && !wasOpen ? "REOPENED" : "STATUS";
     await logActivity(ticketId, user.id, kind, `${t.statusDef.name} → ${target.name}`);
+    await notifyTicketParticipants({ ticketId, companyId: user.companyId, actorId: user.id, actorName: await userName(user.id), kind: "STATUS", summary: "changed the status" });
   }
 
   if (manage && patch.assigneeId !== undefined && (patch.assigneeId || null) !== (t.assigneeId ?? null)) {
@@ -273,6 +280,7 @@ export async function applyWorkflowAction(
     const name = value ? (await prisma.user.findUnique({ where: { id: value }, select: { name: true } }))?.name ?? "someone" : null;
     await prisma.ticket.update({ where: { id: ticketId }, data: { assigneeId: value } });
     await logActivity(ticketId, user.id, "ASSIGN", name ? `assigned to ${name}` : "unassigned");
+    if (value) await notifyTicketUser({ ticketId, companyId: user.companyId, userId: value, actorId: user.id, actorName: await userName(user.id), kind: "ASSIGN", summary: "assigned this ticket to you" });
   }
 
   if (manage && patch.priority && patch.priority !== t.priority) {

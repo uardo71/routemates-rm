@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/session";
+import { convertRows } from "@/lib/fx";
 import { VendorsClient, type VendorPaymentRow, type VendorOption, type ProjectOption } from "./vendors-client";
 
 const iso = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : null);
@@ -18,11 +19,23 @@ export default async function VendorsPage() {
       include: { _count: { select: { payments: true } } },
       orderBy: { name: "asc" },
     }),
-    prisma.project.findMany({ where: { companyId: caller.companyId }, orderBy: { name: "asc" }, select: { id: true, name: true } }),
+    prisma.project.findMany({
+      where: { companyId: caller.companyId },
+      orderBy: { name: "asc" },
+      select: { id: true, name: true, milestones: { select: { id: true, name: true }, orderBy: { createdAt: "asc" } } },
+    }),
     prisma.company.findUniqueOrThrow({ where: { id: caller.companyId }, select: { currency: true } }),
   ]);
 
-  const rows: VendorPaymentRow[] = payments.map((p) => ({
+  // Convert each payment to the reporting currency at its economic date (invoice date, else payment
+  // date, else created) so aggregates sum one currency; unconvertible rows are surfaced.
+  const reportingCurrency = company.currency;
+  const conv = await convertRows(
+    payments.map((p) => ({ amount: Number(p.amount), currency: p.currency, date: p.invoiceDate ?? p.paymentDate ?? p.createdAt })),
+    reportingCurrency,
+  );
+
+  const rows: VendorPaymentRow[] = payments.map((p, i) => ({
     id: p.id,
     vendorId: p.vendorId,
     vendorName: p.vendor.name,
@@ -31,6 +44,7 @@ export default async function VendorsPage() {
     description: p.description,
     invoiceNumber: p.invoiceNumber,
     amount: Number(p.amount),
+    baseAmount: conv.rows[i].baseAmount,
     currency: p.currency,
     invoiceDate: iso(p.invoiceDate),
     invoiceMonth: iso(p.invoiceDate)?.slice(0, 7) ?? null,
@@ -40,7 +54,7 @@ export default async function VendorsPage() {
   }));
 
   const vendorOptions: VendorOption[] = vendors.map((v) => ({ id: v.id, name: v.name, count: v._count.payments }));
-  const projectOptions: ProjectOption[] = projects.map((p) => ({ id: p.id, name: p.name }));
+  const projectOptions: ProjectOption[] = projects.map((p) => ({ id: p.id, name: p.name, milestones: p.milestones }));
 
   // Aggregates are formatted in the currency the records actually use (predominant), like the Taxes
   // page — vendors may bill in EUR or ALL. Also the default currency for a new payment.
@@ -48,5 +62,5 @@ export default async function VendorsPage() {
   for (const p of payments) currencyCounts.set(p.currency, (currencyCounts.get(p.currency) ?? 0) + 1);
   const displayCurrency = [...currencyCounts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? company.currency;
 
-  return <VendorsClient rows={rows} vendors={vendorOptions} projects={projectOptions} defaultCurrency={displayCurrency} />;
+  return <VendorsClient rows={rows} vendors={vendorOptions} projects={projectOptions} defaultCurrency={displayCurrency} reportingCurrency={reportingCurrency} excluded={conv.excluded} />;
 }

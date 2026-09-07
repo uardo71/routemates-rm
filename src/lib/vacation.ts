@@ -2,7 +2,7 @@ import { addDays, parseISO } from "date-fns";
 import { Prisma, type LeaveType } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { startOfWeek, toDateParam } from "@/lib/week";
-import { ANNUAL_VACATION_ENTITLEMENT, entitlementForYear, isWorkingDay } from "@/lib/vacation-calc";
+import { isWorkingDay, walkVacationBalance } from "@/lib/vacation-calc";
 import { computeHourlyCostRateEUR } from "@/lib/cost-rate";
 
 // This module (deliberately still named "vacation" — the original leave type, and the only one
@@ -44,7 +44,6 @@ export async function computeVacationBalance(userId: string, asOfYear?: number):
   });
   const joinDate = user.employment?.startDate ?? user.createdAt;
   const targetYear = asOfYear ?? new Date().getFullYear();
-  const joinYear = joinDate.getFullYear();
 
   // Manual opening balance (set by an admin for people onboarded onto the app mid-life, with no
   // historical LeaveRequests to walk). When present, the walk starts at that year seeded with the
@@ -53,9 +52,6 @@ export async function computeVacationBalance(userId: string, asOfYear?: number):
   // employee, so no first-year proration off the hire date).
   const openingDays = user.employment?.carriedInVacationDays;
   const openingYear = user.employment?.carriedInVacationYear ?? null;
-  const hasManualOpening = openingDays != null && openingYear != null;
-  const startYear = hasManualOpening ? openingYear : joinYear;
-  const seed = hasManualOpening ? Number(openingDays) : 0;
 
   const approved = await prisma.leaveRequest.findMany({
     where: { userId, type: "VACATION", status: "APPROVED" },
@@ -67,16 +63,14 @@ export async function computeVacationBalance(userId: string, asOfYear?: number):
     takenByYear.set(y, (takenByYear.get(y) ?? 0) + Number(r.workingDays));
   }
 
-  let running = seed;
-  let result: VacationBalance = { year: startYear, joinDate, entitlement: 0, carriedIn: seed, taken: 0, balance: seed };
-  for (let year = startYear; year <= targetYear; year++) {
-    const entitlement = hasManualOpening ? ANNUAL_VACATION_ENTITLEMENT : entitlementForYear(joinDate, year);
-    const taken = takenByYear.get(year) ?? 0;
-    const carriedIn = running;
-    running = carriedIn + entitlement - taken;
-    result = { year, joinDate, entitlement, carriedIn, taken, balance: running };
-  }
-  return result;
+  const walk = walkVacationBalance({
+    joinDate,
+    openingDays: openingDays != null ? Number(openingDays) : null,
+    openingYear,
+    asOfYear: targetYear,
+    takenByYear: (y) => takenByYear.get(y) ?? 0,
+  });
+  return { ...walk, joinDate };
 }
 
 /** SICK has no balance/entitlement — just a running total, for record-keeping / visibility. */

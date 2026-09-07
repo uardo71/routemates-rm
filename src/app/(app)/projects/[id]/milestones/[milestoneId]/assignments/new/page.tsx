@@ -16,7 +16,7 @@ export default async function NewAssignmentPage({
 
   const milestone = await prisma.milestone.findFirst({
     where: { id: milestoneId, projectId, project: { companyId: user.companyId } },
-    include: { assignments: { select: { userId: true } } },
+    include: { assignments: { select: { userId: true } }, project: { select: { billingType: true } } },
   });
   if (!milestone) notFound();
   if (!(await canManageMilestone(user, milestone.id))) notFound();
@@ -47,6 +47,8 @@ export default async function NewAssignmentPage({
             milestoneId={milestone.id}
             users={availableUsers.map((u) => ({ id: u.id, name: u.name }))}
             canViewCostRate={can(user, "rates:view:any")}
+            showBillRate={can(user, "rates:view:any") && milestone.project.billingType !== "FIXED_PRICE"}
+            defaultBillRate={milestone.project.billingType !== "FIXED_PRICE" ? milestone.salesPrice.toString() : null}
           />
         </CardContent>
       </Card>

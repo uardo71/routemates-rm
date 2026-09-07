@@ -1,5 +1,6 @@
 import { requirePermission } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
+import { loadExternalCost } from "@/lib/external-cost";
 import { BudgetsClient, type ClientNode } from "./budgets-client";
 
 // Company-wide budget rollup: budgeted hours + cost vs actual (approved time) hours + cost, rolled
@@ -58,6 +59,19 @@ export default async function BudgetsPage() {
   }
   const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
 
+  // Subcontractor bills booked to these projects, in the reporting currency. Budget "actual cost"
+  // that counts only our own people understates what a partner-delivered project really cost.
+  // A bill attributed to a specific milestone lands on that milestone; one attributed only to the
+  // project sits at project level (shown as its own row-level figure, not spread across milestones).
+  const external = await loadExternalCost(user.companyId, currency, projects.map((p) => p.id));
+
+  // Bills on the project that aren't pinned to a milestone — added once at project level so they
+  // are neither double-counted nor lost.
+  const projectOnlyExternal = (projectId: string) =>
+    external.bills
+      .filter((b) => b.projectId === projectId && b.milestoneId === null)
+      .reduce((s, b) => s + (b.baseAmount ?? 0), 0);
+
   const clientsMap = new Map<string, ClientNode>();
   for (const p of projects) {
     const milestones = p.milestones.map((m) => {
@@ -75,7 +89,8 @@ export default async function BudgetsPage() {
         budgetHours: m.budgetHours ? Number(m.budgetHours) : 0,
         actualHours: apprMsMap.get(m.id) ?? 0,
         budgetCost: round2(manualCost > 0 ? manualCost : impliedCost),
-        actualCost: round2(actualCost),
+        actualCost: round2(actualCost + (external.byMilestone.get(m.id) ?? 0)),
+        externalCost: round2(external.byMilestone.get(m.id) ?? 0),
       };
     });
     const project = {
@@ -85,7 +100,12 @@ export default async function BudgetsPage() {
       budgetHours: round2(milestones.reduce((s, m) => s + m.budgetHours, 0)),
       actualHours: round2(milestones.reduce((s, m) => s + m.actualHours, 0)),
       budgetCost: round2(milestones.reduce((s, m) => s + m.budgetCost, 0)),
-      actualCost: round2(milestones.reduce((s, m) => s + m.actualCost, 0)),
+      // Project actual cost = internal time + milestone-attributed bills (already inside the
+      // milestone figures) + bills attributed to the project as a whole.
+      actualCost: round2(
+        milestones.reduce((s, m) => s + m.actualCost, 0) + projectOnlyExternal(p.id),
+      ),
+      externalCost: round2(external.byProject.get(p.id) ?? 0),
       milestones,
     };
     let node = clientsMap.get(p.client.id);

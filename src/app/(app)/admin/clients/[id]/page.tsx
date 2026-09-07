@@ -245,7 +245,7 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <EditClientForm key={client.updatedAt.toISOString()} clientId={client.id} name={client.name} />
+            <EditClientForm key={client.updatedAt.toISOString()} clientId={client.id} name={client.name} paymentTermsDays={client.paymentTermsDays} />
           </CardContent>
         </Card>
       )}

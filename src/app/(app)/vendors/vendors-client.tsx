@@ -22,6 +22,8 @@ import { InitialsAvatar } from "@/components/initials-avatar";
 import { DonutChart, DONUT_COLORS, type DonutSegment } from "@/components/charts/donut-chart";
 import { MiniBarChart } from "@/components/charts/mini-bar-chart";
 import { formatMoney } from "@/lib/format";
+import { FxWarning } from "@/components/fx-warning";
+import type { ExcludedGroup } from "@/lib/fx";
 import { cn } from "@/lib/utils";
 import type { VendorPaymentStatus } from "@prisma/client";
 import { createVendorPaymentAction, createVendorAction, deleteVendorAction, markVendorPaidAction } from "./actions";
@@ -35,6 +37,8 @@ export type VendorPaymentRow = {
   description: string | null;
   invoiceNumber: string | null;
   amount: number;
+  /** `amount` in the reporting currency at the payment's economic date; null when no rate exists. */
+  baseAmount: number | null;
   currency: string;
   invoiceDate: string | null;
   invoiceMonth: string | null; // yyyy-MM
@@ -43,7 +47,9 @@ export type VendorPaymentRow = {
   docCount: number;
 };
 export type VendorOption = { id: string; name: string; count: number };
-export type ProjectOption = { id: string; name: string };
+export type ProjectOption = { id: string; name: string; milestones: { id: string; name: string }[] };
+
+const NO_MILESTONE = "__none__";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const todayIso = () => new Date().toISOString().slice(0, 10);
@@ -85,6 +91,9 @@ function AddVendorPaymentDialog({
   const [pending, start] = useTransition();
   const [vendorId, setVendorId] = useState("");
   const [projectId, setProjectId] = useState(NO_PROJECT);
+  // Milestones of the selected project only — a bill can't be pinned to another project's milestone.
+  const [milestoneId, setMilestoneId] = useState(NO_MILESTONE);
+  const milestoneOptions = projects.find((p) => p.id === projectId)?.milestones ?? [];
   const [description, setDescription] = useState("");
   const [invoiceNumber, setInvoiceNumber] = useState("");
   const [amount, setAmount] = useState("");
@@ -105,7 +114,10 @@ function AddVendorPaymentDialog({
     if (!amount || Number(amount) <= 0) return toast.error("Enter an amount greater than 0.");
     start(async () => {
       const r = await createVendorPaymentAction({
-        vendorId, projectId: projectId === NO_PROJECT ? null : projectId, status,
+        vendorId,
+        projectId: projectId === NO_PROJECT ? null : projectId,
+        milestoneId: projectId === NO_PROJECT || milestoneId === NO_MILESTONE ? null : milestoneId,
+        status,
         description: description || null, invoiceNumber: invoiceNumber || null, amount: Number(amount), currency,
         invoiceDate: invoiceDate || null, dueDate: dueDate || null,
         paymentDate: status === "PAID" ? (paymentDate || todayIso()) : null, notes: notes || null,
@@ -159,6 +171,24 @@ function AddVendorPaymentDialog({
                   {projects.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
                 </SelectContent>
               </Select>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="v-milestone">Milestone (optional)</Label>
+              <Select
+                value={milestoneId}
+                items={[{ value: NO_MILESTONE, label: "— whole project —" }, ...milestoneOptions.map((ms) => ({ value: ms.id, label: ms.name }))]}
+                onValueChange={(v) => setMilestoneId(v ?? NO_MILESTONE)}
+                disabled={milestoneOptions.length === 0}
+              >
+                <SelectTrigger id="v-milestone" className="w-full"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NO_MILESTONE}>— whole project —</SelectItem>
+                  {milestoneOptions.map((ms) => <SelectItem key={ms.id} value={ms.id}>{ms.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+              <p className="text-[11px] text-muted-foreground">
+                Pin the bill to a milestone so a fixed-price milestone&apos;s margin carries it.
+              </p>
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -257,12 +287,14 @@ function ManageVendorsDialog({
 }
 
 export function VendorsClient({
-  rows, vendors, projects, defaultCurrency,
+  rows, vendors, projects, defaultCurrency, reportingCurrency, excluded,
 }: {
   rows: VendorPaymentRow[];
   vendors: VendorOption[];
   projects: ProjectOption[];
   defaultCurrency: string;
+  reportingCurrency: string;
+  excluded: ExcludedGroup[];
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -277,21 +309,24 @@ export function VendorsClient({
   const thisYear = String(now.getFullYear());
   const thisMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 
+  // Aggregates sum each payment's amount converted to the reporting currency (baseAmount); rows with
+  // no exchange rate contribute nothing and are surfaced in the FX warning.
+  const base = (r: VendorPaymentRow) => r.baseAmount ?? 0;
   const toPayRows = rows.filter((r) => r.status === "TO_PAY");
-  const outstanding = toPayRows.reduce((s, r) => s + r.amount, 0);
+  const outstanding = toPayRows.reduce((s, r) => s + base(r), 0);
   const overdueRows = toPayRows.filter(isOverdue);
-  const overdue = overdueRows.reduce((s, r) => s + r.amount, 0);
-  const paidYear = rows.filter((r) => r.status === "PAID" && (r.paymentDate ?? "").startsWith(thisYear)).reduce((s, r) => s + r.amount, 0);
-  const paidThisMonth = rows.filter((r) => r.status === "PAID" && (r.paymentDate ?? "").startsWith(thisMonthKey)).reduce((s, r) => s + r.amount, 0);
+  const overdue = overdueRows.reduce((s, r) => s + base(r), 0);
+  const paidYear = rows.filter((r) => r.status === "PAID" && (r.paymentDate ?? "").startsWith(thisYear)).reduce((s, r) => s + base(r), 0);
+  const paidThisMonth = rows.filter((r) => r.status === "PAID" && (r.paymentDate ?? "").startsWith(thisMonthKey)).reduce((s, r) => s + base(r), 0);
 
   // By vendor donut
   const byVendor = new Map<string, number>();
-  for (const r of rows) byVendor.set(r.vendorName, (byVendor.get(r.vendorName) ?? 0) + r.amount);
+  for (const r of rows) byVendor.set(r.vendorName, (byVendor.get(r.vendorName) ?? 0) + base(r));
   const sortedVendors = [...byVendor.entries()].sort((a, b) => b[1] - a[1]);
   const vendorSegments: DonutSegment[] = sortedVendors.slice(0, 6).map(([label, value], i) => ({ label, value, colorClass: DONUT_COLORS[i % DONUT_COLORS.length] }));
   const vendorRest = sortedVendors.slice(6).reduce((s, [, v]) => s + v, 0);
   if (vendorRest > 0) vendorSegments.push({ label: "Other", value: vendorRest, colorClass: DONUT_COLORS[6 % DONUT_COLORS.length] });
-  const totalAll = rows.reduce((s, r) => s + r.amount, 0);
+  const totalAll = rows.reduce((s, r) => s + base(r), 0);
 
   // By month (invoice date)
   const monthKeys: { key: string; label: string }[] = [];
@@ -300,7 +335,7 @@ export function VendorsClient({
     monthKeys.push({ key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`, label: MONTHS[d.getMonth()] });
   }
   const monthTotals = new Map(monthKeys.map((k) => [k.key, 0]));
-  for (const r of rows) if (r.invoiceMonth && monthTotals.has(r.invoiceMonth)) monthTotals.set(r.invoiceMonth, monthTotals.get(r.invoiceMonth)! + r.amount);
+  for (const r of rows) if (r.invoiceMonth && monthTotals.has(r.invoiceMonth)) monthTotals.set(r.invoiceMonth, monthTotals.get(r.invoiceMonth)! + base(r));
   const monthlyBars = monthKeys.map((k) => ({ label: k.label, value: Math.round((monthTotals.get(k.key) ?? 0) * 100) / 100 }));
 
   const filtered = useMemo(() => {
@@ -317,7 +352,7 @@ export function VendorsClient({
     });
   }, [rows, q, vendorFilter, statusFilter, month]);
 
-  const filteredTotal = filtered.reduce((s, r) => s + r.amount, 0);
+  const filteredTotal = filtered.reduce((s, r) => s + base(r), 0);
   const active = q.trim() !== "" || vendorFilter !== "ALL" || statusFilter !== "ALL" || month !== "";
   const hasCharts = rows.length > 0;
 
@@ -342,11 +377,13 @@ export function VendorsClient({
         </div>
       </div>
 
+      <FxWarning excluded={excluded} noun="vendor payments" reporting={reportingCurrency} />
+
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard label="Outstanding" value={formatMoney(outstanding, defaultCurrency)} icon={WalletIcon} tone={outstanding > 0 ? "warning" : "default"} sublabel={`${toPayRows.length} to pay`} />
-        <StatCard label="Overdue" value={formatMoney(overdue, defaultCurrency)} icon={TriangleAlertIcon} tone={overdue > 0 ? "destructive" : "default"} sublabel={`${overdueRows.length} past due`} />
-        <StatCard label="Paid this year" value={formatMoney(paidYear, defaultCurrency)} icon={CheckCircle2Icon} sublabel={thisYear} />
-        <StatCard label="Paid this month" value={formatMoney(paidThisMonth, defaultCurrency)} icon={CalendarIcon} sublabel={`${MONTHS[now.getMonth()]} ${now.getFullYear()}`} />
+        <StatCard label="Outstanding" value={formatMoney(outstanding, reportingCurrency)} icon={WalletIcon} tone={outstanding > 0 ? "warning" : "default"} sublabel={`${toPayRows.length} to pay`} />
+        <StatCard label="Overdue" value={formatMoney(overdue, reportingCurrency)} icon={TriangleAlertIcon} tone={overdue > 0 ? "destructive" : "default"} sublabel={`${overdueRows.length} past due`} />
+        <StatCard label="Paid this year" value={formatMoney(paidYear, reportingCurrency)} icon={CheckCircle2Icon} sublabel={thisYear} />
+        <StatCard label="Paid this month" value={formatMoney(paidThisMonth, reportingCurrency)} icon={CalendarIcon} sublabel={`${MONTHS[now.getMonth()]} ${now.getFullYear()}`} />
       </div>
 
       {hasCharts && (
@@ -354,7 +391,7 @@ export function VendorsClient({
           <Card>
             <CardHeader><CardTitle className="text-base">By vendor</CardTitle></CardHeader>
             <CardContent className="flex justify-center">
-              <DonutChart segments={vendorSegments} centerLabel={formatMoney(totalAll, defaultCurrency)} centerSublabel="total" size={140} />
+              <DonutChart segments={vendorSegments} centerLabel={formatMoney(totalAll, reportingCurrency)} centerSublabel="total" size={140} />
             </CardContent>
           </Card>
           <Card className="lg:col-span-2">
@@ -362,7 +399,7 @@ export function VendorsClient({
               <CardTitle className="text-base">By month</CardTitle>
               <p className="text-xs text-muted-foreground">Amount by invoice date — last 8 months.</p>
             </CardHeader>
-            <CardContent><MiniBarChart data={monthlyBars} height={130} valueFormatter={(v) => formatMoney(v, defaultCurrency)} /></CardContent>
+            <CardContent><MiniBarChart data={monthlyBars} height={130} valueFormatter={(v) => formatMoney(v, reportingCurrency)} /></CardContent>
           </Card>
         </div>
       )}
@@ -446,7 +483,7 @@ export function VendorsClient({
           </div>
           {filtered.length > 0 && (
             <div className="mt-3 flex justify-end text-sm text-muted-foreground">
-              {filtered.length} shown · <span className="ml-1 font-medium tabular-nums text-foreground">{formatMoney(filteredTotal, defaultCurrency)}</span>
+              {filtered.length} shown · <span className="ml-1 font-medium tabular-nums text-foreground">{formatMoney(filteredTotal, reportingCurrency)}</span>
             </div>
           )}
         </CardContent>

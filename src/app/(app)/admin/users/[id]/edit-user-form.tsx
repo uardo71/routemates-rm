@@ -30,6 +30,7 @@ type EditableUser = {
   employment: {
     costRate: string;
     costRateIsComputed: boolean;
+    weeklyCapacityHours: string;
     startDate: string | null;
     endDate: string | null;
     carriedInVacationDays: string | null;
@@ -139,6 +140,23 @@ export function EditUserForm({ user }: { user: EditableUser }) {
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="endDate">Employment end date</Label>
             <Input id="endDate" name="endDate" type="date" defaultValue={user.employment?.endDate ?? undefined} />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="weeklyCapacityHours">Weekly capacity (hours)</Label>
+            <Input
+              id="weeklyCapacityHours"
+              name="weeklyCapacityHours"
+              type="number"
+              step="0.5"
+              min="0"
+              max="80"
+              defaultValue={user.employment?.weeklyCapacityHours ?? "40"}
+              placeholder="40"
+            />
+            <p className="text-xs text-muted-foreground">
+              Contracted hours in a full week — 20 for a half-timer. The planner sizes a day at a fifth of
+              this, so holidays and leave are deducted against the real contract.
+            </p>
           </div>
         </div>
         {user.employment && (

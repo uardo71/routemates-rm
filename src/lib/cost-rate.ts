@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { convertCurrency } from "@/lib/fx";
 
 const HOURS_PER_WORKING_DAY = 8;
 
@@ -13,31 +14,22 @@ export function workingDaysInMonth(year: number, month: number): number {
   return count;
 }
 
+/** Pure monthly-salary → hourly-rate arithmetic: monthly EUR ÷ (working days in that month × 8h),
+ *  rounded to cents. The month drives the divisor, so the same salary yields a slightly different
+ *  hourly rate month to month (fewer working days ⇒ higher rate) — intentional. */
+export function hourlyRateFromMonthly(monthlyEUR: number, year: number, month: number): number {
+  const hours = workingDaysInMonth(year, month) * HOURS_PER_WORKING_DAY;
+  return Math.round((monthlyEUR / hours) * 100) / 100;
+}
+
 /**
- * Converts `amount` from `currency` into EUR using whichever exchange-rate row is on file as of
- * `asOf`, accepting EITHER direction the admin entered it in:
- *   • a direct `currency → EUR` row — its rate is EUR per unit, so multiply;
- *   • an inverse `EUR → currency` row (e.g. "1 EUR = 105 ALL") — its rate is `currency` per EUR,
- *     so divide.
- * This makes cost rates robust to how the rate was typed (the natural "1 EUR = 105 ALL" no longer
- * silently fails to convert). Prefers a direct row when both exist. Returns null when neither is on
- * file as of that date (caller then has no basis to cost in EUR).
+ * Thin wrapper over the generalized {@link convertCurrency} for the common salary/cost case of
+ * converting into EUR as of a date. Behaviour is unchanged: EUR is identity; a direct `currency→EUR`
+ * rate multiplies, an inverse `EUR→currency` rate divides; null when no rate is on file (a EUR target
+ * never triangulates, so this matches the previous direct/inverse-only behaviour exactly).
  */
 export async function convertToEUR(amount: number, currency: string, asOf: Date): Promise<number | null> {
-  if (currency === "EUR") return amount;
-  const direct = await prisma.exchangeRate.findFirst({
-    where: { fromCurrency: currency, toCurrency: "EUR", effectiveFrom: { lte: asOf } },
-    orderBy: { effectiveFrom: "desc" },
-  });
-  if (direct && Number(direct.rate) > 0) return amount * Number(direct.rate);
-
-  const inverse = await prisma.exchangeRate.findFirst({
-    where: { fromCurrency: "EUR", toCurrency: currency, effectiveFrom: { lte: asOf } },
-    orderBy: { effectiveFrom: "desc" },
-  });
-  if (inverse && Number(inverse.rate) > 0) return amount / Number(inverse.rate);
-
-  return null;
+  return convertCurrency(amount, currency, "EUR", asOf);
 }
 
 /**
@@ -60,21 +52,20 @@ export async function computeHourlyCostRateEUR(userId: string, asOf: Date = new 
     monthlyEUR = converted;
   }
 
-  const hours = workingDaysInMonth(asOf.getFullYear(), asOf.getMonth() + 1) * HOURS_PER_WORKING_DAY;
-  return Math.round((monthlyEUR / hours) * 100) / 100;
+  return hourlyRateFromMonthly(monthlyEUR, asOf.getFullYear(), asOf.getMonth() + 1);
 }
 
-/** Freezes the historically-correct cost rate onto every time entry of the given cards — call
- *  after those cards become APPROVED so cost "locks" at approval. Each entry gets the hourly rate
- *  that was correct on its own worked date (salary + FX effective then); falls back to the
- *  assignment's snapshot rate when the person has no salary/FX on file as of that date (preserves
- *  prior behaviour rather than costing at 0). Reads see committed salary/FX ("as of approval").
- *  Safe to re-run — it restamps whatever entries the cards currently hold. */
+/** Freezes the historically-correct cost AND bill rates onto every time entry of the given cards —
+ *  call after those cards become APPROVED so economics "lock" at approval. Cost: the hourly rate
+ *  correct on the worked date (salary + FX effective then), falling back to the assignment's cost
+ *  snapshot when the person has no salary/FX on file. Bill: the assignment's bill-rate snapshot
+ *  (null for FIXED_PRICE / legacy assignments — there's no per-date sell-rate source). Reads see
+ *  committed data ("as of approval"). Safe to re-run — it restamps whatever entries the cards hold. */
 export async function stampCostRatesForCards(cardIds: string[]): Promise<void> {
   if (cardIds.length === 0) return;
   const entries = await prisma.timeEntry.findMany({
     where: { timeCardId: { in: cardIds } },
-    select: { id: true, userId: true, date: true, assignment: { select: { costRate: true } } },
+    select: { id: true, userId: true, date: true, assignment: { select: { costRate: true, billRate: true } } },
   });
   // Compute all rates first (parallel reads), then write — keeps the async derivation out of any
   // caller transaction and off the interactive-transaction time budget.
@@ -82,9 +73,10 @@ export async function stampCostRatesForCards(cardIds: string[]): Promise<void> {
     entries.map(async (e) => ({
       id: e.id,
       costRate: (await computeHourlyCostRateEUR(e.userId, e.date)) ?? Number(e.assignment.costRate),
+      billRate: e.assignment.billRate != null ? Number(e.assignment.billRate) : null,
     })),
   );
-  await prisma.$transaction(updates.map((u) => prisma.timeEntry.update({ where: { id: u.id }, data: { costRate: u.costRate } })));
+  await prisma.$transaction(updates.map((u) => prisma.timeEntry.update({ where: { id: u.id }, data: { costRate: u.costRate, billRate: u.billRate } })));
 }
 
 /** Recomputes and persists `userId`'s Employment.costRate from their current salary. No-ops if

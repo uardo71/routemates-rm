@@ -2,6 +2,7 @@ import "server-only";
 import { prisma } from "@/lib/prisma";
 import { validateFiles, saveTicketAttachments, cleanupSaved } from "@/lib/ticket-attachments";
 import { deleteReceiptFile } from "@/lib/receipt-storage";
+import { notifyTicketParticipants, userName } from "@/lib/ticket-notify";
 
 /** Edit a comment's text (marks it edited). */
 export async function editCommentBody(commentId: string, body: string): Promise<void> {
@@ -67,5 +68,10 @@ export async function postTicketComment(opts: {
     await cleanupSaved(saved);
     return { error: "Could not post the comment. Please try again." };
   }
+  // Notify the other participants (internal notes stay staff-only).
+  await notifyTicketParticipants({
+    ticketId: opts.ticketId, companyId: opts.companyId, actorId: opts.authorId,
+    actorName: await userName(opts.authorId), kind: "COMMENT", summary: "replied", staffOnly: opts.internal,
+  });
   return { commentId };
 }

@@ -14,11 +14,12 @@ import type { VendorPaymentStatus } from "@prisma/client";
 import { updateVendorPaymentAction, markVendorPaidAction, deleteVendorPaymentAction } from "../actions";
 
 export type VendorOpt = { id: string; name: string };
-export type ProjectOpt = { id: string; name: string };
+export type ProjectOpt = { id: string; name: string; milestones: { id: string; name: string }[] };
 export type VendorEditData = {
   id: string;
   vendorId: string;
   projectId: string | null;
+  milestoneId: string | null;
   status: VendorPaymentStatus;
   description: string | null;
   invoiceNumber: string | null;
@@ -32,6 +33,7 @@ export type VendorEditData = {
 
 const todayIso = () => new Date().toISOString().slice(0, 10);
 const NO_PROJECT = "NONE";
+const NO_MILESTONE = "__none__";
 
 export function VendorDetailActions({ data, vendors, projects }: { data: VendorEditData; vendors: VendorOpt[]; projects: ProjectOpt[] }) {
   const router = useRouter();
@@ -68,6 +70,8 @@ function EditVendorDialog({ data, vendors, projects, onClose, onDone }: { data: 
   const [pending, start] = useTransition();
   const [vendorId, setVendorId] = useState(data.vendorId);
   const [projectId, setProjectId] = useState(data.projectId ?? NO_PROJECT);
+  const [milestoneId, setMilestoneId] = useState(data.milestoneId ?? NO_MILESTONE);
+  const milestoneOptions = projects.find((p) => p.id === projectId)?.milestones ?? [];
   const [description, setDescription] = useState(data.description ?? "");
   const [invoiceNumber, setInvoiceNumber] = useState(data.invoiceNumber ?? "");
   const [amount, setAmount] = useState(String(data.amount));
@@ -83,7 +87,11 @@ function EditVendorDialog({ data, vendors, projects, onClose, onDone }: { data: 
     if (!amount || Number(amount) <= 0) return toast.error("Enter an amount greater than 0.");
     start(async () => {
       const r = await updateVendorPaymentAction({
-        id: data.id, vendorId, projectId: projectId === NO_PROJECT ? null : projectId, status,
+        id: data.id,
+        vendorId,
+        projectId: projectId === NO_PROJECT ? null : projectId,
+        milestoneId: projectId === NO_PROJECT || milestoneId === NO_MILESTONE ? null : milestoneId,
+        status,
         description: description || null, invoiceNumber: invoiceNumber || null, amount: Number(amount), currency,
         invoiceDate: invoiceDate || null, dueDate: dueDate || null,
         paymentDate: status === "PAID" ? (paymentDate || todayIso()) : null, notes: notes || null,
@@ -119,6 +127,21 @@ function EditVendorDialog({ data, vendors, projects, onClose, onDone }: { data: 
                 <SelectContent>
                   <SelectItem value={NO_PROJECT}>— none (overhead) —</SelectItem>
                   {projects.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="vd-milestone">Milestone (optional)</Label>
+              <Select
+                value={milestoneId}
+                items={[{ value: NO_MILESTONE, label: "— whole project —" }, ...milestoneOptions.map((ms) => ({ value: ms.id, label: ms.name }))]}
+                onValueChange={(v) => setMilestoneId(v ?? NO_MILESTONE)}
+                disabled={milestoneOptions.length === 0}
+              >
+                <SelectTrigger id="vd-milestone" className="w-full"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NO_MILESTONE}>— whole project —</SelectItem>
+                  {milestoneOptions.map((ms) => <SelectItem key={ms.id} value={ms.id}>{ms.name}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>

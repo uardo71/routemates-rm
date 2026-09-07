@@ -20,11 +20,13 @@ export function EditAssignmentForm({
   assignment,
   canDelete,
   canViewCostRate,
+  showBillRate = false,
 }: {
   assignment: {
     id: string;
     userName: string;
     costRate: string;
+    billRate: string | null;
     allocatedHours: string | null;
     startDate: string | null;
     endDate: string | null;
@@ -32,6 +34,7 @@ export function EditAssignmentForm({
   };
   canDelete: boolean;
   canViewCostRate: boolean;
+  showBillRate?: boolean;
 }) {
   const [error, formAction, pending] = useActionState(updateAssignmentAction, undefined);
 
@@ -47,6 +50,12 @@ export function EditAssignmentForm({
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="costRate">Cost rate (€/hr)</Label>
             <Input id="costRate" name="costRate" type="number" step="0.0001" min="0" defaultValue={assignment.costRate} required />
+          </div>
+        )}
+        {showBillRate && (
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="billRate">Bill rate (/hr)</Label>
+            <Input id="billRate" name="billRate" type="number" step="0.0001" min="0" defaultValue={assignment.billRate ?? ""} placeholder="from milestone rate" />
           </div>
         )}
         <div className="flex flex-col gap-1.5">

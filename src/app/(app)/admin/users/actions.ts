@@ -86,6 +86,7 @@ const UpdateUserSchema = z.object({
   endDate: z.string().optional(),
   carriedInVacationDays: z.string().optional(),
   carriedInVacationYear: z.string().optional(),
+  weeklyCapacityHours: z.string().optional(),
   newPassword: z.string().min(8).optional().or(z.literal("")),
 });
 
@@ -106,6 +107,7 @@ export async function updateUserAction(_prevState: string | undefined, formData:
     endDate: formData.get("endDate") || undefined,
     carriedInVacationDays: formData.get("carriedInVacationDays") || undefined,
     carriedInVacationYear: formData.get("carriedInVacationYear") || undefined,
+    weeklyCapacityHours: formData.get("weeklyCapacityHours") || undefined,
     newPassword: formData.get("newPassword") || undefined,
   });
   if (!parsed.success) return parsed.error.issues[0]?.message ?? "Invalid input";
@@ -125,6 +127,16 @@ export async function updateUserAction(_prevState: string | undefined, formData:
     carriedInVacationYear = yearRaw ? Number(yearRaw) : new Date().getFullYear();
     if (!Number.isInteger(carriedInVacationYear) || carriedInVacationYear < 2000 || carriedInVacationYear > 2100) {
       return "Carried-in vacation year must be a valid year.";
+    }
+  }
+
+  // Contracted hours per full week — drives planner capacity. Blank keeps the 40h default.
+  const capacityRaw = data.weeklyCapacityHours?.trim();
+  let weeklyCapacityHours: number | undefined;
+  if (capacityRaw) {
+    weeklyCapacityHours = Number(capacityRaw);
+    if (!Number.isFinite(weeklyCapacityHours) || weeklyCapacityHours < 0 || weeklyCapacityHours > 80) {
+      return "Weekly capacity must be between 0 and 80 hours.";
     }
   }
 
@@ -166,6 +178,7 @@ export async function updateUserAction(_prevState: string | undefined, formData:
         endDate: data.endDate ? new Date(data.endDate) : undefined,
         carriedInVacationDays,
         carriedInVacationYear,
+        ...(weeklyCapacityHours !== undefined ? { weeklyCapacityHours } : {}),
       },
       update: {
         type: data.role === "CONTRACTOR" ? "CONTRACTOR" : "EMPLOYEE",
@@ -173,6 +186,7 @@ export async function updateUserAction(_prevState: string | undefined, formData:
         endDate: data.endDate ? new Date(data.endDate) : undefined,
         carriedInVacationDays,
         carriedInVacationYear,
+        ...(weeklyCapacityHours !== undefined ? { weeklyCapacityHours } : {}),
       },
     });
     // Cost rate is never typed in directly — derive it from salary history.

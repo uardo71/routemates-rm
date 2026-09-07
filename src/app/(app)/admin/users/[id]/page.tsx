@@ -127,6 +127,7 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
                 ? {
                     costRate: target.employment.costRate.toString(),
                     costRateIsComputed: computedRate !== null,
+                    weeklyCapacityHours: target.employment.weeklyCapacityHours.toString(),
                     startDate: target.employment.startDate.toISOString().slice(0, 10),
                     endDate: target.employment.endDate?.toISOString().slice(0, 10) ?? null,
                     carriedInVacationDays: target.employment.carriedInVacationDays?.toString() ?? null,

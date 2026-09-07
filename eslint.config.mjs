@@ -12,6 +12,10 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Build output anywhere (e.g. inside agent worktrees) + the agent scratch/worktrees dir, which
+    // is gitignored but not otherwise excluded from linting.
+    "**/.next/**",
+    ".claude/**",
   ]),
 ]);
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { format } from "date-fns";
@@ -13,7 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { formatMoney } from "@/lib/format";
 import { invoiceTotals } from "@/lib/invoice";
 import type { ProjectBillingType } from "@prisma/client";
-import { createInvoiceAction, createTimeInvoiceAction, setInvoiceCommissionAction } from "../actions";
+import { createInvoiceAction, createTimeInvoiceAction, setInvoiceCommissionAction, unbilledPreviewAction, type UnbilledPreview } from "../actions";
 
 type MilestoneOpt = { id: string; name: string; salesPrice: number; budgetHours: number | null };
 export type ProjectOption = {
@@ -54,6 +54,33 @@ export function NewInvoiceClient({ projects, defaultCurrency, invoices }: { proj
   const [lines, setLines] = useState<LineRow[]>([{ description: "", quantity: "1", rate: "" }]);
 
   const project = useMemo(() => projects.find((p) => p.id === projectId) ?? null, [projects, projectId]);
+
+  // Unbilled (WIP) offer: as soon as a project is picked, show what "from approved time" would pull
+  // so the user doesn't have to guess a period — one click bills all of it. Fetched from the select
+  // handler (an event), not an effect — the request is caused by the choice, not by a render.
+  const [wip, setWip] = useState<UnbilledPreview | null>(null);
+  const [wipLoading, setWipLoading] = useState(false);
+  // Tracks the project the latest request was fired for, so a slow response for a previously
+  // selected project can't overwrite the current one.
+  const wipFor = useRef("");
+
+  function selectProject(id: string) {
+    setProjectId(id);
+    setWip(null);
+    wipFor.current = id;
+    if (!id) { setWipLoading(false); return; }
+    setWipLoading(true);
+    unbilledPreviewAction(id)
+      .then((r) => { if (wipFor.current === id) setWip(r.preview ?? null); })
+      .finally(() => { if (wipFor.current === id) setWipLoading(false); });
+  }
+
+  function billAllUnbilled() {
+    if (!wip?.firstDate || !wip.lastDate) return;
+    setMode("TIME");
+    setPeriodStart(wip.firstDate);
+    setPeriodEnd(wip.lastDate);
+  }
 
   const linesNet = lines.reduce((s, l) => s + (Number(l.quantity) || 0) * (Number(l.rate) || 0), 0);
   const pct = Number(commissionPercent) || 0;
@@ -141,7 +168,7 @@ export function NewInvoiceClient({ projects, defaultCurrency, invoices }: { proj
       <div className="grid grid-cols-2 gap-3">
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="inv-project">Project</Label>
-          <Select value={projectId} items={projects.map((p) => ({ value: p.id, label: `${p.name} · ${p.clientName}` }))} onValueChange={(v) => setProjectId(v ?? "")}>
+          <Select value={projectId} items={projects.map((p) => ({ value: p.id, label: `${p.name} · ${p.clientName}` }))} onValueChange={(v) => selectProject(v ?? "")}>
             <SelectTrigger id="inv-project" className="w-full"><SelectValue placeholder="Select a project" /></SelectTrigger>
             <SelectContent>
               {projects.map((p) => <SelectItem key={p.id} value={p.id}>{p.name} · {p.clientName}</SelectItem>)}
@@ -166,6 +193,37 @@ export function NewInvoiceClient({ projects, defaultCurrency, invoices }: { proj
           <span>
             <span className="font-medium">{project.name}</span> hasn&apos;t passed UAT sign-off yet. You can still record this invoice — just confirm that&apos;s intended (e.g. an interim / time invoice).
           </span>
+        </div>
+      )}
+
+      {/* Unbilled (WIP) offer — appears as soon as a project is selected. */}
+      {projectId && !isCreditNote && (wipLoading || (wip && wip.entries > 0)) && (
+        <div className="flex flex-col gap-2 rounded-md border border-primary/40 bg-primary/[0.04] px-3 py-2.5">
+          {wipLoading ? (
+            <span className="text-sm text-muted-foreground">Checking for unbilled time…</span>
+          ) : wip ? (
+            <>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-sm">
+                  <span className="font-medium">{formatMoney(wip.value, defaultCurrency)}</span> of approved time is unbilled
+                  <span className="text-muted-foreground"> · {wip.hours}h across {wip.entries} entr{wip.entries === 1 ? "y" : "ies"}</span>
+                  {wip.oldestAgeDays > 90 && <span className="ml-1 font-medium text-destructive">· oldest {wip.oldestAgeDays}d</span>}
+                </span>
+                <Button type="button" size="sm" variant="outline" onClick={billAllUnbilled} disabled={pending}>
+                  Bill all of it
+                </Button>
+              </div>
+              <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-muted-foreground">
+                {wip.milestones.slice(0, 5).map((ms) => (
+                  <span key={ms.milestoneId}>{ms.name}: {ms.hours}h · {formatMoney(ms.value, defaultCurrency)}</span>
+                ))}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                &ldquo;Bill all of it&rdquo; switches to the time basis and sets the period to {wip.firstDate} → {wip.lastDate}. Lines are grouped by
+                milestone at each entry&apos;s frozen bill rate, and the entries leave WIP when the draft is created.
+              </p>
+            </>
+          ) : null}
         </div>
       )}
 

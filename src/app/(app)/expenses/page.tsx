@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/session";
 import { can } from "@/lib/permissions";
 import { toDateParam } from "@/lib/week";
+import { convertRows } from "@/lib/fx";
 import { ExpensesClient, type ExpenseRow, type CategoryOption, type PersonOption } from "./expenses-client";
 
 export default async function ExpensesPage() {
@@ -29,12 +30,19 @@ export default async function ExpensesPage() {
     prisma.company.findUniqueOrThrow({ where: { id: caller.companyId }, select: { currency: true } }),
   ]);
 
-  const rows: ExpenseRow[] = expenses.map((e) => ({
+  // Convert every expense to the company reporting currency at its own date, so the KPIs/donut/
+  // monthly chart/footer sum a single currency. Unconvertible rows (no rate) are surfaced, never
+  // added at 1:1.
+  const reportingCurrency = company.currency;
+  const conv = await convertRows(expenses.map((e) => ({ amount: Number(e.amount), currency: e.currency, date: e.date })), reportingCurrency);
+
+  const rows: ExpenseRow[] = expenses.map((e, i) => ({
     id: e.id,
     categoryId: e.categoryId,
     categoryName: e.category.name,
     date: toDateParam(e.date),
     amount: Number(e.amount),
+    baseAmount: conv.rows[i].baseAmount,
     currency: e.currency,
     description: e.description,
     vendor: e.vendor,
@@ -75,6 +83,8 @@ export default async function ExpensesPage() {
       categories={categoryOptions}
       people={people}
       defaultCurrency={displayCurrency}
+      reportingCurrency={reportingCurrency}
+      excluded={conv.excluded}
     />
   );
 }

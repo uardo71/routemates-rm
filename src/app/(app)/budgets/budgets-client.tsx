@@ -12,7 +12,9 @@ import { budgetMetrics, type BudgetInput } from "@/lib/budget";
 import { cn } from "@/lib/utils";
 import type { ProjectBillingType } from "@prisma/client";
 
-export type MilestoneNode = { id: string; name: string; budgetHours: number; actualHours: number; budgetCost: number; actualCost: number };
+export type MilestoneNode = { id: string; name: string; budgetHours: number; actualHours: number; budgetCost: number; actualCost: number;
+  /** Of `actualCost`, the part that is subcontractor bills rather than our own people's time. */
+  externalCost: number };
 export type ProjectNode = {
   id: string;
   name: string;
@@ -21,6 +23,8 @@ export type ProjectNode = {
   actualHours: number;
   budgetCost: number;
   actualCost: number;
+  /** Of `actualCost`, the part that is subcontractor bills rather than our own people's time. */
+  externalCost: number;
   milestones: MilestoneNode[];
 };
 export type ClientNode = { id: string; name: string; projects: ProjectNode[] };
@@ -44,14 +48,24 @@ function sumInputs(rows: BudgetInput[]): BudgetInput {
 }
 
 // The budget/actual/variance/used% cells shared by every row level (client/project/milestone).
-function MetricCells({ row, currency }: { row: BudgetInput; currency: string }) {
+function MetricCells({ row, currency, externalCost = 0 }: { row: BudgetInput; currency: string; externalCost?: number }) {
   const m = budgetMetrics(row);
   return (
     <>
       <TableCell className="text-right tabular-nums text-muted-foreground">{formatNumber(m.budgetHours)}</TableCell>
       <TableCell className={cn("text-right tabular-nums", m.overHours && "text-destructive font-medium")}>{formatNumber(m.actualHours)}</TableCell>
       <TableCell className="text-right tabular-nums text-muted-foreground">{formatMoney(m.budgetCost, currency)}</TableCell>
-      <TableCell className={cn("text-right tabular-nums", m.overCost && "text-destructive font-medium")}>{formatMoney(m.actualCost, currency)}</TableCell>
+      <TableCell
+        className={cn("text-right tabular-nums", m.overCost && "text-destructive font-medium")}
+        title={externalCost > 0 ? `Includes ${formatMoney(externalCost, currency)} of subcontractor bills` : undefined}
+      >
+        {formatMoney(m.actualCost, currency)}
+        {externalCost > 0 && (
+          <span className="ml-1 text-[10px] font-normal text-violet-700 dark:text-violet-400">
+            (+{formatMoney(externalCost, currency)} ext.)
+          </span>
+        )}
+      </TableCell>
       <TableCell
         className={cn(
           "text-right tabular-nums",
@@ -208,14 +222,14 @@ export function BudgetsClient({ clients, currency }: { clients: ClientNode[]; cu
                                     <Badge variant="outline" className="text-[10px]">{TYPE_LABEL[p.billingType]}</Badge>
                                   </span>
                                 </TableCell>
-                                <MetricCells row={p} currency={currency} />
+                                <MetricCells row={p} currency={currency} externalCost={p.externalCost} />
                               </TableRow>
 
                               {pOpen &&
                                 p.milestones.map((ms) => (
                                   <TableRow key={ms.id}>
                                     <TableCell className="pl-12 text-muted-foreground">{ms.name}</TableCell>
-                                    <MetricCells row={ms} currency={currency} />
+                                    <MetricCells row={ms} currency={currency} externalCost={ms.externalCost} />
                                   </TableRow>
                                 ))}
                               {pOpen && p.milestones.length === 0 && (

@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { WalletIcon, TrendingUpIcon, CoinsIcon, ClockIcon, BanknoteIcon, ReceiptIcon, ScaleIcon, Building2Icon } from "lucide-react";
+import { WalletIcon, TrendingUpIcon, CoinsIcon, ClockIcon, BanknoteIcon, ReceiptIcon, ScaleIcon, Building2Icon, HourglassIcon, ArrowDownLeftIcon, SearchIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -74,8 +74,13 @@ export function RevenueClient({
       earned: sum((r) => r.earnedRevenue),
       recognized: sum((r) => r.recognizedRevenue),
       unplanned: sum((r) => r.unplannedHours),
-      cost: sum((r) => r.cost),
+      internalCost: sum((r) => r.internalCost),
+      externalCost: sum((r) => r.externalCost),
+      totalCost: sum((r) => r.totalCost),
       margin: sum((r) => r.margin),
+      unbilled: sum((r) => r.unbilled),
+      overBilled: sum((r) => r.overBilled),
+      unbilledHours: sum((r) => r.unbilledHours),
       forecastCost: sum((r) => r.forecastCost),
       forecastMargin: sum((r) => r.forecastMargin),
     };
@@ -133,7 +138,7 @@ export function RevenueClient({
       <div>
         <h1 className="text-2xl font-semibold">Revenue &amp; forecast</h1>
         <p className="text-sm text-muted-foreground">
-          Backlog, plan-based forecast, and earned revenue from client work — with internal cost shown separately.
+          Backlog, plan-based forecast, and earned revenue from client work — with internal (our people) and subcontractor cost shown separately.
         </p>
       </div>
 
@@ -209,6 +214,26 @@ export function RevenueClient({
         <StatCard label={`Expected · ${windowLabel}`} value={m(windowTotal)} sublabel={`from plan · ${m(t.forecast)} over 12 mo`} icon={TrendingUpIcon} />
         <StatCard label="Earned revenue (accrued)" value={m(t.earned)} sublabel="approved time / % completion" icon={CoinsIcon} />
         <StatCard label="Recognized revenue" value={m(t.recognized)} sublabel="net of issued invoices" icon={ReceiptIcon} />
+      </div>
+
+      {/* Earned − invoiced: the month-end accrual and the leakage signal. */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <StatCard
+          label="Unbilled (WIP)"
+          value={m(t.unbilled)}
+          sublabel={`earned − invoiced · ${formatNumber(t.unbilledHours)}h approved, not on an invoice`}
+          icon={HourglassIcon}
+          tone={t.unbilled > 0 ? "warning" : "default"}
+        />
+        <StatCard
+          label="Over-billed"
+          value={m(t.overBilled)}
+          sublabel="invoiced ahead of delivery (deposits / prepaid)"
+          icon={ArrowDownLeftIcon}
+        />
+        <button onClick={() => router.push("/revenue/unbilled")} className="text-left">
+          <StatCard label="Unbilled detail" value="Review →" sublabel="by project, milestone, month & age" icon={SearchIcon} />
+        </button>
       </div>
 
       {/* Operating view: billable gross margin, less overhead, equals operating margin */}
@@ -311,7 +336,7 @@ export function RevenueClient({
             Forecast = planned hours × rate (T&amp;M/Retainer) or contract value (fixed price). Fcst margin = forecast
             revenue − projected cost (planned hours × current cost rate). Earned = approved hours × rate, or % completion
             for fixed price. Recognized = net of issued invoices in the register (credit notes subtract). The earned
-            Margin uses each entry&apos;s historical cost rate (EUR).
+            Margin uses each entry&apos;s historical cost rate (EUR) plus any vendor bills booked to the project.
           </p>
         </CardHeader>
         <CardContent>
@@ -331,6 +356,11 @@ export function RevenueClient({
                   <TableHead className="text-right">Fcst margin</TableHead>
                   <TableHead className="text-right">Earned</TableHead>
                   <TableHead className="text-right">Recognized</TableHead>
+                  <TableHead className="text-right">Unbilled</TableHead>
+                  <TableHead className="text-right whitespace-nowrap">Internal cost</TableHead>
+                  <TableHead className="text-right whitespace-nowrap" title="Vendor bills attributed to this project (to pay + paid)">
+                    Subcontractor
+                  </TableHead>
                   <TableHead className="text-right">Margin</TableHead>
                   <TableHead className="text-right">Margin %</TableHead>
                 </TableRow>
@@ -357,6 +387,16 @@ export function RevenueClient({
                     </TableCell>
                     <TableCell className="text-right tabular-nums">{formatMoney(r.earnedRevenue, r.currency)}</TableCell>
                     <TableCell className="text-right tabular-nums">{formatMoney(r.recognizedRevenue, r.currency)}</TableCell>
+                    <TableCell className={cn("text-right tabular-nums", r.unbilled > 0 && "font-medium text-amber-600")} title={r.unbilledHours > 0 ? `${formatNumber(r.unbilledHours)}h approved, not on an invoice` : undefined}>
+                      {formatMoney(r.unbilled, r.currency)}
+                    </TableCell>
+                    <TableCell className="text-right tabular-nums text-muted-foreground">{formatMoney(r.internalCost, r.currency)}</TableCell>
+                    <TableCell
+                      className={cn("text-right tabular-nums", r.externalCost > 0 ? "font-medium text-violet-700 dark:text-violet-400" : "text-muted-foreground/50")}
+                      title={r.externalCost > 0 ? "Partner / subcontractor bills booked to this project — included in margin" : undefined}
+                    >
+                      {r.externalCost > 0 ? formatMoney(r.externalCost, r.currency) : "—"}
+                    </TableCell>
                     <TableCell className={cn("text-right tabular-nums font-medium", r.margin < 0 && "text-destructive")}>
                       {formatMoney(r.margin, r.currency)}
                     </TableCell>
@@ -370,7 +410,7 @@ export function RevenueClient({
                 ))}
                 {filtered.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={14} className="text-center text-muted-foreground">
+                    <TableCell colSpan={17} className="text-center text-muted-foreground">
                       No revenue projects match these filters.
                     </TableCell>
                   </TableRow>

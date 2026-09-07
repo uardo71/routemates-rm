@@ -27,7 +27,11 @@ export default async function VendorPaymentDetailPage({ params }: { params: Prom
       include: { vendor: true, project: { select: { id: true, name: true } }, recordedBy: { select: { name: true } }, documents: { orderBy: { uploadedAt: "desc" } } },
     }),
     prisma.vendor.findMany({ where: { companyId: caller.companyId }, orderBy: { name: "asc" }, select: { id: true, name: true } }),
-    prisma.project.findMany({ where: { companyId: caller.companyId }, orderBy: { name: "asc" }, select: { id: true, name: true } }),
+    prisma.project.findMany({
+      where: { companyId: caller.companyId },
+      orderBy: { name: "asc" },
+      select: { id: true, name: true, milestones: { select: { id: true, name: true }, orderBy: { createdAt: "asc" } } },
+    }),
   ]);
   if (!payment) notFound();
 
@@ -39,6 +43,7 @@ export default async function VendorPaymentDetailPage({ params }: { params: Prom
     id: payment.id,
     vendorId: payment.vendorId,
     projectId: payment.projectId,
+    milestoneId: payment.milestoneId,
     status: payment.status,
     description: payment.description,
     invoiceNumber: payment.invoiceNumber,
@@ -50,7 +55,7 @@ export default async function VendorPaymentDetailPage({ params }: { params: Prom
     notes: payment.notes,
   };
   const vendorOpts: VendorOpt[] = vendors.map((v) => ({ id: v.id, name: v.name }));
-  const projectOpts: ProjectOpt[] = projects.map((p) => ({ id: p.id, name: p.name }));
+  const projectOpts: ProjectOpt[] = projects.map((p) => ({ id: p.id, name: p.name, milestones: p.milestones }));
 
   return (
     <div className="flex flex-col gap-6">

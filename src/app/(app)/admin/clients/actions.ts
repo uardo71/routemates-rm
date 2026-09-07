@@ -9,6 +9,8 @@ import { hashPassword } from "@/lib/password";
 
 const ClientSchema = z.object({
   name: z.string().min(1, "Name is required"),
+  // Standard payment terms in days (net N). Blank ⇒ null (no agreed terms — never guessed in AR).
+  paymentTermsDays: z.coerce.number().int().min(0).max(365).nullable().optional(),
 });
 
 export async function createClientAction(_prevState: string | undefined, formData: FormData) {
@@ -30,12 +32,15 @@ export async function updateClientAction(_prevState: string | undefined, formDat
   const clientId = formData.get("clientId");
   if (typeof clientId !== "string") return "Missing client.";
 
-  const parsed = ClientSchema.safeParse({ name: formData.get("name") });
+  const parsed = ClientSchema.safeParse({
+    name: formData.get("name"),
+    paymentTermsDays: formData.get("paymentTermsDays") || null,
+  });
   if (!parsed.success) return parsed.error.issues[0]?.message ?? "Invalid input";
 
   await prisma.client.update({
     where: { id: clientId, companyId: user.companyId },
-    data: { name: parsed.data.name },
+    data: { name: parsed.data.name, paymentTermsDays: parsed.data.paymentTermsDays ?? null },
   });
 
   revalidatePath("/admin/clients");

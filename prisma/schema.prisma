@@ -116,7 +116,7 @@ enum DiscountType {
 model Company {
   id        String   @id @default(cuid())
   name      String
-  currency  String   @default("USD")
+  currency  String   @default("EUR")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -213,6 +213,7 @@ model User {
   ticketWorklogs         TicketWorklog[]
   ticketAttachments      TicketAttachment[]
   ticketViews            TicketView[]
+  ticketNotifications    TicketNotification[]
 
   @@index([companyId])
   @@index([clientId])
@@ -262,6 +263,10 @@ model Employment {
   // and grants full annual entitlement from that year on, instead of summing from the hire date.
   carriedInVacationDays Decimal?  @db.Decimal(5, 2)
   carriedInVacationYear Int?
+  // Contracted hours per full working week. Drives planner capacity: a day is worth
+  // weeklyCapacityHours / 5, so part-timers and contractors are modelled honestly instead of
+  // everyone being assumed to be a 40h employee.
+  weeklyCapacityHours Decimal @db.Decimal(5, 2) @default(40)
   createdAt  DateTime       @default(now())
   updatedAt  DateTime       @updatedAt
 }
@@ -273,6 +278,10 @@ model Client {
   companyId String
   company   Company  @relation(fields: [companyId], references: [id])
   name      String
+  // Standard payment terms in days (e.g. 30 = net 30). Defaults an invoice's due date at creation,
+  // and back-fills the AR aging date for invoices that have no due date of their own. Null = no
+  // agreed terms; such invoices are aged into a "No due date" bucket rather than guessed.
+  paymentTermsDays Int?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -442,6 +451,7 @@ model Milestone {
   adjustments       MilestoneAdjustment[]
 
   @@index([projectId])
+  vendorPayments VendorPayment[]
 }
 
 // An adjustment to a milestone's value — e.g. the customer will self-manage part, or an amount is
@@ -472,6 +482,10 @@ model Assignment {
   userId         String
   user           User             @relation(fields: [userId], references: [id])
   costRate       Decimal          @db.Decimal(10, 4)
+  // Sell (bill) rate snapshot, taken from the milestone's salesPrice at assignment creation for
+  // T&M / RETAINER projects (an hourly rate). Null for FIXED_PRICE (no per-hour sell rate) and for
+  // legacy assignments. Editable by rates:view:any on the assignment form.
+  billRate       Decimal?         @db.Decimal(10, 4)
   allocatedHours Decimal?         @db.Decimal(8, 2)
   startDate      DateTime
   endDate        DateTime
@@ -586,6 +600,10 @@ model TimeEntry {
   // was correct on `date` (salary + FX effective then). Null until approved / for legacy rows;
   // cost math falls back to the assignment's snapshot rate when null. See src/lib/cost-rate.ts.
   costRate      Decimal?     @db.Decimal(10, 4)
+  // Historical bill rate (sell rate/h) frozen onto the entry when its card is APPROVED, mirroring
+  // costRate — the effective rate on `date`. Null until approved / for legacy rows; realization math
+  // falls back to the assignment's billRate snapshot when null. See src/lib/cost-rate.ts.
+  billRate      Decimal?     @db.Decimal(10, 4)
   description   String?
   invoiceLineId String?
   invoiceLine   InvoiceLine? @relation(fields: [invoiceLineId], references: [id])
@@ -1147,6 +1165,10 @@ model VendorPayment {
   // Optional attribution to a project (e.g. a subcontractor bill); overhead bills leave it null.
   projectId     String?
   project       Project?            @relation(fields: [projectId], references: [id])
+  // Optional finer attribution to a milestone within that project, so fixed-price milestone
+  // margin can account for partner cost. Requires projectId to be set as well.
+  milestoneId   String?
+  milestone     Milestone?          @relation(fields: [milestoneId], references: [id])
   status        VendorPaymentStatus @default(TO_PAY)
   description   String? // what the bill is for (e.g. "Monthly accounting services")
   invoiceNumber String? // the vendor's invoice / reference number
@@ -1166,6 +1188,7 @@ model VendorPayment {
   @@index([companyId])
   @@index([vendorId])
   @@index([projectId])
+  @@index([milestoneId])
 }
 
 // Tax categories (municipality tax, advance sales tax, rent tax, health contributions, social
@@ -1757,6 +1780,26 @@ model SlaPolicy {
   @@index([clientId])
 }
 
+// Per-user in-app notification about activity on a ticket they're involved in (reply / status
+// change / assignment). `kind` is a free-string ("COMMENT"|"STATUS"|"ASSIGN"); actorName + summary
+// are snapshots so the bell renders without extra joins. Read when readAt is set.
+model TicketNotification {
+  id        String    @id @default(cuid())
+  companyId String
+  userId    String // recipient
+  user      User      @relation(fields: [userId], references: [id])
+  ticketId  String
+  ticket    Ticket    @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  kind      String
+  actorName String
+  summary   String
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, readAt])
+  @@index([ticketId])
+}
+
 // Entries in a ticket's activity thread: free-text comments plus auto-logged system events.
 enum TicketActivityKind {
   CREATED
@@ -1808,6 +1851,7 @@ model Ticket {
   worklogs    TicketWorklog[]
   attachments TicketAttachment[]
   fieldValues TicketFieldValue[]
+  notifications TicketNotification[]
 
   @@unique([companyId, number])
   @@index([companyId, statusId])

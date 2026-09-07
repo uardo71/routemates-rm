@@ -27,6 +27,7 @@ import { requireUser } from "@/lib/session";
 import { can } from "@/lib/permissions";
 import { startOfWeek, toDateParam } from "@/lib/week";
 import { formatMoney, formatNumber } from "@/lib/format";
+import { loadExternalCost } from "@/lib/external-cost";
 import { computeProjectRevenue } from "@/lib/revenue";
 
 export default async function DashboardPage() {
@@ -191,6 +192,10 @@ async function ManagerDashboard({
   let billableHours = 0;
   let internalHours = 0;
 
+  // Subcontractor bills attributed to these projects, in the reporting currency — company margin
+  // has to carry them the same way the Revenue report does.
+  const { byProject: externalByProject } = await loadExternalCost(companyId, currency, projects.map((p) => p.id));
+
   for (const p of projects) {
     if (p.status === "ACTIVE") activeProjects++;
     const internal =
@@ -223,7 +228,9 @@ async function ManagerDashboard({
       billingType: p.billingType,
       contractValue: Number(p.contractValue ?? p.budgetAmount ?? 0),
       budgetHours,
-      cost,
+      internalCost: cost,
+      // Partner bills booked to this project — margin here must not ignore them either.
+      externalCost: externalByProject.get(p.id) ?? 0,
       forecastCost,
       milestones: milestoneInputs,
     });
@@ -231,7 +238,7 @@ async function ManagerDashboard({
     totals.forecast += rev.forecastRevenue;
     totals.margin += rev.margin;
     totals.forecastMargin += rev.forecastMargin;
-    totals.cost += rev.cost;
+    totals.cost += rev.totalCost;
     projRows.push({ id: p.id, name: p.name, client: p.client.name, earned: rev.earnedRevenue, margin: rev.margin, approvedHours: rev.approvedHours, budgetHours, internal });
   }
 
