@@ -38,6 +38,19 @@ const KIND_ICON: Record<string, LucideIcon> = {
   reconcile: FileTextIcon,
 };
 
+type DrillItem = { key: string; label: string; sub?: string; value: string; href?: string };
+type Drill = {
+  title: string;
+  icon: LucideIcon;
+  headline: string;
+  note: string;
+  formula?: { label: string; value: string; strong?: boolean }[];
+  itemsLabel: string;
+  items: DrillItem[];
+  footer?: { label: string; href: string };
+  emptyText?: string;
+};
+
 export function CommandCenterClient({ data, periodLabel }: { data: CommandCenter; periodLabel: string }) {
   const c = data.currency;
   const k = data.kpis;
@@ -51,6 +64,87 @@ export function CommandCenterClient({ data, periodLabel }: { data: CommandCenter
   const mc = (n: number) => `${n < 0 ? "-" : ""}${sym}${compact(n)}`;
 
   const attnCount = data.attention.length;
+  const [drill, setDrill] = React.useState<Drill | null>(null);
+
+  // Build a KPI drill-down (what the number is made of) from the already-loaded data.
+  function buildDrill(key: string): Drill {
+    const projects = data.clients.flatMap((cl) => cl.projects);
+    const proj = (p: CmdProject, value: string, sub?: string, tab?: string) => ({ key: p.projectId, label: p.name, sub: sub ?? p.clientName, value, href: `/projects/${p.projectId}${tab ?? ""}` });
+    switch (key) {
+      case "margin":
+        return {
+          title: "Gross margin", icon: ScaleIcon, headline: k.marginPct != null ? `${k.marginPct}%` : "—",
+          note: "Gross margin = earned − cost. Operating margin also subtracts internal overhead.",
+          formula: [
+            { label: "Earned revenue", value: money(k.earned) },
+            { label: "Cost to date", value: `− ${money(k.cost)}` },
+            { label: "Gross margin", value: `${money(k.margin)}${k.marginPct != null ? ` · ${k.marginPct}%` : ""}`, strong: true },
+            { label: "Internal overhead", value: `− ${money(k.overheadCost)}` },
+            { label: "Operating margin", value: money(k.operatingMargin), strong: true },
+          ],
+          itemsLabel: "Margin by project",
+          items: projects.filter((p) => p.earned > 0).sort((a, b) => (a.marginPct ?? 999) - (b.marginPct ?? 999)).map((p) => proj(p, p.marginPct != null ? `${p.marginPct}%` : "—", `${p.clientName} · ${money(p.earned)} earned`)),
+          footer: { label: "Revenue report", href: "/revenue" },
+        };
+      case "outstanding":
+        return {
+          title: "Cash outstanding", icon: BanknoteIcon, headline: money(k.outstanding),
+          note: k.overdueAmount > 0 ? `Issued / reconciled invoices not yet paid — ${money(k.overdueAmount)} of it is overdue.` : "Issued / reconciled invoices not yet paid. None overdue.",
+          itemsLabel: "By project",
+          items: projects.filter((p) => p.outstanding > 0).sort((a, b) => b.outstanding - a.outstanding).map((p) => proj(p, money(p.outstanding), undefined, "?tab=invoices")),
+          footer: { label: "Invoice register", href: "/invoices" }, emptyText: "Nothing outstanding.",
+        };
+      case "pipeline":
+        return {
+          title: "Pipeline", icon: TargetIcon, headline: money(k.pipeline),
+          note: "Open opportunities, net of any deal-level discount.",
+          itemsLabel: "Open deals",
+          items: data.pipelineDeals.map((dl) => ({ key: dl.id, label: dl.name, sub: `${dl.clientName} · ${dl.stage}`, value: money(dl.value), href: `/opportunities/${dl.id}` })),
+          footer: { label: "Opportunities", href: "/opportunities" }, emptyText: "No open opportunities.",
+        };
+      case "invoiced":
+        return {
+          title: "Invoiced (recognized)", icon: ReceiptIcon, headline: money(k.recognized),
+          note: `Net of issued / reconciled / paid invoices (credit notes subtract). ${money(k.collected)} collected so far.`,
+          itemsLabel: "By project",
+          items: projects.filter((p) => p.recognized !== 0).sort((a, b) => b.recognized - a.recognized).map((p) => proj(p, money(p.recognized), undefined, "?tab=invoices")),
+          footer: { label: "Invoice register", href: "/invoices" },
+        };
+      case "cost":
+        return {
+          title: "Cost to date", icon: CoinsIcon, headline: money(k.cost),
+          note: "Σ approved hours × the historical cost rate (frozen at approval), across client projects. Overhead is shown separately.",
+          itemsLabel: "By project",
+          items: projects.filter((p) => p.cost > 0).sort((a, b) => b.cost - a.cost).map((p) => proj(p, money(p.cost))),
+          footer: { label: "Revenue report", href: "/revenue" },
+        };
+      case "overhead":
+        return {
+          title: "Internal / overhead cost", icon: Building2Icon, headline: money(k.overheadCost),
+          note: "Internal / non-billable projects — pure cost, financed out of billable margin.",
+          itemsLabel: "Internal projects",
+          items: data.overheadProjects.map((o) => ({ key: o.projectId, label: o.name, sub: o.clientName, value: money(o.cost), href: `/projects/${o.projectId}` })),
+          footer: { label: "Revenue report", href: "/revenue" }, emptyText: "No overhead cost.",
+        };
+      case "active":
+        return {
+          title: "Active work", icon: FolderIcon, headline: `${k.activeProjects} projects`,
+          note: `Across ${k.clientsCount} client${k.clientsCount === 1 ? "" : "s"} — earned value shown per project.`,
+          itemsLabel: "Projects",
+          items: projects.sort((a, b) => b.earned - a.earned).map((p) => proj(p, money(p.earned))),
+          footer: { label: "Projects", href: "/projects" },
+        };
+      case "earned":
+      default:
+        return {
+          title: "Earned revenue", icon: TrendingUpIcon, headline: money(k.earned),
+          note: `Value earned to date — approved hours × rate (T&M) or % completion (fixed price). The full plan forecasts ${money(k.forecast)}.`,
+          itemsLabel: "By project",
+          items: projects.filter((p) => p.earned > 0).sort((a, b) => b.earned - a.earned).map((p) => proj(p, money(p.earned))),
+          footer: { label: "Revenue report", href: "/revenue" },
+        };
+    }
+  }
 
   return (
     <div className="flex flex-col gap-8">
@@ -70,9 +164,9 @@ export function CommandCenterClient({ data, periodLabel }: { data: CommandCenter
       <section className="flex flex-col gap-3">
         <SectionHeader title="Financial position" />
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <HeroKpi href="/revenue" icon={TrendingUpIcon} label="Earned revenue" value={mc(k.earned)} sub={`${mc(k.forecast)} forecast`} />
+          <HeroKpi onClick={() => setDrill(buildDrill("earned"))} icon={TrendingUpIcon} label="Earned revenue" value={mc(k.earned)} sub={`${mc(k.forecast)} forecast`} />
           <HeroKpi
-            href="/revenue"
+            onClick={() => setDrill(buildDrill("margin"))}
             icon={ScaleIcon}
             label="Gross margin"
             value={k.marginPct != null ? `${k.marginPct}%` : "—"}
@@ -80,21 +174,21 @@ export function CommandCenterClient({ data, periodLabel }: { data: CommandCenter
             tone={k.marginPct != null && k.marginPct < 15 ? "warn" : "good"}
           />
           <HeroKpi
-            href="/invoices"
+            onClick={() => setDrill(buildDrill("outstanding"))}
             icon={BanknoteIcon}
             label="Cash outstanding"
             value={mc(k.outstanding)}
             sub={k.overdueAmount > 0 ? `${mc(k.overdueAmount)} overdue` : "none overdue"}
             tone={k.overdueAmount > 0 ? "warn" : "default"}
           />
-          <HeroKpi href="/opportunities" icon={TargetIcon} label="Pipeline" value={mc(k.pipeline)} sub="open deals" />
+          <HeroKpi onClick={() => setDrill(buildDrill("pipeline"))} icon={TargetIcon} label="Pipeline" value={mc(k.pipeline)} sub="open deals" />
         </div>
         {/* secondary stats strip */}
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <MiniStat href="/invoices" icon={ReceiptIcon} label="Invoiced" value={mc(k.recognized)} sub={`${mc(k.collected)} collected`} />
-          <MiniStat href="/revenue" icon={CoinsIcon} label="Cost to date" value={mc(k.cost)} />
-          <MiniStat href="/revenue" icon={Building2Icon} label="Overhead" value={mc(k.overheadCost)} />
-          <MiniStat href="/projects" icon={FolderIcon} label="Active work" value={`${k.activeProjects}`} sub={`${k.clientsCount} clients`} />
+          <MiniStat onClick={() => setDrill(buildDrill("invoiced"))} icon={ReceiptIcon} label="Invoiced" value={mc(k.recognized)} sub={`${mc(k.collected)} collected`} />
+          <MiniStat onClick={() => setDrill(buildDrill("cost"))} icon={CoinsIcon} label="Cost to date" value={mc(k.cost)} />
+          <MiniStat onClick={() => setDrill(buildDrill("overhead"))} icon={Building2Icon} label="Overhead" value={mc(k.overheadCost)} />
+          <MiniStat onClick={() => setDrill(buildDrill("active"))} icon={FolderIcon} label="Active work" value={`${k.activeProjects}`} sub={`${k.clientsCount} clients`} />
         </div>
       </section>
 
@@ -141,7 +235,64 @@ export function CommandCenterClient({ data, periodLabel }: { data: CommandCenter
         <SectionHeader title="Portfolio" />
         <ClientTable clients={data.clients} mc={mc} moneyFull={money} />
       </section>
+
+      {drill && <KpiDialog drill={drill} onClose={() => setDrill(null)} />}
     </div>
+  );
+}
+
+function KpiDialog({ drill, onClose }: { drill: Drill; onClose: () => void }) {
+  const Icon = drill.icon;
+  return (
+    <Dialog open disablePointerDismissal onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="sm:max-w-lg max-h-[88vh] flex flex-col overflow-hidden gap-0 p-0">
+        <DialogHeader className="border-b p-4">
+          <DialogTitle className="flex items-center gap-2"><Icon className="size-[18px] text-primary" /> {drill.title}</DialogTitle>
+          <div className="mt-0.5 font-mono text-2xl font-semibold tabular-nums">{drill.headline}</div>
+          <p className="text-xs text-muted-foreground">{drill.note}</p>
+        </DialogHeader>
+        <div className="flex-1 min-h-0 overflow-y-auto p-4">
+          {drill.formula && (
+            <div className="mb-4 flex flex-col gap-1 rounded-lg border bg-muted/30 p-3">
+              {drill.formula.map((f, i) => (
+                <div key={i} className={cn("flex items-center justify-between text-sm", f.strong && "mt-0.5 border-t pt-1.5 font-semibold")}>
+                  <span className={cn(!f.strong && "text-muted-foreground")}>{f.label}</span>
+                  <span className="font-mono tabular-nums">{f.value}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="mb-1.5 text-[0.6875rem] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+            {drill.itemsLabel}{drill.items.length > 0 && <span className="ml-1 text-muted-foreground/70">({drill.items.length})</span>}
+          </div>
+          {drill.items.length === 0 ? (
+            <p className="py-6 text-center text-sm text-muted-foreground">{drill.emptyText ?? "Nothing to show."}</p>
+          ) : (
+            <div className="overflow-hidden rounded-md border">
+              {drill.items.map((it) =>
+                it.href ? (
+                  <Link key={it.key} href={it.href} className="group flex items-center gap-3 border-b px-3 py-2 last:border-none hover:bg-muted/40">
+                    <div className="min-w-0 flex-1"><div className="truncate text-sm">{it.label}</div>{it.sub && <div className="truncate text-xs text-muted-foreground">{it.sub}</div>}</div>
+                    <span className="shrink-0 font-mono text-sm tabular-nums">{it.value}</span>
+                    <ArrowRightIcon className="size-3.5 shrink-0 text-transparent group-hover:text-primary" />
+                  </Link>
+                ) : (
+                  <div key={it.key} className="flex items-center gap-3 border-b px-3 py-2 last:border-none">
+                    <div className="min-w-0 flex-1"><div className="truncate text-sm">{it.label}</div>{it.sub && <div className="truncate text-xs text-muted-foreground">{it.sub}</div>}</div>
+                    <span className="shrink-0 font-mono text-sm tabular-nums">{it.value}</span>
+                  </div>
+                ),
+              )}
+            </div>
+          )}
+        </div>
+        {drill.footer && (
+          <div className="flex justify-end border-t p-3">
+            <Link href={drill.footer.href} className="inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm font-medium transition-colors hover:border-primary/50 hover:text-primary">{drill.footer.label} <ArrowRightIcon className="size-3.5" /></Link>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -156,28 +307,28 @@ function SectionHeader({ title, count, action }: { title: string; count?: number
   );
 }
 
-function HeroKpi({ href, icon: Icon, label, value, sub, tone = "default" }: { href: string; icon: LucideIcon; label: string; value: string; sub?: string; tone?: "default" | "good" | "warn" | "bad" }) {
+function HeroKpi({ onClick, icon: Icon, label, value, sub, tone = "default" }: { onClick: () => void; icon: LucideIcon; label: string; value: string; sub?: string; tone?: "default" | "good" | "warn" | "bad" }) {
   return (
-    <Link href={href} className="group">
+    <button type="button" onClick={onClick} className="group text-left">
       <Card className="h-full transition-all group-hover:border-primary/40 group-hover:shadow-sm">
         <CardContent className="flex items-start gap-3">
           <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary transition-colors group-hover:bg-primary/15">
             <Icon className="size-[18px]" />
           </div>
           <div className="min-w-0 flex-1">
-            <div className="text-[0.6875rem] uppercase tracking-wide text-muted-foreground">{label}</div>
+            <div className="flex items-center gap-1 text-[0.6875rem] uppercase tracking-wide text-muted-foreground">{label}<SearchIcon className="size-3 opacity-0 transition-opacity group-hover:opacity-60" /></div>
             <div className={cn("mt-0.5 text-2xl font-semibold tabular-nums leading-tight", tone === "warn" && "text-amber-600 dark:text-amber-400", tone === "bad" && "text-rose-600 dark:text-rose-400")}>{value}</div>
             {sub && <div className="mt-0.5 truncate text-xs text-muted-foreground">{sub}</div>}
           </div>
         </CardContent>
       </Card>
-    </Link>
+    </button>
   );
 }
 
-function MiniStat({ href, icon: Icon, label, value, sub }: { href: string; icon: LucideIcon; label: string; value: string; sub?: string }) {
+function MiniStat({ onClick, icon: Icon, label, value, sub }: { onClick: () => void; icon: LucideIcon; label: string; value: string; sub?: string }) {
   return (
-    <Link href={href} className="group flex items-center gap-2.5 rounded-lg border bg-card px-3 py-2.5 transition-colors hover:border-primary/40 hover:bg-muted/30">
+    <button type="button" onClick={onClick} className="group flex items-center gap-2.5 rounded-lg border bg-card px-3 py-2.5 text-left transition-colors hover:border-primary/40 hover:bg-muted/30">
       <Icon className="size-4 shrink-0 text-muted-foreground/70 group-hover:text-primary" />
       <div className="min-w-0">
         <div className="text-[0.625rem] uppercase tracking-wide text-muted-foreground">{label}</div>
@@ -186,7 +337,7 @@ function MiniStat({ href, icon: Icon, label, value, sub }: { href: string; icon:
           {sub && <span className="ml-1.5 font-sans text-[0.625rem] font-normal text-muted-foreground">{sub}</span>}
         </div>
       </div>
-    </Link>
+    </button>
   );
 }
 

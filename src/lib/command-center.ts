@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { visibleProjectIds, type SessionUser } from "@/lib/permissions";
 import { computeCompanyRevenue } from "@/lib/revenue-data";
 import { invoiceTotals, outstanding } from "@/lib/invoice";
-import { computeQuoteTotals, TERMINAL_STAGES } from "@/lib/opportunity";
+import { computeQuoteTotals, TERMINAL_STAGES, STAGE_LABELS } from "@/lib/opportunity";
 
 export type CmdRag = RagStatus | "NONE";
 
@@ -126,6 +126,10 @@ export type CommandCenter = {
   attention: CmdAttention[];
   quarterLabels: string[];
   quarterly: number[];
+  /** Open opportunities behind the pipeline KPI. */
+  pipelineDeals: { id: string; name: string; clientName: string; stage: string; value: number }[];
+  /** Internal/overhead projects behind the overhead KPI. */
+  overheadProjects: { projectId: string; name: string; clientName: string; cost: number }[];
 };
 
 const MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -154,7 +158,7 @@ export async function assembleCommandCenter(user: SessionUser): Promise<CommandC
       }),
       prisma.opportunity.findMany({
         where: { companyId: user.companyId, stage: { notIn: TERMINAL_STAGES } },
-        select: { discountType: true, discountValue: true, lines: { select: { quantityHours: true, unitPrice: true } } },
+        select: { id: true, name: true, stage: true, client: { select: { name: true } }, discountType: true, discountValue: true, lines: { select: { quantityHours: true, unitPrice: true } } },
       }),
       prisma.project.findMany({
         where: { companyId: user.companyId, isInternal: false, ...projFilter },
@@ -223,6 +227,7 @@ export async function assembleCommandCenter(user: SessionUser): Promise<CommandC
 
   // ---- Pipeline (open opportunities, net of discount) ----
   let pipeline = 0;
+  const pipelineDeals: CommandCenter["pipelineDeals"] = [];
   for (const o of opportunities) {
     const { net } = computeQuoteTotals(
       o.lines.map((l) => ({ quantityHours: Number(l.quantityHours), unitPrice: Number(l.unitPrice) })),
@@ -230,7 +235,13 @@ export async function assembleCommandCenter(user: SessionUser): Promise<CommandC
       o.discountValue != null ? Number(o.discountValue) : undefined,
     );
     pipeline += net;
+    pipelineDeals.push({ id: o.id, name: o.name, clientName: o.client.name, stage: STAGE_LABELS[o.stage] ?? o.stage, value: round2(net) });
   }
+  pipelineDeals.sort((a, b) => b.value - a.value);
+  const overheadProjects: CommandCenter["overheadProjects"] = overhead
+    .filter((o) => o.cost > 0)
+    .map((o) => ({ projectId: o.projectId, name: o.projectName, clientName: o.clientName, cost: round2(o.cost) }))
+    .sort((a, b) => b.cost - a.cost);
 
   // ---- Delivery signals per project (RAG, status age, open issues, next milestone) ----
   const MS_DAY = 86400000;
@@ -466,5 +477,7 @@ export async function assembleCommandCenter(user: SessionUser): Promise<CommandC
     attention,
     quarterLabels,
     quarterly,
+    pipelineDeals,
+    overheadProjects,
   };
 }

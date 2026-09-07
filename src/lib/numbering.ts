@@ -22,3 +22,10 @@ export function nextOpportunityNumber(companyId: string, db: Db = prisma): Promi
 export function nextProjectNumber(companyId: string, db: Db = prisma): Promise<string> {
   return nextNumber(db, "project", companyId, "PR-", 7);
 }
+
+/** Next ticket number, e.g. "TKT-00000042" (unique per company). */
+export async function nextTicketNumber(companyId: string, db: Db = prisma): Promise<string> {
+  const last = await db.ticket.findFirst({ where: { companyId }, orderBy: { number: "desc" }, select: { number: true } });
+  const current = last?.number ? parseInt(last.number.replace(/\D/g, ""), 10) || 0 : 0;
+  return `TKT-${String(current + 1).padStart(8, "0")}`;
+}

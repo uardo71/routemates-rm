@@ -331,6 +331,50 @@ export async function recordPaymentAction(input: PaymentInput): Promise<{ error?
   return {};
 }
 
+const UpdatePaymentSchema = z.object({
+  paymentId: z.string().min(1),
+  amount: z.coerce.number(),
+  date: z.string().min(1),
+  method: z.string().max(50).optional().nullable(),
+  reference: z.string().max(100).optional().nullable(),
+});
+export type UpdatePaymentInput = z.infer<typeof UpdatePaymentSchema>;
+
+export async function updatePaymentAction(input: UpdatePaymentInput): Promise<{ error?: string }> {
+  const user = await requirePermission("invoices:manage");
+  const parsed = UpdatePaymentSchema.safeParse(input);
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Invalid input." };
+  const d = parsed.data;
+  if (d.amount === 0) return { error: "Payment amount can't be zero." };
+  const date = parseDate(d.date);
+  if (date === "invalid" || !date) return { error: "Invalid payment date." };
+
+  const payment = await prisma.invoicePayment.findFirst({
+    where: { id: d.paymentId, invoice: { companyId: user.companyId } },
+    include: { invoice: { include: { lines: true, payments: true } } },
+  });
+  if (!payment) return { error: "Payment not found." };
+  const inv = payment.invoice;
+
+  const gross = invoiceTotals(inv.lines.map((l) => ({ amount: Number(l.amount) })), inv.vatRate == null ? null : Number(inv.vatRate)).gross;
+  const paidAfter = inv.payments.filter((p) => p.id !== d.paymentId).reduce((s, p) => s + Number(p.amount), 0) + d.amount;
+
+  const statusUpdate =
+    paidAfter >= gross && (inv.status === "ISSUED" || inv.status === "RECONCILED")
+      ? [prisma.invoice.update({ where: { id: inv.id }, data: { status: "PAID" } })]
+      : paidAfter < gross && inv.status === "PAID"
+        ? [prisma.invoice.update({ where: { id: inv.id }, data: { status: inv.reconciledAt ? "RECONCILED" : "ISSUED" } })]
+        : [];
+
+  await prisma.$transaction([
+    prisma.invoicePayment.update({ where: { id: d.paymentId }, data: { amount: d.amount, date, method: d.method ?? null, reference: d.reference ?? null } }),
+    ...statusUpdate,
+  ]);
+  revalidatePath("/invoices");
+  revalidatePath(`/invoices/${inv.id}`);
+  return {};
+}
+
 export async function deletePaymentAction(paymentId: string): Promise<{ error?: string }> {
   const user = await requirePermission("invoices:manage");
   const payment = await prisma.invoicePayment.findFirst({ where: { id: paymentId, invoice: { companyId: user.companyId } }, include: { invoice: { include: { lines: true, payments: true } } } });

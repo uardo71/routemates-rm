@@ -16,6 +16,10 @@ enum SystemRole {
   PM
   EMPLOYEE
   CONTRACTOR
+  // External customer portal user — belongs to a Client (via User.clientId), authenticates with a
+  // password (always, even when staff password login is disabled), and is confined to /portal where
+  // they only ever see and act on their own client's tickets. Never granted internal `can(...)` rights.
+  CUSTOMER
 }
 
 enum EmploymentType {
@@ -138,6 +142,12 @@ model Company {
   uatAreas          UatArea[]
   uatTestCases      UatTestCase[]
   uatIssues         UatIssue[]
+  tickets           Ticket[]
+  ticketTypes       TicketTypeDef[]
+  ticketStatuses    TicketStatusDef[]
+  ticketFields      TicketFieldDef[]
+  ticketViews       TicketView[]
+  slaPolicies       SlaPolicy[]
   engagements       Engagement[]
   milestoneAdjustments MilestoneAdjustment[]
 }
@@ -151,6 +161,9 @@ model User {
   name         String
   role         SystemRole @default(EMPLOYEE)
   active       Boolean    @default(true)
+  // Set only for CUSTOMER (portal) users — the Client they belong to. Null for all internal staff.
+  clientId     String?
+  client       Client?    @relation("ClientPortalUsers", fields: [clientId], references: [id])
   // Self-service profile fields — editable by the person themselves on /profile (never email,
   // password, or role). `avatarUrl` stores just the on-disk file name (served, authenticated,
   // through /api/avatars/[fileName]); everything else is free text.
@@ -193,8 +206,16 @@ model User {
   raidCreated            RaidItem[]             @relation("RaidCreatedBy")
   meetingsCreated        MeetingMinutes[]       @relation("MinutesCreatedBy")
   milestoneAdjustments   MilestoneAdjustment[]  @relation("MilestoneAdjustmentBy")
+  ticketsRequested       Ticket[]               @relation("TicketRequester")
+  ticketsAssigned        Ticket[]               @relation("TicketAssignee")
+  ticketsCreated         Ticket[]               @relation("TicketCreatedBy")
+  ticketComments         TicketComment[]
+  ticketWorklogs         TicketWorklog[]
+  ticketAttachments      TicketAttachment[]
+  ticketViews            TicketView[]
 
   @@index([companyId])
+  @@index([clientId])
 }
 
 /** Per-user salary history: cost rate is derived from this, never entered directly. Multiple
@@ -259,6 +280,9 @@ model Client {
   projects Project[]
   invoices Invoice[]
   opportunities Opportunity[]
+  tickets  Ticket[]
+  portalUsers User[]  @relation("ClientPortalUsers")
+  slaPolicies SlaPolicy[]
 
   @@index([companyId])
 }
@@ -355,6 +379,7 @@ model Project {
   uatAreas       UatArea[]
   uatTestCases   UatTestCase[]
   uatIssues      UatIssue[]
+  tickets        Ticket[]
   engagements    Engagement[]
 
   @@unique([companyId, number])
@@ -1573,6 +1598,283 @@ model UatIssue {
 
   @@index([projectId])
   @@index([companyId])
+}
+
+// ---------- Ticketing (ITIL-style incidents / service requests / changes) ----------
+
+enum TicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+// Semantic bucket a configurable status maps to. Drives board grouping, "is it open" (SLA clocks
+// run only while OPEN/IN_PROGRESS), and which timestamps get stamped (DONE→resolvedAt/closedAt).
+enum TicketStatusCategory {
+  OPEN
+  IN_PROGRESS
+  DONE
+  CANCELLED
+}
+
+// Data type of a configurable custom field. Values live in TicketFieldValue as JSON.
+enum TicketFieldKind {
+  TEXT
+  TEXTAREA
+  NUMBER
+  DATE
+  SELECT
+  MULTISELECT
+  CHECKBOX
+  USER
+}
+
+// ---------- Ticketing configuration (per company, admin-managed) ----------
+
+// A ticket "type"/category (Incident, Bug, Change request, Task, …). Each owns its own workflow
+// (TicketStatusDef) and optional custom fields. Seeded with sensible defaults per company.
+model TicketTypeDef {
+  id                String   @id @default(cuid())
+  companyId         String
+  company           Company  @relation(fields: [companyId], references: [id])
+  key               String // stable slug, unique per company
+  name              String
+  description       String?
+  icon              String? // key into the client-side icon registry
+  color             String? // token/hex for the type chip
+  order             Int      @default(0)
+  active            Boolean  @default(true)
+  isDefault         Boolean  @default(false) // pre-selected type on new tickets
+  customerCanCreate Boolean  @default(true) // customers may open this type from the portal
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  statuses TicketStatusDef[]
+  fields   TicketFieldDef[]
+  tickets  Ticket[]
+
+  @@unique([companyId, key])
+  @@index([companyId])
+}
+
+// A status in a type's workflow. Per-type, so Bugs and Change requests can differ.
+model TicketStatusDef {
+  id              String               @id @default(cuid())
+  companyId       String
+  company         Company              @relation(fields: [companyId], references: [id])
+  typeId          String
+  type            TicketTypeDef        @relation(fields: [typeId], references: [id], onDelete: Cascade)
+  key             String
+  name            String
+  color           String?
+  category        TicketStatusCategory @default(OPEN)
+  order           Int                  @default(0)
+  isInitial       Boolean              @default(false) // starting status for a new ticket of this type
+  customerVisible Boolean              @default(true) // shown to portal users
+  customerCanSet  Boolean              @default(false) // portal users may move a ticket into this status
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+
+  tickets Ticket[]
+
+  @@unique([typeId, key])
+  @@index([companyId])
+  @@index([typeId])
+}
+
+// A custom field definition. typeId null = applies to every type; set = only that type.
+model TicketFieldDef {
+  id               String          @id @default(cuid())
+  companyId        String
+  company          Company         @relation(fields: [companyId], references: [id])
+  typeId           String?
+  type             TicketTypeDef?  @relation(fields: [typeId], references: [id], onDelete: Cascade)
+  key              String
+  name             String
+  kind             TicketFieldKind @default(TEXT)
+  options          Json? // string[] for SELECT/MULTISELECT
+  required         Boolean         @default(false)
+  customerVisible  Boolean         @default(true)
+  customerEditable Boolean         @default(false)
+  order            Int             @default(0)
+  active           Boolean         @default(true)
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  values TicketFieldValue[]
+
+  @@unique([companyId, typeId, key])
+  @@index([companyId])
+}
+
+model TicketFieldValue {
+  id       String         @id @default(cuid())
+  ticketId String
+  ticket   Ticket         @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  fieldId  String
+  field    TicketFieldDef @relation(fields: [fieldId], references: [id], onDelete: Cascade)
+  value    Json // string | number | boolean | string[] | userId, per field.kind
+
+  @@unique([ticketId, fieldId])
+  @@index([fieldId])
+}
+
+// A saved view: filter + column layout + sort, owned by a user, optionally shared company-wide.
+model TicketView {
+  id        String   @id @default(cuid())
+  companyId String
+  company   Company  @relation(fields: [companyId], references: [id])
+  ownerId   String
+  owner     User     @relation(fields: [ownerId], references: [id])
+  name      String
+  shared    Boolean  @default(false)
+  filters   Json     @default("{}") // { typeIds, statusCategories, priorities, assigneeIds, clientIds, projectIds, text, mine }
+  columns   Json     @default("[]") // ordered column keys (native + "cf:<fieldKey>")
+  sort      Json? // { key, dir }
+  order     Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([companyId])
+  @@index([ownerId])
+}
+
+// SLA response/resolution targets. One row per company is the default (clientId null); an optional
+// row per client overrides it. `targets` is JSON keyed by priority: { LOW:{respond,resolve}, … } in hours.
+model SlaPolicy {
+  id        String   @id @default(cuid())
+  companyId String
+  company   Company  @relation(fields: [companyId], references: [id])
+  clientId  String? // null = company-wide default
+  client    Client?  @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  targets   Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([companyId, clientId])
+  @@index([companyId])
+  @@index([clientId])
+}
+
+// Entries in a ticket's activity thread: free-text comments plus auto-logged system events.
+enum TicketActivityKind {
+  CREATED
+  COMMENT
+  STATUS
+  ASSIGN
+  PRIORITY
+  RESOLVED
+  REOPENED
+}
+
+model Ticket {
+  id              String         @id @default(cuid())
+  companyId       String
+  company         Company        @relation(fields: [companyId], references: [id])
+  number          String // TKT-00000001, unique per company
+  title           String
+  description     String?
+  typeId          String
+  typeDef         TicketTypeDef   @relation(fields: [typeId], references: [id])
+  priority        TicketPriority  @default(MEDIUM)
+  statusId        String
+  statusDef       TicketStatusDef @relation(fields: [statusId], references: [id])
+  requesterId     String
+  requester       User           @relation("TicketRequester", fields: [requesterId], references: [id])
+  assigneeId      String?
+  assignee        User?          @relation("TicketAssignee", fields: [assigneeId], references: [id])
+  createdById     String
+  createdBy       User           @relation("TicketCreatedBy", fields: [createdById], references: [id])
+  clientId        String?
+  client          Client?        @relation(fields: [clientId], references: [id])
+  projectId       String?
+  project         Project?       @relation(fields: [projectId], references: [id])
+  category        String?
+  systemRef       String? // configuration item / SAP system (e.g. DA1)
+  moduleRef       String? // functional module (e.g. FI, MM, AP)
+  dueDate         DateTime?
+  // SLA targets, computed from priority at create / on priority change.
+  respondBy       DateTime?
+  resolveBy       DateTime?
+  firstResponseAt DateTime?
+  resolvedAt      DateTime?
+  closedAt        DateTime?
+  resolution      String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  comments    TicketComment[]
+  worklogs    TicketWorklog[]
+  attachments TicketAttachment[]
+  fieldValues TicketFieldValue[]
+
+  @@unique([companyId, number])
+  @@index([companyId, statusId])
+  @@index([typeId])
+  @@index([statusId])
+  @@index([assigneeId])
+  @@index([requesterId])
+  @@index([clientId])
+  @@index([projectId])
+}
+
+model TicketComment {
+  id        String             @id @default(cuid())
+  ticketId  String
+  ticket    Ticket             @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  authorId  String
+  author    User               @relation(fields: [authorId], references: [id])
+  kind      TicketActivityKind @default(COMMENT)
+  body      String?
+  // Staff-only note: hidden from the customer portal. Customer-authored comments are never internal.
+  internal  Boolean            @default(false)
+  // Threaded replies: a reply points at the comment it answers. Top-level comments leave it null.
+  parentId  String?
+  parent    TicketComment?     @relation("CommentThread", fields: [parentId], references: [id], onDelete: Cascade)
+  replies   TicketComment[]    @relation("CommentThread")
+  attachments TicketAttachment[]
+  // Set when a comment's text is edited / when it's soft-deleted (tombstoned so replies survive).
+  editedAt  DateTime?
+  deletedAt DateTime?
+  createdAt DateTime           @default(now())
+
+  @@index([ticketId])
+  @@index([parentId])
+}
+
+model TicketWorklog {
+  id        String    @id @default(cuid())
+  ticketId  String
+  ticket    Ticket    @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User      @relation(fields: [userId], references: [id])
+  minutes   Int
+  workedOn  DateTime?
+  note      String?
+  createdAt DateTime  @default(now())
+
+  @@index([ticketId])
+}
+
+model TicketAttachment {
+  id           String   @id @default(cuid())
+  ticketId     String
+  ticket       Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  // Attachments dropped onto a specific comment/reply (SAP screenshots etc.). Null = ticket-level.
+  commentId    String?
+  comment      TicketComment? @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  companyId    String
+  fileName     String
+  originalName String
+  mimeType     String
+  sizeBytes    Int
+  uploadedById String
+  uploadedBy   User     @relation(fields: [uploadedById], references: [id])
+  uploadedAt   DateTime @default(now())
+
+  @@index([ticketId])
+  @@index([commentId])
 }
 
 // ---------- Engagements (end-customer streams inside a project's delivery cockpit) ----------

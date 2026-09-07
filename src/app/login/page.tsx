@@ -3,17 +3,19 @@ import { RoutematesLogo } from "@/components/routemates-logo";
 import { LoginForm } from "./login-form";
 import { microsoftConfigured, isPasswordLoginAllowed } from "@/lib/settings";
 
-export default async function LoginPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
-  const { error } = await searchParams;
-  const microsoftEnabled = microsoftConfigured();
-  const passwordEnabled = await isPasswordLoginAllowed();
+export default async function LoginPage({ searchParams }: { searchParams: Promise<{ error?: string; customer?: string }> }) {
+  const { error, customer } = await searchParams;
+  const customerMode = customer === "1";
+  const microsoftEnabled = microsoftConfigured() && !customerMode;
+  // Customer portal accounts always authenticate with a password, even when staff sign-in is SSO-only.
+  const passwordEnabled = customerMode || (await isPasswordLoginAllowed());
 
   return (
     <div className="flex flex-1 items-center justify-center bg-background p-4">
       <Card className="w-full max-w-sm">
         <CardHeader className="items-center text-center gap-3">
           <RoutematesLogo variant="color" className="h-12" />
-          <CardTitle>Sign in</CardTitle>
+          <CardTitle>{customerMode ? "Customer sign in" : "Sign in"}</CardTitle>
         </CardHeader>
         <CardContent>
           {error && (
@@ -23,7 +25,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
                 : "Sign-in failed. Please try again."}
             </p>
           )}
-          <LoginForm microsoftEnabled={microsoftEnabled} passwordEnabled={passwordEnabled} />
+          <LoginForm microsoftEnabled={microsoftEnabled} passwordEnabled={passwordEnabled} customerMode={customerMode} />
         </CardContent>
       </Card>
     </div>

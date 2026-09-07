@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useActionState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,9 +10,11 @@ import { loginAction, microsoftLoginAction } from "./actions";
 export function LoginForm({
   microsoftEnabled = false,
   passwordEnabled = true,
+  customerMode = false,
 }: {
   microsoftEnabled?: boolean;
   passwordEnabled?: boolean;
+  customerMode?: boolean;
 }) {
   const [error, formAction, pending] = useActionState(loginAction, undefined);
 
@@ -47,6 +50,16 @@ export function LoginForm({
             {pending ? "Signing in..." : "Sign in"}
           </Button>
         </form>
+      )}
+
+      {customerMode ? (
+        <Link href="/login" className="text-center text-xs text-muted-foreground hover:underline">
+          ← Staff sign-in
+        </Link>
+      ) : (
+        <Link href="/login?customer=1" className="text-center text-xs text-muted-foreground hover:underline">
+          Customer? Sign in to the support portal
+        </Link>
       )}
     </div>
   );

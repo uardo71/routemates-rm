@@ -22,7 +22,9 @@ export type Action =
   | "opportunities:view"
   | "opportunities:manage"
   | "opportunities:approve"
-  | "reports:view";
+  | "reports:view"
+  | "tickets:view"
+  | "tickets:manage";
 
 // Employees and contractors are delivery staff, not delivery managers: for now they
 // only get the Dashboard, their own Time page (logging hours against assignments
@@ -51,12 +53,17 @@ const ROLE_PERMISSIONS: Record<SystemRole, Action[]> = {
     "opportunities:manage",
     "opportunities:approve",
     "reports:view",
+    "tickets:view",
+    "tickets:manage",
   ],
-  FINANCE: ["clients:view", "projects:view", "rates:view:any", "invoices:manage", "salaries:manage", "expenses:manage", "opportunities:view", "reports:view"],
-  SALES: ["clients:manage", "clients:view", "opportunities:view", "opportunities:manage"],
-  PM: ["projects:view", "projects:create", "planning:view", "delivery:manage", "vacations:view:any", "opportunities:view", "opportunities:manage"],
+  FINANCE: ["clients:view", "projects:view", "rates:view:any", "invoices:manage", "salaries:manage", "expenses:manage", "opportunities:view", "reports:view", "tickets:view"],
+  SALES: ["clients:manage", "clients:view", "opportunities:view", "opportunities:manage", "tickets:view"],
+  PM: ["projects:view", "projects:create", "planning:view", "delivery:manage", "vacations:view:any", "opportunities:view", "opportunities:manage", "tickets:view", "tickets:manage"],
   EMPLOYEE: [],
   CONTRACTOR: [],
+  // Customer portal users never hold internal permissions — their access is granted through the
+  // /portal guards, scoped to their own client, not through `can(...)`.
+  CUSTOMER: [],
 };
 
 export type SessionUser = {
@@ -130,6 +137,14 @@ export async function canAccessProjectDelivery(user: SessionUser, projectId: str
 /** @deprecated alias — cutover uses the shared delivery-member check. */
 export async function canAccessProjectCutover(user: SessionUser, projectId: string): Promise<boolean> {
   return canAccessProjectDelivery(user, projectId);
+}
+
+/** Prisma `where` for the tickets a user may see: everyone with `tickets:view` sees the whole
+ *  company; everyone else (employees/contractors) sees only tickets they raised, were assigned, or
+ *  created. */
+export function visibleTicketWhere(user: SessionUser): { companyId: string; OR?: object[] } {
+  if (can(user, "tickets:view")) return { companyId: user.companyId };
+  return { companyId: user.companyId, OR: [{ requesterId: user.id }, { assigneeId: user.id }, { createdById: user.id }] };
 }
 
 /** Whether `user` may see bill/cost rate figures for the given project (own projects for PMs). */

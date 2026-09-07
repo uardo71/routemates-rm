@@ -37,12 +37,14 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         const password = credentials?.password;
         if (typeof email !== "string" || typeof password !== "string") return null;
 
-        // Server-side enforcement of the admin "password login" toggle — hiding the form in the UI
-        // isn't enough (someone could POST credentials directly). Break-glass rules in isPasswordLoginAllowed.
-        if (!(await isPasswordLoginAllowed())) return null;
-
         const user = await prisma.user.findUnique({ where: { email } });
         if (!user || !user.active) return null;
+
+        // Server-side enforcement of the admin "password login" toggle — hiding the form in the UI
+        // isn't enough (someone could POST credentials directly). Break-glass rules in isPasswordLoginAllowed.
+        // CUSTOMER portal accounts are exempt: they always authenticate with a password (they can't use
+        // the org's SSO), so the staff SSO-only lock must never shut them out.
+        if (user.role !== "CUSTOMER" && !(await isPasswordLoginAllowed())) return null;
 
         const valid = await verifyPassword(password, user.passwordHash);
         if (!valid) return null;

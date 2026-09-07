@@ -10,6 +10,8 @@ import { SidebarShell } from "./sidebar-shell";
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const session = await auth();
   if (!session?.user) redirect("/login");
+  // Customer portal users never enter the internal app — send them to their portal.
+  if (session.user.role === "CUSTOMER") redirect("/portal");
 
   const user = session.user;
   const me = await prisma.user.findUnique({ where: { id: user.id }, select: { avatarUrl: true } });
@@ -113,6 +115,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           },
         ]
       : []),
+    { label: "Support", items: [{ href: "/tickets", label: "Tickets", icon: "tickets" as const }] },
+    { label: "Help", items: [{ href: "/help", label: "Help & docs", icon: "help" as const }] },
   ];
 
   const cookieStore = await cookies();

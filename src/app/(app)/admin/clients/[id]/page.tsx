@@ -19,8 +19,11 @@ import { StatCard } from "@/components/stat-card";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/session";
 import { can } from "@/lib/permissions";
+import { getCompanySlaDefault, getClientSlaOverride } from "@/lib/sla.server";
 import { EditClientForm } from "./edit-client-form";
 import { AddContactForm } from "./add-contact-form";
+import { PortalUsers } from "./portal-users";
+import { ClientSla } from "./client-sla";
 import { deleteContactAction } from "../actions";
 
 const STATUS_TONE: Record<string, "secondary" | "default" | "outline" | "destructive"> = {
@@ -43,11 +46,16 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
       contacts: { orderBy: { createdAt: "asc" } },
       projects: { orderBy: { createdAt: "desc" } },
       opportunities: { select: { stage: true } },
+      portalUsers: { orderBy: { createdAt: "asc" }, select: { id: true, name: true, email: true, active: true } },
     },
   });
   if (!client) notFound();
 
   const canManage = can(user, "clients:manage");
+  const canManageTickets = can(user, "tickets:manage");
+  const [slaDefault, slaOverride] = canManageTickets
+    ? await Promise.all([getCompanySlaDefault(user.companyId), getClientSlaOverride(user.companyId, client.id)])
+    : [null, null];
   const activeProjects = client.projects.filter((p) => p.status === "ACTIVE").length;
   const openOpps = client.opportunities.filter((o) => OPEN_STAGES.has(o.stage)).length;
   const wonOpps = client.opportunities.filter((o) => o.stage === "WON").length;
@@ -198,6 +206,35 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
           </Table>
         </CardContent>
       </Card>
+
+      {/* Portal accounts */}
+      {canManage && (
+        <Card size="sm">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <ContactIcon className="size-4 text-muted-foreground" /> Customer portal accounts
+              <span className="font-normal text-muted-foreground">({client.portalUsers.length})</span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <PortalUsers clientId={client.id} users={client.portalUsers} />
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Support SLA */}
+      {canManageTickets && slaDefault && (
+        <Card size="sm">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <ActivityIcon className="size-4 text-muted-foreground" /> Support SLA
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ClientSla clientId={client.id} defaultTargets={slaDefault} override={slaOverride} />
+          </CardContent>
+        </Card>
+      )}
 
       {/* Settings */}
       {canManage && (

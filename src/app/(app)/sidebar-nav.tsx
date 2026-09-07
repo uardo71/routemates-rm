@@ -26,6 +26,8 @@ import {
   LifeBuoyIcon,
   RocketIcon,
   ClipboardCheckIcon,
+  BookOpenIcon,
+  TicketIcon,
   SettingsIcon,
 } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -52,6 +54,8 @@ const ICONS = {
   cutover: RocketIcon,
   uat: ClipboardCheckIcon,
   guides: LifeBuoyIcon,
+  tickets: TicketIcon,
+  help: BookOpenIcon,
   myPlanning: CalendarDaysIcon,
   opportunities: TargetIcon,
   revenue: TrendingUpIcon,

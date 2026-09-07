@@ -39,6 +39,7 @@ import {
   issueInvoiceAction,
   reconcileInvoiceAction,
   recordPaymentAction,
+  updatePaymentAction,
   deletePaymentAction,
   voidInvoiceAction,
   deleteInvoiceAction,
@@ -88,6 +89,7 @@ export function InvoiceDetailClient({ detail }: { detail: InvoiceDetail }) {
   const [pending, startTransition] = useTransition();
   const [reconcileOpen, setReconcileOpen] = useState(false);
   const [payOpen, setPayOpen] = useState(false);
+  const [editPayment, setEditPayment] = useState<InvoiceDetail["payments"][number] | null>(null);
   const [editOpen, setEditOpen] = useState(false);
   const c = detail.currency;
   const s = detail.status;
@@ -215,7 +217,10 @@ export function InvoiceDetailClient({ detail }: { detail: InvoiceDetail }) {
                   <TableCell className="text-muted-foreground">{p.reference ?? "—"}</TableCell>
                   <TableCell className="text-right tabular-nums">{formatMoney(p.amount, c)}</TableCell>
                   <TableCell className="text-right">
-                    <Button size="sm" variant="ghost" onClick={() => run(() => deletePaymentAction(p.id), "Payment removed.")} disabled={pending}><XIcon className="size-3.5" /></Button>
+                    <div className="flex justify-end gap-0.5">
+                      <Button size="sm" variant="ghost" onClick={() => setEditPayment(p)} disabled={pending} title="Edit payment"><PencilIcon className="size-3.5" /></Button>
+                      <Button size="sm" variant="ghost" onClick={() => run(() => deletePaymentAction(p.id), "Payment removed.")} disabled={pending} title="Remove payment"><XIcon className="size-3.5" /></Button>
+                    </div>
                   </TableCell>
                 </TableRow>
               ))}
@@ -229,6 +234,7 @@ export function InvoiceDetailClient({ detail }: { detail: InvoiceDetail }) {
 
       {reconcileOpen && <ReconcileDialog detail={detail} onClose={() => setReconcileOpen(false)} onDone={() => { setReconcileOpen(false); router.refresh(); }} />}
       {payOpen && <PaymentDialog detail={detail} onClose={() => setPayOpen(false)} onDone={() => { setPayOpen(false); router.refresh(); }} />}
+      {editPayment && <PaymentDialog detail={detail} payment={editPayment} onClose={() => setEditPayment(null)} onDone={() => { setEditPayment(null); router.refresh(); }} />}
       {editOpen && <EditDialog detail={detail} onClose={() => setEditOpen(false)} onDone={() => { setEditOpen(false); router.refresh(); }} />}
     </div>
   );
@@ -261,23 +267,26 @@ function ReconcileDialog({ detail, onClose, onDone }: { detail: InvoiceDetail; o
   );
 }
 
-function PaymentDialog({ detail, onClose, onDone }: { detail: InvoiceDetail; onClose: () => void; onDone: () => void }) {
+function PaymentDialog({ detail, payment, onClose, onDone }: { detail: InvoiceDetail; payment?: InvoiceDetail["payments"][number]; onClose: () => void; onDone: () => void }) {
+  const editing = !!payment;
   const [pending, start] = useTransition();
-  const [amount, setAmount] = useState(String(detail.outstanding > 0 ? detail.outstanding : ""));
-  const [date, setDate] = useState(format(new Date(), "yyyy-MM-dd"));
-  const [method, setMethod] = useState("");
-  const [reference, setReference] = useState("");
+  const [amount, setAmount] = useState(String(payment ? payment.amount : detail.outstanding > 0 ? detail.outstanding : ""));
+  const [date, setDate] = useState(payment ? payment.date : format(new Date(), "yyyy-MM-dd"));
+  const [method, setMethod] = useState(payment?.method ?? "");
+  const [reference, setReference] = useState(payment?.reference ?? "");
   function submit() {
     if (!amount || Number(amount) === 0) return toast.error("Enter an amount.");
     start(async () => {
-      const r = await recordPaymentAction({ invoiceId: detail.id, amount: Number(amount), date, method: method.trim() || null, reference: reference.trim() || null });
-      if (r.error) toast.error(r.error); else { toast.success("Payment recorded."); onDone(); }
+      const r = editing
+        ? await updatePaymentAction({ paymentId: payment!.id, amount: Number(amount), date, method: method.trim() || null, reference: reference.trim() || null })
+        : await recordPaymentAction({ invoiceId: detail.id, amount: Number(amount), date, method: method.trim() || null, reference: reference.trim() || null });
+      if (r.error) toast.error(r.error); else { toast.success(editing ? "Payment updated." : "Payment recorded."); onDone(); }
     });
   }
   return (
     <Dialog open onOpenChange={(v) => !v && onClose()}>
       <DialogContent className="sm:max-w-md">
-        <DialogHeader><DialogTitle>Record payment</DialogTitle></DialogHeader>
+        <DialogHeader><DialogTitle>{editing ? "Edit payment" : "Record payment"}</DialogTitle></DialogHeader>
         <div className="flex flex-col gap-3">
           <div className="grid grid-cols-2 gap-3">
             <div className="flex flex-col gap-1.5"><Label htmlFor="p-amt">Amount</Label><Input id="p-amt" type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} /></div>
@@ -288,7 +297,7 @@ function PaymentDialog({ detail, onClose, onDone }: { detail: InvoiceDetail; onC
             <div className="flex flex-col gap-1.5"><Label htmlFor="p-ref">Reference</Label><Input id="p-ref" value={reference} onChange={(e) => setReference(e.target.value)} /></div>
           </div>
         </div>
-        <DialogFooter><Button size="sm" onClick={submit} disabled={pending}>{pending ? "Saving..." : "Record"}</Button></DialogFooter>
+        <DialogFooter><Button size="sm" onClick={submit} disabled={pending}>{pending ? "Saving..." : editing ? "Save changes" : "Record"}</Button></DialogFooter>
       </DialogContent>
     </Dialog>
   );

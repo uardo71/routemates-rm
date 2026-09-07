@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/session";
+import { hashPassword } from "@/lib/password";
 
 const ClientSchema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -97,4 +98,61 @@ export async function deleteContactAction(contactId: string) {
 
   await prisma.contact.delete({ where: { id: contactId } });
   revalidatePath(`/admin/clients/${contact.clientId}`);
+}
+
+// ---------- Customer portal accounts (CUSTOMER-role users tied to this client) ----------
+
+const PortalUserSchema = z.object({
+  clientId: z.string().min(1),
+  name: z.string().trim().min(1, "Name is required").max(120),
+  email: z.string().trim().email("Invalid email"),
+  password: z.string().min(8, "Password must be at least 8 characters"),
+});
+
+export async function createPortalUserAction(_prevState: string | undefined, formData: FormData): Promise<string | undefined> {
+  const user = await requirePermission("clients:manage");
+  const parsed = PortalUserSchema.safeParse({
+    clientId: formData.get("clientId"),
+    name: formData.get("name"),
+    email: formData.get("email"),
+    password: formData.get("password"),
+  });
+  if (!parsed.success) return parsed.error.issues[0]?.message ?? "Invalid input";
+  const { clientId, name, email, password } = parsed.data;
+
+  const client = await prisma.client.findFirst({ where: { id: clientId, companyId: user.companyId }, select: { id: true } });
+  if (!client) return "Client not found.";
+  const existing = await prisma.user.findUnique({ where: { email: email.toLowerCase() }, select: { id: true } });
+  if (existing) return "That email is already in use.";
+
+  await prisma.user.create({
+    data: {
+      companyId: user.companyId, clientId, name, email: email.toLowerCase(),
+      passwordHash: await hashPassword(password), role: "CUSTOMER", active: true,
+    },
+  });
+  revalidatePath(`/admin/clients/${clientId}`);
+}
+
+async function portalUserFor(userId: string, companyId: string) {
+  return prisma.user.findFirst({ where: { id: userId, companyId, role: "CUSTOMER" }, select: { id: true, clientId: true } });
+}
+
+export async function setPortalUserActiveAction(userId: string, active: boolean): Promise<{ error?: string }> {
+  const user = await requirePermission("clients:manage");
+  const target = await portalUserFor(userId, user.companyId);
+  if (!target) return { error: "Not found" };
+  await prisma.user.update({ where: { id: userId }, data: { active } });
+  if (target.clientId) revalidatePath(`/admin/clients/${target.clientId}`);
+  return {};
+}
+
+export async function resetPortalUserPasswordAction(userId: string, password: string): Promise<{ error?: string }> {
+  const user = await requirePermission("clients:manage");
+  const target = await portalUserFor(userId, user.companyId);
+  if (!target) return { error: "Not found" };
+  if (password.length < 8) return { error: "Password must be at least 8 characters" };
+  await prisma.user.update({ where: { id: userId }, data: { passwordHash: await hashPassword(password) } });
+  if (target.clientId) revalidatePath(`/admin/clients/${target.clientId}`);
+  return {};
 }

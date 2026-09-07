@@ -35,6 +35,8 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
     include: { employment: true },
   });
   if (!target) notFound();
+  // Customer portal users are managed from their client page, not the staff directory.
+  if (target.role === "CUSTOMER") notFound();
 
   const [timeEntries, assignments, approvals, managedProjects, salaries, computedRate] = await Promise.all([
     prisma.timeEntry.count({ where: { userId: id } }),
