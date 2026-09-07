@@ -158,3 +158,12 @@ export async function canViewMilestoneRates(user: SessionUser, milestoneId: stri
   if (can(user, "rates:view:any")) return true;
   return canManageMilestone(user, milestoneId);
 }
+
+/** CUSTOMER accounts are customer-portal logins tied to a Client (see /portal). They are NOT staff:
+ *  they have no capacity, no timesheet, no leave, and can never be assigned work. Spread this into
+ *  any `prisma.user` query that lists *people who work here* — resources, assignees, approvers,
+ *  expense owners, headcount.
+ *
+ *  Do NOT use it where you are resolving a name for an id that may belong to a customer (e.g. the
+ *  ticket lists build a nameById map over every user, including portal reporters). */
+export const STAFF_ONLY = { role: { not: "CUSTOMER" } } as const;

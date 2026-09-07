@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { invoiceTotals, outstanding, agingBucket, daysOverdue, dso, effectiveDueDate, countsTowardAR } from "@/lib/invoice";
+import { invoiceTotals, outstanding, paymentSettles, totalBankFees, cashCollected, agingBucket, daysOverdue, dso, effectiveDueDate, countsTowardAR } from "@/lib/invoice";
 
 describe("invoiceTotals", () => {
   it("treats VAT null as no VAT", () => {
@@ -135,5 +135,50 @@ describe("countsTowardAR", () => {
     expect(countsTowardAR("ISSUED")).toBe(true);
     expect(countsTowardAR("RECONCILED")).toBe(true);
     expect(countsTowardAR("PAID")).toBe(true);
+  });
+});
+
+// ---------- bank charges withheld from a payment ----------
+
+describe("payments with bank charges", () => {
+  it("settles amount + fee — the customer parted with both", () => {
+    expect(paymentSettles({ amount: 997, bankFee: 3 })).toBe(1000);
+    expect(paymentSettles({ amount: 997 })).toBe(997); // no fee recorded
+    expect(paymentSettles({ amount: 997, bankFee: null })).toBe(997);
+  });
+
+  it("closes an invoice whose payment arrived short by the bank's fee", () => {
+    // €1,000 invoice, €997 landed, €3 kept by the bank. Without counting the fee this invoice
+    // would sit forever showing €3 outstanding and never reach PAID.
+    expect(outstanding(1000, [{ amount: 997, bankFee: 3 }])).toBe(0);
+    // Ignoring the fee is exactly the bug: it leaves a phantom balance.
+    expect(outstanding(1000, [{ amount: 997 }])).toBe(3);
+  });
+
+  it("still reports a genuine shortfall when the customer really underpaid", () => {
+    // €900 received, €3 fee ⇒ €903 settled, so €97 is still genuinely owed.
+    expect(outstanding(1000, [{ amount: 900, bankFee: 3 }])).toBe(97);
+  });
+
+  it("accumulates fees across several partial payments", () => {
+    const payments = [
+      { amount: 497, bankFee: 3 },
+      { amount: 495, bankFee: 5 },
+    ];
+    expect(outstanding(1000, payments)).toBe(0); // 500 + 500
+    expect(totalBankFees(payments)).toBe(8);
+    expect(cashCollected(payments)).toBe(992); // what actually reached the account
+  });
+
+  it("keeps cash collected and debt settled as distinct numbers", () => {
+    const payments = [{ amount: 997, bankFee: 3 }];
+    expect(cashCollected(payments)).toBe(997); // bank reality
+    expect(outstanding(1000, payments)).toBe(0); // customer reality
+  });
+
+  it("handles a zero fee and rounds to cents", () => {
+    expect(totalBankFees([{ amount: 100, bankFee: 0 }])).toBe(0);
+    expect(totalBankFees([])).toBe(0);
+    expect(paymentSettles({ amount: 0.1, bankFee: 0.2 })).toBe(0.3);
   });
 });

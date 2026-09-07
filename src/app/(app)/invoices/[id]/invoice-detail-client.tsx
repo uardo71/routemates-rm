@@ -17,6 +17,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { InfoField } from "@/components/info-field";
 import { FileTextIcon } from "lucide-react";
 import { formatMoney } from "@/lib/format";
+import { cn } from "@/lib/utils";
 import { INVOICE_STATUS_LABEL, INVOICE_TYPE_LABEL, invoiceTotals } from "@/lib/invoice";
 import { StatusStamp, type StampTone } from "@/components/status-stamp";
 import { DocumentsCard } from "@/components/documents-card";
@@ -78,7 +79,10 @@ export type InvoiceDetail = {
   paid: number;
   outstanding: number;
   lines: { id: string; description: string; quantity: number; rate: number; amount: number; milestoneId: string | null; timeEntryCount: number }[];
-  payments: { id: string; amount: number; date: string; method: string | null; reference: string | null }[];
+  /** `amount` is cash received; `bankFee` is what the bank withheld. Together they settle the invoice. */
+  payments: { id: string; amount: number; bankFee: number; date: string; method: string | null; reference: string | null }[];
+  /** Σ bank charges across all payments — money the customer paid that never reached us. */
+  bankFees: number;
   creditNoteFor: { id: string; invoiceNumber: string } | null;
   creditNotes: { id: string; invoiceNumber: string }[];
   documents: { id: string; kind: string; fileName: string; originalName: string }[];
@@ -204,11 +208,18 @@ export function InvoiceDetailClient({ detail }: { detail: InvoiceDetail }) {
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle className="text-base">Payments</CardTitle>
-          <span className="text-sm text-muted-foreground">Paid {formatMoney(detail.paid, c)} of {formatMoney(detail.gross, c)}</span>
+          <span className="text-sm text-muted-foreground">
+            Paid {formatMoney(detail.paid, c)} of {formatMoney(detail.gross, c)}
+            {detail.bankFees > 0 && (
+              <span className="ml-1.5 text-amber-600" title="Charges withheld by the bank — settled by the customer but never received">
+                (incl. {formatMoney(detail.bankFees, c)} bank charges)
+              </span>
+            )}
+          </span>
         </CardHeader>
         <CardContent>
           <Table>
-            <TableHeader><TableRow><TableHead>Date</TableHead><TableHead>Method</TableHead><TableHead>Reference</TableHead><TableHead className="text-right">Amount</TableHead><TableHead /></TableRow></TableHeader>
+            <TableHeader><TableRow><TableHead>Date</TableHead><TableHead>Method</TableHead><TableHead>Reference</TableHead><TableHead className="text-right">Received</TableHead><TableHead className="text-right">Bank fee</TableHead><TableHead className="text-right">Settled</TableHead><TableHead /></TableRow></TableHeader>
             <TableBody>
               {detail.payments.map((p) => (
                 <TableRow key={p.id}>
@@ -216,6 +227,10 @@ export function InvoiceDetailClient({ detail }: { detail: InvoiceDetail }) {
                   <TableCell className="text-muted-foreground">{p.method ?? "—"}</TableCell>
                   <TableCell className="text-muted-foreground">{p.reference ?? "—"}</TableCell>
                   <TableCell className="text-right tabular-nums">{formatMoney(p.amount, c)}</TableCell>
+                  <TableCell className={cn("text-right tabular-nums", p.bankFee > 0 ? "text-amber-600" : "text-muted-foreground/50")}>
+                    {p.bankFee > 0 ? formatMoney(p.bankFee, c) : "—"}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums font-medium">{formatMoney(p.amount + p.bankFee, c)}</TableCell>
                   <TableCell className="text-right">
                     <div className="flex justify-end gap-0.5">
                       <Button size="sm" variant="ghost" onClick={() => setEditPayment(p)} disabled={pending} title="Edit payment"><PencilIcon className="size-3.5" /></Button>
@@ -224,7 +239,7 @@ export function InvoiceDetailClient({ detail }: { detail: InvoiceDetail }) {
                   </TableCell>
                 </TableRow>
               ))}
-              {detail.payments.length === 0 && <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground">No payments recorded.</TableCell></TableRow>}
+              {detail.payments.length === 0 && <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground">No payments recorded.</TableCell></TableRow>}
             </TableBody>
           </Table>
         </CardContent>
@@ -271,15 +286,20 @@ function PaymentDialog({ detail, payment, onClose, onDone }: { detail: InvoiceDe
   const editing = !!payment;
   const [pending, start] = useTransition();
   const [amount, setAmount] = useState(String(payment ? payment.amount : detail.outstanding > 0 ? detail.outstanding : ""));
+  const [bankFee, setBankFee] = useState(payment?.bankFee ? String(payment.bankFee) : "");
   const [date, setDate] = useState(payment ? payment.date : format(new Date(), "yyyy-MM-dd"));
   const [method, setMethod] = useState(payment?.method ?? "");
   const [reference, setReference] = useState(payment?.reference ?? "");
+  // The customer parted with received + fee, so that sum is what comes off the invoice.
+  const fee = Number(bankFee) || 0;
+  const settles = Math.round(((Number(amount) || 0) + fee) * 100) / 100;
   function submit() {
     if (!amount || Number(amount) === 0) return toast.error("Enter an amount.");
+    if (fee < 0) return toast.error("Bank charges can't be negative.");
     start(async () => {
       const r = editing
-        ? await updatePaymentAction({ paymentId: payment!.id, amount: Number(amount), date, method: method.trim() || null, reference: reference.trim() || null })
-        : await recordPaymentAction({ invoiceId: detail.id, amount: Number(amount), date, method: method.trim() || null, reference: reference.trim() || null });
+        ? await updatePaymentAction({ paymentId: payment!.id, amount: Number(amount), bankFee: fee, date, method: method.trim() || null, reference: reference.trim() || null })
+        : await recordPaymentAction({ invoiceId: detail.id, amount: Number(amount), bankFee: fee, date, method: method.trim() || null, reference: reference.trim() || null });
       if (r.error) toast.error(r.error); else { toast.success(editing ? "Payment updated." : "Payment recorded."); onDone(); }
     });
   }
@@ -289,9 +309,28 @@ function PaymentDialog({ detail, payment, onClose, onDone }: { detail: InvoiceDe
         <DialogHeader><DialogTitle>{editing ? "Edit payment" : "Record payment"}</DialogTitle></DialogHeader>
         <div className="flex flex-col gap-3">
           <div className="grid grid-cols-2 gap-3">
-            <div className="flex flex-col gap-1.5"><Label htmlFor="p-amt">Amount</Label><Input id="p-amt" type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} /></div>
+            <div className="flex flex-col gap-1.5"><Label htmlFor="p-amt">Amount received</Label><Input id="p-amt" type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} /></div>
             <div className="flex flex-col gap-1.5"><Label htmlFor="p-date">Date</Label><Input id="p-date" type="date" value={date} onChange={(e) => setDate(e.target.value)} /></div>
           </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="p-fee">Bank charges withheld (optional)</Label>
+            <Input id="p-fee" type="number" step="0.01" min="0" value={bankFee} onChange={(e) => setBankFee(e.target.value)} placeholder="e.g. 3.00" />
+            <p className="text-xs text-muted-foreground">
+              What the bank kept in transit. Enter the amount that actually landed in the account above, and the fee
+              here — the customer paid both, so the invoice is settled by the total.
+            </p>
+          </div>
+          {fee > 0 && (
+            <div className="flex items-center justify-between rounded-md border bg-muted/40 px-3 py-2 text-sm">
+              <span className="text-muted-foreground">Settles against the invoice</span>
+              <span className="font-medium tabular-nums">
+                {formatMoney(settles, detail.currency)}
+                <span className="ml-1.5 text-xs font-normal text-muted-foreground">
+                  ({formatMoney(Number(amount) || 0, detail.currency)} received + {formatMoney(fee, detail.currency)} fee)
+                </span>
+              </span>
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-3">
             <div className="flex flex-col gap-1.5"><Label htmlFor="p-method">Method</Label><Input id="p-method" value={method} onChange={(e) => setMethod(e.target.value)} placeholder="Bank transfer" /></div>
             <div className="flex flex-col gap-1.5"><Label htmlFor="p-ref">Reference</Label><Input id="p-ref" value={reference} onChange={(e) => setReference(e.target.value)} /></div>

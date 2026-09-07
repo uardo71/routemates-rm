@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requirePermission } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
-import { invoiceTotals } from "@/lib/invoice";
+import { invoiceTotals, totalBankFees } from "@/lib/invoice";
 import { InvoiceDetailClient, type InvoiceDetail } from "./invoice-detail-client";
 
 export default async function InvoiceDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -24,7 +24,11 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
   if (!inv) notFound();
 
   const t = invoiceTotals(inv.lines.map((l) => ({ amount: Number(l.amount) })), inv.vatRate == null ? null : Number(inv.vatRate));
-  const paid = inv.payments.reduce((s, p) => s + Number(p.amount), 0);
+  // "Paid" is what the customer has settled — cash received plus any bank charges withheld in
+  // transit. `bankFees` is the part that never reached us.
+  const payments = inv.payments.map((p) => ({ amount: Number(p.amount), bankFee: Number(p.bankFee) }));
+  const paid = payments.reduce((s, p) => s + p.amount + p.bankFee, 0);
+  const bankFees = totalBankFees(payments);
 
   const detail: InvoiceDetail = {
     id: inv.id,
@@ -55,7 +59,8 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
     paid: Math.round(paid * 100) / 100,
     outstanding: Math.round((t.gross - paid) * 100) / 100,
     lines: inv.lines.map((l) => ({ id: l.id, description: l.description, quantity: Number(l.quantity), rate: Number(l.rate), amount: Number(l.amount), milestoneId: l.milestoneId, timeEntryCount: l._count.timeEntries })),
-    payments: inv.payments.map((p) => ({ id: p.id, amount: Number(p.amount), date: p.date.toISOString().slice(0, 10), method: p.method, reference: p.reference })),
+    payments: inv.payments.map((p) => ({ id: p.id, amount: Number(p.amount), bankFee: Number(p.bankFee), date: p.date.toISOString().slice(0, 10), method: p.method, reference: p.reference })),
+    bankFees,
     creditNoteFor: inv.creditNoteFor ? { id: inv.creditNoteFor.id, invoiceNumber: inv.creditNoteFor.invoiceNumber } : null,
     creditNotes: inv.creditNotes.map((c) => ({ id: c.id, invoiceNumber: c.invoiceNumber })),
     documents: inv.documents.map((d) => ({ id: d.id, kind: d.kind, fileName: d.fileName, originalName: d.originalName })),

@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { prisma } from "@/lib/prisma";
+import { STAFF_ONLY } from "@/lib/permissions";
 import { requireUser } from "@/lib/session";
 import { parseDateParam, toDateParam } from "@/lib/week";
 import { WeekJump } from "@/components/week-jump";
@@ -53,7 +54,7 @@ export default async function TimePage({
   let resources: { id: string; name: string }[] = [];
   if (canActAsOthers) {
     const all = await prisma.user.findMany({
-      where: { companyId: caller.companyId, active: true },
+      where: { companyId: caller.companyId, active: true, ...STAFF_ONLY },
       orderBy: { name: "asc" },
       select: { id: true, name: true },
     });

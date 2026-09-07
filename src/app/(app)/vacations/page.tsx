@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/session";
-import { can } from "@/lib/permissions";
+import { can, STAFF_ONLY } from "@/lib/permissions";
 import { computeVacationBalance, countApprovedLeaveDays } from "@/lib/vacation";
 import { toDateParam } from "@/lib/week";
 import {
@@ -47,7 +47,7 @@ export default async function VacationsPage() {
   let balances: BalanceRow[] = [];
   if (canManage) {
     const users = await prisma.user.findMany({
-      where: { companyId: caller.companyId, active: true },
+      where: { companyId: caller.companyId, active: true, ...STAFF_ONLY },
       orderBy: { name: "asc" },
     });
     people = users.map((u) => ({ id: u.id, name: u.name }));

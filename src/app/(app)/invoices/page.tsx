@@ -68,12 +68,12 @@ export default async function InvoicesPage() {
       inv,
       net,
       gross: t.gross * sign,
-      out: outstanding(t.gross, inv.payments.map((p) => ({ amount: Number(p.amount) }))),
+      out: outstanding(t.gross, inv.payments.map((p) => ({ amount: Number(p.amount), bankFee: Number(p.bankFee) }))),
       paid,
       period: servicePeriodLabel(inv.periodStart, inv.periodEnd),
       factor,
       baseNet: conv(net),
-      baseOut: conv(outstanding(t.gross, inv.payments.map((p) => ({ amount: Number(p.amount) })))),
+      baseOut: conv(outstanding(t.gross, inv.payments.map((p) => ({ amount: Number(p.amount), bankFee: Number(p.bankFee) })))),
       basePaid: conv(paid),
     };
   });

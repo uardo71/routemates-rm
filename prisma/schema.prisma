@@ -780,7 +780,12 @@ model InvoicePayment {
   id        String   @id @default(cuid())
   invoiceId String
   invoice   Invoice  @relation(fields: [invoiceId], references: [id])
+  // Cash that actually landed in our account.
   amount    Decimal  @db.Decimal(12, 2)
+  // Charges the bank withheld in transit (transfer/intermediary fees). The customer parted with
+  // `amount + bankFee`, so that sum is what settles the invoice — otherwise a fully-paid invoice
+  // would sit forever showing a few euros outstanding.
+  bankFee   Decimal  @db.Decimal(12, 2) @default(0)
   date      DateTime
   method    String?
   reference String?

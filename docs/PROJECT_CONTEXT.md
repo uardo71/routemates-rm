@@ -1100,6 +1100,33 @@ read-only scripts run against the real `erp_dev` data — see the verification n
 - **Verified end-to-end** on real data with a temporary bill that was created, measured and deleted:
   margin moved by exactly −3000 and the row was removed (DB back to its original 1 vendor bill).
 
+### Portal accounts were leaking into staff lists (fix)
+- `CUSTOMER` users are customer-portal logins tied to a Client, added in the ticketing session. Every
+  page that lists *people who work here* was still selecting them, so they appeared as planner
+  resources, proxy time-entry targets, leave/expense owners, delivery-plan owners, headcount, and —
+  worst — as **assignable people on the milestone assignment form**.
+- Fixed with one shared filter, **`STAFF_ONLY` in `src/lib/permissions.ts`**, applied to `/planning`,
+  `/planning/availability`, `/admin/scheduled-vs-actuals`, `/time`, `/vacations`, `/expenses`,
+  `/delivery/*/cutover`, `/delivery/*/uat`, the milestone assignment form, `/admin/settings` (nudge
+  exclusions), `/admin/users`, and the dashboard headcount.
+- **Deliberately NOT applied** to `tickets/page.tsx`, `tickets/board`, and `api/tickets/export`:
+  those fetch every user only to build a `nameById` map, and a customer who reported a ticket must
+  stay resolvable. Use `STAFF_ONLY` for "who works here", never for name lookups.
+- Verified on real data: 10 active users → 8 staff (Fabio Magni and Portal Tester removed).
+
+### Bank charges on invoice payments
+- `InvoicePayment.bankFee` (migration `20260907210000_invoice_payment_bank_fee`). **`amount` is the
+  cash that reached the account; `bankFee` is what the bank withheld in transit.**
+- **An invoice is settled by `amount + bankFee`** — the customer parted with both. `outstanding()`
+  counts it that way, so a €1,000 invoice paid as €997 + €3 fee now closes and flips to PAID instead
+  of sitting forever showing €3 outstanding. A genuine underpayment still shows as a real balance.
+- New pure helpers in `invoice.ts`: `paymentSettles`, `totalBankFees`, `cashCollected` — the last one
+  keeps "cash we actually received" distinct from "debt the customer discharged".
+- The payment dialog takes the received amount plus the fee and previews what it settles; the
+  payments table shows Received / Bank fee / Settled.
+- **Not done**: the fee is recorded but not posted as an expense, so it doesn't yet reach company
+  margin. Worth wiring into the expense/cost side if the totals matter.
+
 ### Open / next (carry-over)
 - **Write-off is not a real state**: every euro of approved work is now either unbilled or invoiced,
   but nothing can be explicitly written off (no flag/reason on `TimeEntry`), so aged WIP is only a

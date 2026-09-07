@@ -1,5 +1,6 @@
 import { requirePermission } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
+import { STAFF_ONLY } from "@/lib/permissions";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   getPasswordLoginSetting,
@@ -18,7 +19,8 @@ export default async function SettingsPage() {
     getPasswordLoginSetting(),
     getTimesheetNudgeConfig(),
     prisma.user.findMany({
-      where: { companyId: admin.companyId, active: true },
+      // Timesheet-nudge exclusions only make sense for people who file timesheets.
+      where: { companyId: admin.companyId, active: true, ...STAFF_ONLY },
       select: { id: true, name: true, role: true },
       orderBy: { name: "asc" },
     }),

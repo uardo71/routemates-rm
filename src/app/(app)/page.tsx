@@ -24,7 +24,7 @@ import { DonutChart, DONUT_COLORS } from "@/components/charts/donut-chart";
 import { MiniBarChart } from "@/components/charts/mini-bar-chart";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/session";
-import { can } from "@/lib/permissions";
+import { can, STAFF_ONLY } from "@/lib/permissions";
 import { startOfWeek, toDateParam } from "@/lib/week";
 import { formatMoney, formatNumber } from "@/lib/format";
 import { loadExternalCost } from "@/lib/external-cost";
@@ -132,7 +132,7 @@ async function ManagerDashboard({
       },
       orderBy: { name: "asc" },
     }),
-    prisma.user.count({ where: { companyId, active: true } }),
+    prisma.user.count({ where: { companyId, active: true, ...STAFF_ONLY } }),
     prisma.timeCard.count({ where: { status: "SUBMITTED", ...(isAdmin ? {} : { approverId: userId }) } }),
     prisma.leaveRequest.findMany({
       where: { status: "APPROVED", user: { companyId }, startDate: { lte: addDays(today, 30) }, endDate: { gte: today } },

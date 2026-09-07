@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/session";
-import { canAccessProjectDelivery, canManageProject } from "@/lib/permissions";
+import { canAccessProjectDelivery, canManageProject, STAFF_ONLY } from "@/lib/permissions";
 import { serializeArea, serializeCase, serializeIssue } from "./serialize";
 import { UatClient } from "./uat-client";
 
@@ -22,7 +22,7 @@ export default async function UatPage({ params }: { params: Promise<{ projectId:
     prisma.uatArea.findMany({ where: { projectId }, orderBy: { sortOrder: "asc" } }),
     prisma.uatTestCase.findMany({ where: { projectId }, orderBy: { sortOrder: "asc" } }),
     prisma.uatIssue.findMany({ where: { projectId }, orderBy: { sortOrder: "asc" } }),
-    prisma.user.findMany({ where: { companyId: user.companyId, active: true }, select: { name: true }, orderBy: { name: "asc" } }),
+    prisma.user.findMany({ where: { companyId: user.companyId, active: true, ...STAFF_ONLY }, select: { name: true }, orderBy: { name: "asc" } }),
     canManageProject(user, projectId),
   ]);
 

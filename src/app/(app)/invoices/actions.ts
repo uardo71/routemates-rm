@@ -401,6 +401,9 @@ export async function voidInvoiceAction(invoiceId: string): Promise<{ error?: st
 const PaymentSchema = z.object({
   invoiceId: z.string().min(1),
   amount: z.coerce.number(),
+  // Bank charges withheld in transit. The customer parted with amount + bankFee, so that sum is
+  // what settles the invoice.
+  bankFee: z.coerce.number().min(0).optional().nullable(),
   date: z.string().min(1),
   method: z.string().max(50).optional().nullable(),
   reference: z.string().max(100).optional().nullable(),
@@ -421,11 +424,13 @@ export async function recordPaymentAction(input: PaymentInput): Promise<{ error?
   if (inv.status === "DRAFT" || inv.status === "VOID") return { error: "Issue the invoice before recording payments." };
 
   const gross = invoiceTotals(inv.lines.map((l) => ({ amount: Number(l.amount) })), inv.vatRate == null ? null : Number(inv.vatRate)).gross;
-  const paidSoFar = inv.payments.reduce((s, p) => s + Number(p.amount), 0) + d.amount;
+  const bankFee = d.bankFee ?? 0;
+  const settledSoFar =
+    inv.payments.reduce((s, p) => s + Number(p.amount) + Number(p.bankFee), 0) + d.amount + bankFee;
 
   await prisma.$transaction([
-    prisma.invoicePayment.create({ data: { invoiceId: inv.id, amount: d.amount, date, method: d.method ?? null, reference: d.reference ?? null } }),
-    ...(paidSoFar >= gross ? [prisma.invoice.update({ where: { id: inv.id }, data: { status: "PAID" } })] : []),
+    prisma.invoicePayment.create({ data: { invoiceId: inv.id, amount: d.amount, bankFee, date, method: d.method ?? null, reference: d.reference ?? null } }),
+    ...(settledSoFar >= gross ? [prisma.invoice.update({ where: { id: inv.id }, data: { status: "PAID" } })] : []),
   ]);
   revalidatePath("/invoices");
   revalidatePath(`/invoices/${inv.id}`);
@@ -435,6 +440,9 @@ export async function recordPaymentAction(input: PaymentInput): Promise<{ error?
 const UpdatePaymentSchema = z.object({
   paymentId: z.string().min(1),
   amount: z.coerce.number(),
+  // Bank charges withheld in transit. The customer parted with amount + bankFee, so that sum is
+  // what settles the invoice.
+  bankFee: z.coerce.number().min(0).optional().nullable(),
   date: z.string().min(1),
   method: z.string().max(50).optional().nullable(),
   reference: z.string().max(100).optional().nullable(),
@@ -458,7 +466,10 @@ export async function updatePaymentAction(input: UpdatePaymentInput): Promise<{ 
   const inv = payment.invoice;
 
   const gross = invoiceTotals(inv.lines.map((l) => ({ amount: Number(l.amount) })), inv.vatRate == null ? null : Number(inv.vatRate)).gross;
-  const paidAfter = inv.payments.filter((p) => p.id !== d.paymentId).reduce((s, p) => s + Number(p.amount), 0) + d.amount;
+  const paidAfter =
+    inv.payments.filter((p) => p.id !== d.paymentId).reduce((s, p) => s + Number(p.amount) + Number(p.bankFee), 0) +
+    d.amount +
+    (d.bankFee ?? 0);
 
   const statusUpdate =
     paidAfter >= gross && (inv.status === "ISSUED" || inv.status === "RECONCILED")
@@ -468,7 +479,7 @@ export async function updatePaymentAction(input: UpdatePaymentInput): Promise<{ 
         : [];
 
   await prisma.$transaction([
-    prisma.invoicePayment.update({ where: { id: d.paymentId }, data: { amount: d.amount, date, method: d.method ?? null, reference: d.reference ?? null } }),
+    prisma.invoicePayment.update({ where: { id: d.paymentId }, data: { amount: d.amount, bankFee: d.bankFee ?? 0, date, method: d.method ?? null, reference: d.reference ?? null } }),
     ...statusUpdate,
   ]);
   revalidatePath("/invoices");

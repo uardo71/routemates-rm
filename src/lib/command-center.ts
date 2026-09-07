@@ -153,7 +153,7 @@ export async function assembleCommandCenter(user: SessionUser): Promise<CommandC
         where: { companyId: user.companyId, status: { not: "VOID" }, ...(scopeAll ? {} : { OR: [{ projectId: { in: projectIds as string[] } }, { projectId: null }] }) },
         select: {
           id: true, invoiceNumber: true, issueDate: true, status: true, type: true, dueDate: true, vatRate: true, fiscalNumber: true,
-          projectId: true, lines: { select: { amount: true, description: true } }, payments: { select: { amount: true } },
+          projectId: true, lines: { select: { amount: true, description: true } }, payments: { select: { amount: true, bankFee: true } },
         },
       }),
       prisma.opportunity.findMany({
@@ -197,7 +197,7 @@ export async function assembleCommandCenter(user: SessionUser): Promise<CommandC
   for (const inv of invoices) {
     const sign = inv.type === "CREDIT_NOTE" ? -1 : 1;
     const { gross } = invoiceTotals(inv.lines.map((l) => ({ amount: Number(l.amount) * sign })), inv.vatRate ? Number(inv.vatRate) : null);
-    const owed = inv.status === "PAID" ? 0 : outstanding(gross, inv.payments.map((p) => ({ amount: Number(p.amount) })));
+    const owed = inv.status === "PAID" ? 0 : outstanding(gross, inv.payments.map((p) => ({ amount: Number(p.amount), bankFee: Number(p.bankFee) })));
     collected += inv.payments.reduce((s, p) => s + Number(p.amount), 0);
     if (inv.projectId) {
       const work = inv.lines.filter((l) => l.description !== COMMISSION_DESC).reduce((s, l) => s + Number(l.amount) * sign, 0);

@@ -9,6 +9,7 @@ import { InitialsAvatar } from "@/components/initials-avatar";
 import { RoleBadge } from "@/components/role-badge";
 import { StatCard } from "@/components/stat-card";
 import { prisma } from "@/lib/prisma";
+import { STAFF_ONLY } from "@/lib/permissions";
 import { requirePermission } from "@/lib/session";
 import { formatMoney } from "@/lib/format";
 import { avatarSrc } from "@/lib/avatar";
@@ -17,7 +18,9 @@ export default async function UsersAdminPage() {
   const user = await requirePermission("users:manage");
 
   const users = await prisma.user.findMany({
-    where: { companyId: user.companyId },
+    // Portal accounts are managed on their client's page, and this list's detail route 404s
+    // for them — so they don't belong here either.
+    where: { companyId: user.companyId, ...STAFF_ONLY },
     include: { employment: true },
     orderBy: [{ active: "desc" }, { name: "asc" }],
   });

@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/session";
-import { can } from "@/lib/permissions";
+import { can, STAFF_ONLY } from "@/lib/permissions";
 import { toDateParam } from "@/lib/week";
 import { convertRows } from "@/lib/fx";
 import { ExpensesClient, type ExpenseRow, type CategoryOption, type PersonOption } from "./expenses-client";
@@ -62,7 +62,7 @@ export default async function ExpensesPage() {
 
   let people: PersonOption[] = [];
   if (canManage) {
-    const users = await prisma.user.findMany({ where: { companyId: caller.companyId, active: true }, orderBy: { name: "asc" } });
+    const users = await prisma.user.findMany({ where: { companyId: caller.companyId, active: true, ...STAFF_ONLY }, orderBy: { name: "asc" } });
     people = users.map((u) => ({ id: u.id, name: u.name }));
   }
 

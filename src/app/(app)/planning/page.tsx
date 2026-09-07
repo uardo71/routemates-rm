@@ -1,6 +1,7 @@
 import { addWeeks, format } from "date-fns";
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
+import { STAFF_ONLY } from "@/lib/permissions";
 import { requirePermission } from "@/lib/session";
 import { startOfWeek, parseDateParam, toDateParam } from "@/lib/week";
 import { parseList } from "@/lib/utils";
@@ -38,6 +39,8 @@ export default async function PlanningPage({
       where: {
         companyId: user.companyId,
         active: true,
+        // Portal (CUSTOMER) accounts are not staff — never resources on the grid.
+        ...STAFF_ONLY,
         ...(selectedRoles.length > 0 ? { role: { in: selectedRoles as never[] } } : {}),
       },
       orderBy: { name: "asc" },

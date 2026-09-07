@@ -4,7 +4,7 @@ import { addWeeks, format, getISOWeek } from "date-fns";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { WeekJump } from "@/components/week-jump";
 import { prisma } from "@/lib/prisma";
-import { can } from "@/lib/permissions";
+import { can, STAFF_ONLY } from "@/lib/permissions";
 import { requireUser } from "@/lib/session";
 import { parseDateParam, startOfWeek, toDateParam } from "@/lib/week";
 import { parseList } from "@/lib/utils";
@@ -39,6 +39,8 @@ export default async function ScheduledVsActualsPage({
       where: {
         companyId: user.companyId,
         active: true,
+        // Portal (CUSTOMER) accounts are not staff — never resources on the grid.
+        ...STAFF_ONLY,
         ...(selectedRoles.length > 0 ? { role: { in: selectedRoles as never[] } } : {}),
       },
       orderBy: { name: "asc" },

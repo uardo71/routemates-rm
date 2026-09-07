@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { prisma } from "@/lib/prisma";
-import { can, canManageMilestone } from "@/lib/permissions";
+import { can, canManageMilestone, STAFF_ONLY } from "@/lib/permissions";
 import { requireUser } from "@/lib/session";
 import { CreateAssignmentForm } from "./create-assignment-form";
 
@@ -23,7 +23,8 @@ export default async function NewAssignmentPage({
 
   const assignedUserIds = milestone.assignments.map((a) => a.userId);
   const availableUsers = await prisma.user.findMany({
-    where: { companyId: user.companyId, active: true, id: { notIn: assignedUserIds } },
+    // A portal (CUSTOMER) account must never be assignable to a milestone.
+    where: { companyId: user.companyId, active: true, ...STAFF_ONLY, id: { notIn: assignedUserIds } },
     orderBy: { name: "asc" },
   });
 

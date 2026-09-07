@@ -15,10 +15,31 @@ export function invoiceTotals(lines: InvoiceLineAmount[], vatRate: number | null
   return { net, vat, gross: round2(net + vat) };
 }
 
-/** Amount still owed = gross − Σ payments (never below 0 for display purposes). */
-export function outstanding(gross: number, payments: { amount: number }[]): number {
-  const paid = payments.reduce((s, p) => s + p.amount, 0);
-  return round2(gross - paid);
+/** A payment as recorded: `amount` is the cash that reached our account, `bankFee` is what the bank
+ *  withheld in transit. */
+export type PaymentRecord = { amount: number; bankFee?: number | null };
+
+/** What a payment discharges from the customer's debt. The customer sent `amount + bankFee`; the
+ *  fee never reached us but they still parted with it, so it settles the invoice. Without this, an
+ *  invoice paid in full would sit forever showing the bank's few euros as outstanding. */
+export function paymentSettles(payment: PaymentRecord): number {
+  return round2(payment.amount + (payment.bankFee ?? 0));
+}
+
+/** Total bank charges absorbed across a set of payments — cash we never received. */
+export function totalBankFees(payments: PaymentRecord[]): number {
+  return round2(payments.reduce((s, p) => s + (p.bankFee ?? 0), 0));
+}
+
+/** Cash actually collected (excludes bank charges). */
+export function cashCollected(payments: PaymentRecord[]): number {
+  return round2(payments.reduce((s, p) => s + p.amount, 0));
+}
+
+/** Amount still owed = gross − Σ settled (each payment settles amount + its bank fee). */
+export function outstanding(gross: number, payments: PaymentRecord[]): number {
+  const settled = payments.reduce((s, p) => s + p.amount + (p.bankFee ?? 0), 0);
+  return round2(gross - settled);
 }
 
 // ---------- accounts receivable: aging, overdue, DSO ----------

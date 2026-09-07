@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/session";
-import { canAccessProjectCutover, canManageProject } from "@/lib/permissions";
+import { canAccessProjectCutover, canManageProject, STAFF_ONLY } from "@/lib/permissions";
 import { serializeCutover, serializeCutoverList } from "./serialize";
 import { CutoverClient } from "./cutover-client";
 
@@ -21,7 +21,7 @@ export default async function CutoverPage({ params }: { params: Promise<{ projec
   const [tasks, lists, users, canManage] = await Promise.all([
     prisma.cutoverTask.findMany({ where: { projectId }, orderBy: { sortOrder: "asc" } }),
     prisma.cutoverList.findMany({ where: { projectId }, orderBy: { sortOrder: "asc" } }),
-    prisma.user.findMany({ where: { companyId: user.companyId, active: true }, select: { name: true }, orderBy: { name: "asc" } }),
+    prisma.user.findMany({ where: { companyId: user.companyId, active: true, ...STAFF_ONLY }, select: { name: true }, orderBy: { name: "asc" } }),
     canManageProject(user, projectId),
   ]);
 
