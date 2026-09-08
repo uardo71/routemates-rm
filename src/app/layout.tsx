@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import type { Metadata, Viewport } from "next";
 import { IBM_Plex_Sans, IBM_Plex_Mono } from "next/font/google";
 import { Toaster } from "@/components/ui/sonner";
@@ -30,7 +31,10 @@ export const viewport: Viewport = {
   themeColor: "#141f2b",
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+// Props typed explicitly rather than with Next's generated `LayoutProps`: that type only exists
+// once `.next/types` has been produced by a dev server or build, so a clean checkout (CI, or a
+// fresh clone) fails `tsc --noEmit` with "Cannot find name 'LayoutProps'".
+export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
   return (
     <html
       lang="en"
