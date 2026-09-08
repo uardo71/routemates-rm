@@ -1,9 +1,8 @@
-import { readFile } from "fs/promises";
 import { NextResponse, type NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/session";
 import { can } from "@/lib/permissions";
-import { receiptFilePath } from "@/lib/receipt-storage";
+import { readReceiptFile } from "@/lib/receipt-storage";
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ fileName: string }> }) {
   const { fileName } = await params;
@@ -30,10 +29,8 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ fil
   }
   if (!allowed) return new NextResponse("Forbidden", { status: 403 });
 
-  let buffer: Buffer;
-  try {
-    buffer = await readFile(receiptFilePath(fileName, "tickets"));
-  } catch {
+  const buffer = await readReceiptFile(fileName, "tickets");
+  if (!buffer) {
     return new NextResponse("Not found", { status: 404 });
   }
   return new NextResponse(buffer as unknown as BodyInit, {

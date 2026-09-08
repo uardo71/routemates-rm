@@ -84,7 +84,9 @@ export function UnbilledClient({ entries, currency }: { entries: UnbilledEntry[]
           <h1 className="mt-1 text-2xl font-semibold">Unbilled work (WIP)</h1>
           <p className="text-sm text-muted-foreground">
             Approved, billable time that isn&apos;t on an invoice yet — valued at the bill rate frozen at approval. This is
-            the month-end accrual, and anything old here is revenue quietly leaking.
+            the month-end accrual, and anything old here is revenue quietly leaking. Time-billed work only (T&amp;M and
+            retainer): fixed-price milestones are a lump sum, not an hourly rate, so their unbilled value shows on the
+            Revenue report as earned minus invoiced instead.
           </p>
         </div>
         <a href={exportUrl}>

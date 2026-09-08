@@ -143,8 +143,84 @@ export async function createInvoiceAction(input: CreateInvoiceInput): Promise<{ 
     },
   });
 
+  // Reconcile the typed line quantities against approved time so manually-created invoices don't
+  // leave their hours looking unbilled.
+  await linkTimeEntriesToInvoice(invoice.id);
+
   revalidatePath("/invoices");
   return { invoiceId: invoice.id };
+}
+
+/** Attach approved time entries to a manually-created invoice's lines.
+ *
+ *  Only `createTimeInvoiceAction` used to set `invoiceLineId`, so an invoice typed by hand left its
+ *  time entries looking untouched — and the same hours were then counted a second time as "still to
+ *  bill". This reconciles them: for a time-billed project whose invoice carries a service period, it
+ *  walks each line's quantity (hours) and claims unlinked approved entries in that period, oldest
+ *  first, never exceeding the line's quantity.
+ *
+ *  Deliberately conservative: an entry is only claimed if it fits whole inside the remaining
+ *  quantity, entries are never split, and anything already linked is left alone. Returns how many
+ *  entries were linked. Best-effort — a mismatch just leaves entries unlinked rather than failing
+ *  the invoice. */
+async function linkTimeEntriesToInvoice(invoiceId: string): Promise<number> {
+  const inv = await prisma.invoice.findUnique({
+    where: { id: invoiceId },
+    select: {
+      id: true, projectId: true, periodStart: true, periodEnd: true, type: true,
+      project: { select: { billingType: true } },
+      lines: { select: { id: true, description: true, quantity: true, milestoneId: true }, orderBy: { id: "asc" } },
+    },
+  });
+  if (!inv || inv.type === "CREDIT_NOTE") return 0;
+  if (!inv.projectId || !inv.periodStart || !inv.periodEnd) return 0;
+  // Fixed-price work isn't billed by the hour, so its line quantities aren't hours to match against.
+  if (!inv.project || inv.project.billingType === "FIXED_PRICE") return 0;
+
+  // Inclusive end-of-day, matching createInvoiceFromTime's UTC handling.
+  const periodEnd = new Date(inv.periodEnd);
+  periodEnd.setUTCHours(23, 59, 59, 999);
+
+  const candidates = await prisma.timeEntry.findMany({
+    where: {
+      invoiceLineId: null,
+      timeCard: { status: "APPROVED" },
+      date: { gte: inv.periodStart, lte: periodEnd },
+      milestone: { billable: true, projectId: inv.projectId },
+    },
+    select: { id: true, hours: true, milestoneId: true },
+    orderBy: { date: "asc" },
+  });
+  if (candidates.length === 0) return 0;
+
+  const used = new Set<string>();
+  let linked = 0;
+  for (const line of inv.lines) {
+    if (line.description === COMMISSION_DESC) continue;
+    let remaining = Number(line.quantity);
+    if (!(remaining > 0)) continue;
+    const claim: string[] = [];
+    for (const e of candidates) {
+      if (used.has(e.id)) continue;
+      // A line tied to a milestone only claims that milestone's time.
+      if (line.milestoneId && e.milestoneId !== line.milestoneId) continue;
+      const h = Number(e.hours);
+      if (h <= 0 || h > remaining + 0.001) continue;
+      claim.push(e.id);
+      used.add(e.id);
+      remaining -= h;
+      if (remaining <= 0.001) break;
+    }
+    if (claim.length > 0) {
+      // Still guarded on invoiceLineId being null, so a concurrent invoice can't lose its claim.
+      const r = await prisma.timeEntry.updateMany({
+        where: { id: { in: claim }, invoiceLineId: null },
+        data: { invoiceLineId: line.id },
+      });
+      linked += r.count;
+    }
+  }
+  return linked;
 }
 
 // ---------- unbilled (WIP) preview for the "from approved time" basis ----------
@@ -165,8 +241,13 @@ export type UnbilledPreview = {
  *  unbilled work rather than having to guess a period. Read-only. */
 export async function unbilledPreviewAction(projectId: string): Promise<{ error?: string; preview?: UnbilledPreview }> {
   const user = await requirePermission("invoices:manage");
-  const project = await prisma.project.findFirst({ where: { id: projectId, companyId: user.companyId }, select: { id: true } });
+  const project = await prisma.project.findFirst({ where: { id: projectId, companyId: user.companyId }, select: { id: true, billingType: true } });
   if (!project) return { error: "Invalid project." };
+  // Fixed-price work isn't billed by the hour — its milestone salesPrice is a lump sum, not a rate.
+  // Offering "unbilled time" here would price every hour at the whole contract value.
+  if (project.billingType === "FIXED_PRICE") {
+    return { preview: { hours: 0, value: 0, entries: 0, oldestAgeDays: 0, firstDate: null, lastDate: null, milestones: [] } };
+  }
 
   const entries = await prisma.timeEntry.findMany({
     where: { invoiceLineId: null, timeCard: { status: "APPROVED" }, milestone: { billable: true, projectId: project.id } },
@@ -593,6 +674,10 @@ export async function updateInvoiceAction(input: UpdateInvoiceInput): Promise<{ 
       },
     });
   });
+  // Line quantities may have changed — re-reconcile against approved time. Entries released by a
+  // deleted line are already unlinked above, so they become claimable again here.
+  await linkTimeEntriesToInvoice(inv.id);
+
   revalidatePath("/invoices");
   revalidatePath(`/invoices/${inv.id}`);
   return {};

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { bucketForAge, summarizeAge, groupUnbilled, totalsByProject, type UnbilledEntry } from "@/lib/wip";
+import { bucketForAge, summarizeAge, groupUnbilled, totalsByProject, TIME_BILLED_TYPES, type UnbilledEntry } from "@/lib/wip";
 
 function entry(o: Partial<UnbilledEntry> = {}): UnbilledEntry {
   return {
@@ -88,5 +88,14 @@ describe("totalsByProject", () => {
     expect(t.get("p1")).toEqual({ hours: 5, value: 500 });
     expect(t.get("p2")).toEqual({ hours: 1, value: 50 });
     expect(t.get("nope")).toBeUndefined();
+  });
+});
+
+describe("TIME_BILLED_TYPES", () => {
+  it("excludes FIXED_PRICE — its salesPrice is a lump sum, not an hourly rate", () => {
+    // Regression guard: valuing fixed-price hours against milestone.salesPrice multiplied a whole
+    // EUR 9,300 contract by every hour worked (148.8h -> EUR 1,383,840).
+    expect(TIME_BILLED_TYPES).not.toContain("FIXED_PRICE");
+    expect([...TIME_BILLED_TYPES].sort()).toEqual(["RETAINER", "TIME_AND_MATERIALS"]);
   });
 });

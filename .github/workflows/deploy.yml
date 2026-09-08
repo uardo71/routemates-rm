@@ -1,0 +1,96 @@
+name: Deploy to Azure
+
+# Builds the app and ships it to the App Service that serves psa.routemates.it.
+# Runs on every push to main, and can be started by hand from the Actions tab.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  # One deploy at a time; a newer push supersedes an in-flight one rather than racing it.
+  group: deploy-production
+  cancel-in-progress: false
+
+env:
+  AZURE_WEBAPP_NAME: rm-ops-psa
+  NODE_VERSION: "22.x"
+
+permissions:
+  contents: read
+  id-token: write # required for OIDC login to Azure — no stored publish password
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm exec prisma generate
+
+      # Gate the deploy on the same checks used locally. A red build never reaches production.
+      - name: Typecheck
+        run: pnpm exec tsc --noEmit
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
+      # `output: "standalone"` emits a self-contained server in .next/standalone, but Next leaves
+      # static assets and public/ for the deployer to place alongside it.
+      - name: Assemble deployment package
+        run: |
+          cp -r .next/static .next/standalone/.next/static
+          if [ -d public ]; then cp -r public .next/standalone/public; fi
+
+      - name: Log in to Azure
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # Migrations run against production BEFORE the new code goes live, so the schema is never
+      # older than the code reading it. `migrate deploy` only applies committed migrations and
+      # never resets or drops anything.
+      - name: Apply database migrations
+        env:
+          DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
+        run: pnpm exec prisma migrate deploy
+
+      - name: Deploy to App Service
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ env.AZURE_WEBAPP_NAME }}
+          package: .next/standalone
+
+      - name: Verify the site responds
+        run: |
+          for i in $(seq 1 12); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "https://${{ env.AZURE_WEBAPP_NAME }}.azurewebsites.net/login" || true)
+            echo "attempt $i: HTTP $code"
+            # 200 = login page rendered. Anything else after the retries is a failed deploy.
+            if [ "$code" = "200" ]; then echo "Deployment verified."; exit 0; fi
+            sleep 10
+          done
+          echo "Site did not return 200 after startup window."
+          exit 1

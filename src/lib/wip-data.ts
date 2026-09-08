@@ -1,7 +1,8 @@
 import "server-only";
 import { prisma } from "@/lib/prisma";
 import { visibleProjectIds, type SessionUser } from "@/lib/permissions";
-import type { UnbilledEntry } from "@/lib/wip";
+import { TIME_BILLED_TYPES, type UnbilledEntry } from "@/lib/wip";
+import { effectiveBillRate } from "@/lib/revenue";
 
 // Loads unbilled work-in-progress from the DB. Shaping/grouping helpers live in the pure
 // `@/lib/wip` module so client components can reuse them.
@@ -21,7 +22,9 @@ export async function loadUnbilledEntries(user: SessionUser, asOf: Date = new Da
     where: {
       invoiceLineId: null,
       timeCard: { status: "APPROVED" },
-      milestone: { billable: true, project: projectWhere },
+      // Only time-billed work belongs here — see TIME_BILLED_TYPES. A fixed-price milestone's
+      // salesPrice is a lump sum, so hours x rate would be nonsense.
+      milestone: { billable: true, project: { ...projectWhere, billingType: { in: [...TIME_BILLED_TYPES] } } },
     },
     select: {
       id: true,
@@ -31,7 +34,10 @@ export async function loadUnbilledEntries(user: SessionUser, asOf: Date = new Da
       user: { select: { name: true } },
       assignment: { select: { billRate: true } },
       milestone: {
-        select: { id: true, name: true, salesPrice: true, project: { select: { id: true, name: true, client: { select: { name: true } } } } },
+        select: {
+          id: true, name: true, salesPrice: true, budgetHours: true,
+          project: { select: { id: true, name: true, billingType: true, client: { select: { name: true } } } },
+        },
       },
     },
     orderBy: { date: "asc" },
@@ -41,8 +47,13 @@ export async function loadUnbilledEntries(user: SessionUser, asOf: Date = new Da
   const today = Date.UTC(asOf.getUTCFullYear(), asOf.getUTCMonth(), asOf.getUTCDate());
   return rows.map((e) => {
     const hours = Number(e.hours);
-    const rate =
-      e.billRate != null ? Number(e.billRate) : e.assignment.billRate != null ? Number(e.assignment.billRate) : Number(e.milestone.salesPrice);
+    const rate = effectiveBillRate({
+      entryBillRate: e.billRate == null ? null : Number(e.billRate),
+      assignmentBillRate: e.assignment.billRate == null ? null : Number(e.assignment.billRate),
+      milestoneSalesPrice: Number(e.milestone.salesPrice),
+      milestoneBudgetHours: e.milestone.budgetHours == null ? null : Number(e.milestone.budgetHours),
+      billingType: e.milestone.project.billingType,
+    });
     const iso = e.date.toISOString().slice(0, 10);
     return {
       entryId: e.id,

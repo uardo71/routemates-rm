@@ -1,8 +1,7 @@
-import { readFile } from "fs/promises";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/session";
-import { receiptFilePath } from "@/lib/receipt-storage";
+import { readReceiptFile } from "@/lib/receipt-storage";
 import { avatarContentType } from "@/lib/avatar";
 
 // Serves user avatar images. They live outside public/ (uploads/avatars), so this authenticated
@@ -22,11 +21,9 @@ export async function GET(_req: Request, { params }: { params: Promise<{ fileNam
     return NextResponse.json({ error: "Not found." }, { status: 404 });
   }
 
-  let data: Buffer;
-  try {
-    data = await readFile(receiptFilePath(fileName, "avatars"));
-  } catch {
-    return NextResponse.json({ error: "File missing on disk." }, { status: 404 });
+  const data = await readReceiptFile(fileName, "avatars");
+  if (!data) {
+    return NextResponse.json({ error: "File not found." }, { status: 404 });
   }
 
   return new Response(new Uint8Array(data), {

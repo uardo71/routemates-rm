@@ -146,7 +146,7 @@ export async function assembleCommandCenter(user: SessionUser): Promise<CommandC
   const scopeAll = projectIds === "ALL";
   const projFilter = scopeAll ? {} : { id: { in: projectIds as string[] } };
 
-  const [{ rows, overhead, quarterLabels, companyCurrency }, invoices, opportunities, deliv, allMs, unlinkedByMs] =
+  const [{ rows, overhead, quarterLabels, companyCurrency }, invoices, opportunities, deliv, unlinkedByMs] =
     await Promise.all([
       computeCompanyRevenue(user),
       prisma.invoice.findMany({
@@ -169,12 +169,9 @@ export async function assembleCommandCenter(user: SessionUser): Promise<CommandC
           planTasks: { where: { isMilestone: true }, select: { name: true, dueDate: true, status: true, progress: true } },
         },
       }),
-      // Every non-internal milestone's rate + billing type, and approved hours NOT yet linked to any
-      // invoice line — the precise basis for "delivered but not invoiced" on T&M work.
-      prisma.milestone.findMany({
-        where: { project: { companyId: user.companyId, isInternal: false, ...projFilter } },
-        select: { id: true, salesPrice: true, billable: true, projectId: true, project: { select: { billingType: true } } },
-      }),
+      // Approved hours NOT yet linked to any invoice line — used only by the milestone drill-down,
+      // which names the actual time cards still outstanding. The headline still-to-bill figure is
+      // measured against the register instead (see stillToBill).
       prisma.timeEntry.groupBy({
         by: ["milestoneId"],
         where: { milestone: { project: { companyId: user.companyId, isInternal: false, ...projFilter } }, timeCard: { status: "APPROVED" }, invoiceLineId: null },
@@ -213,17 +210,16 @@ export async function assembleCommandCenter(user: SessionUser): Promise<CommandC
   // ---- Still-to-bill per project ----
   // T&M / Retainer: exact — Σ (approved hours NOT linked to any invoice × milestone rate). Fixed price
   // (manual, lump invoices): earned minus work already billed on the register (never below 0).
+  // Which specific hours are still unlinked — used only by the milestone drill-down, which names
+  // actual time cards. Accurate now that manual invoices link their entries too.
   const unlinkedM = new Map(unlinkedByMs.map((x) => [x.milestoneId, Number(x._sum.hours ?? 0)]));
-  const tmUnbilledByProject = new Map<string, number>();
-  for (const m of allMs) {
-    if (m.project.billingType === "FIXED_PRICE" || !m.billable) continue;
-    const v = (unlinkedM.get(m.id) ?? 0) * Number(m.salesPrice);
-    if (v > 0) tmUnbilledByProject.set(m.projectId, (tmUnbilledByProject.get(m.projectId) ?? 0) + v);
-  }
+
+  // Measured against the REGISTER, not against time-entry linkage, for every billing type. Invoices
+  // typed by hand never set `invoiceLineId`, so a linkage-based count reported work as still-to-bill
+  // that was already invoiced — the same hours counted twice. Earned minus what's actually on the
+  // register self-corrects however the invoice was created.
   const stillToBill = (r: (typeof rows)[number]): number =>
-    r.billingType === "FIXED_PRICE"
-      ? round2(Math.max(0, r.earnedRevenue - (billedWorkByProject.get(r.projectId) ?? 0)))
-      : round2(tmUnbilledByProject.get(r.projectId) ?? 0);
+    round2(Math.max(0, r.earnedRevenue - (billedWorkByProject.get(r.projectId) ?? 0)));
 
   // ---- Pipeline (open opportunities, net of discount) ----
   let pipeline = 0;

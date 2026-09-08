@@ -419,6 +419,20 @@ export function WeekGrid({
     }
     setNewTaskEntries((prev) => [...prev, { cardKey, assignmentId, taskId: task.taskId }]);
   }
+  /** Log against the assignment itself rather than one of its tasks. The server has always accepted
+   *  a null taskId; this is the manual way in — previously an assignment-level line could only
+   *  arrive via "Copy to timesheet" from the plan. Needed for corrections too: an approved line is
+   *  frozen, so reversing it means a NEW negative line on the same assignment, and that line
+   *  shouldn't be forced onto an arbitrary task. */
+  function addAssignmentLevelRow(cardKey: string, assignmentId: string) {
+    setNewTaskEntries((prev) =>
+      prev.some((t) => t.cardKey === cardKey && t.taskId === null)
+        ? prev
+        : [...prev, { cardKey, assignmentId, taskId: null }]
+    );
+    setEmptyGroups((prev) => prev.filter((g) => g.cardKey !== cardKey));
+  }
+
   function removeNewTask(cardKey: string, taskId: string | null) {
     const assignmentId = resolvedCards.find((c) => c.cardKey === cardKey)?.assignmentId;
     setNewTaskEntries((prev) => prev.filter((t) => !(t.cardKey === cardKey && t.taskId === taskId)));
@@ -1080,11 +1094,27 @@ export function WeekGrid({
           </td>
         </tr>
         {expanded && card.taskIds.map((taskId) => renderTaskRow(card, taskId, noteKeys))}
-        {expanded && !card.locked && remainingTasks.length > 0 && (
+        {expanded && !card.locked && (remainingTasks.length > 0 || card.taskIds.length === 0) && (
           <tr className="border-t">
             <td className="p-1.5" />
             <td className="p-1.5 pl-8" colSpan={days.length + 3}>
-              <TaskPicker options={remainingTasks} onSelect={(t) => addTaskToAssignment(card.cardKey, card.assignmentId, t)} />
+              <div className="flex flex-wrap items-center gap-2">
+                {remainingTasks.length > 0 && (
+                  <TaskPicker options={remainingTasks} onSelect={(t) => addTaskToAssignment(card.cardKey, card.assignmentId, t)} />
+                )}
+                {/* No task chosen yet ⇒ offer logging straight against the assignment. Hidden once a
+                    task row exists, since a card can't mix task and assignment-level rows. */}
+                {card.taskIds.length === 0 && (
+                  <button
+                    type="button"
+                    onClick={() => addAssignmentLevelRow(card.cardKey, card.assignmentId)}
+                    className="flex h-8 items-center gap-1.5 rounded-md border border-dashed border-input px-2.5 text-xs text-muted-foreground hover:bg-muted"
+                    title="Enter hours against the assignment itself, without picking a task"
+                  >
+                    <PlusIcon className="size-3.5" /> Hours without a task
+                  </button>
+                )}
+              </div>
             </td>
           </tr>
         )}

@@ -1,7 +1,7 @@
 import "server-only";
 import { prisma } from "@/lib/prisma";
 import { visibleProjectIds, type SessionUser } from "@/lib/permissions";
-import { realizationMetrics } from "@/lib/revenue";
+import { realizationMetrics, effectiveBillRate } from "@/lib/revenue";
 
 export type ConsultantRow = {
   userId: string;
@@ -54,7 +54,9 @@ export async function computeConsultantRealization(
       billRate: true,
       invoiceLineId: true,
       user: { select: { name: true } },
-      milestone: { select: { billable: true } },
+      milestone: {
+        select: { billable: true, salesPrice: true, budgetHours: true, project: { select: { billingType: true } } },
+      },
       assignment: { select: { costRate: true, billRate: true } },
     },
   });
@@ -70,7 +72,13 @@ export async function computeConsultantRealization(
       if (e.date < range.from || e.date >= range.to) continue;
       const hours = Number(e.hours);
       const costRate = e.costRate != null ? Number(e.costRate) : Number(e.assignment.costRate);
-      const billRate = e.billRate != null ? Number(e.billRate) : e.assignment.billRate != null ? Number(e.assignment.billRate) : 0;
+      const billRate = effectiveBillRate({
+        entryBillRate: e.billRate == null ? null : Number(e.billRate),
+        assignmentBillRate: e.assignment.billRate == null ? null : Number(e.assignment.billRate),
+        milestoneSalesPrice: Number(e.milestone.salesPrice),
+        milestoneBudgetHours: e.milestone.budgetHours == null ? null : Number(e.milestone.budgetHours),
+        billingType: e.milestone.project.billingType,
+      });
       const a = acc.get(e.userId) ?? { name: e.user.name, worked: 0, billable: 0, billed: 0, cost: 0, revenue: 0 };
       a.worked += hours;
       if (e.milestone.billable) a.billable += hours;

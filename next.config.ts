@@ -1,6 +1,10 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Self-contained server bundle for deployment: `.next/standalone` carries only the modules the
+  // app actually imports, so the package pushed to App Service is tens of MB instead of the whole
+  // node_modules tree, and the host runs `node server.js` without installing anything.
+  output: "standalone",
   // Heavy CJS libraries used only in route handlers (Excel/PowerPoint generation) — keep them out
   // of the bundler so they load as normal Node modules at runtime.
   serverExternalPackages: ["exceljs", "pptxgenjs"],

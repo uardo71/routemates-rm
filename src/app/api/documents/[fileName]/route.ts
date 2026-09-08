@@ -1,9 +1,8 @@
-import { readFile } from "fs/promises";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/session";
 import { can } from "@/lib/permissions";
-import { receiptFilePath } from "@/lib/receipt-storage";
+import { readReceiptFile } from "@/lib/receipt-storage";
 
 // Serves invoice/opportunity document files. They live outside public/ (uploads/documents), so this
 // is the only way to reach them — always authenticated + authorized. Mirrors the receipts route.
@@ -32,11 +31,9 @@ export async function GET(_req: Request, { params }: { params: Promise<{ fileNam
     return NextResponse.json({ error: "Forbidden." }, { status: 403 });
   }
 
-  let data: Buffer;
-  try {
-    data = await readFile(receiptFilePath(doc.fileName, "documents"));
-  } catch {
-    return NextResponse.json({ error: "File missing on disk." }, { status: 404 });
+  const data = await readReceiptFile(doc.fileName, "documents");
+  if (!data) {
+    return NextResponse.json({ error: "File not found." }, { status: 404 });
   }
 
   return new Response(new Uint8Array(data), {

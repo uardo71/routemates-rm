@@ -1,9 +1,8 @@
-import { readFile } from "fs/promises";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/session";
 import { can } from "@/lib/permissions";
-import { receiptFilePath } from "@/lib/receipt-storage";
+import { readReceiptFile } from "@/lib/receipt-storage";
 
 // Receipts are never served from /public — every request here is authenticated and scoped:
 // Admin/Finance can view any receipt in their company, anyone else only their own (owner or
@@ -24,11 +23,9 @@ export async function GET(_req: Request, { params }: { params: Promise<{ fileNam
     return NextResponse.json({ error: "Forbidden." }, { status: 403 });
   }
 
-  let data: Buffer;
-  try {
-    data = await readFile(receiptFilePath(receipt.fileName));
-  } catch {
-    return NextResponse.json({ error: "File missing on disk." }, { status: 404 });
+  const data = await readReceiptFile(receipt.fileName);
+  if (!data) {
+    return NextResponse.json({ error: "File not found." }, { status: 404 });
   }
 
   return new Response(new Uint8Array(data), {

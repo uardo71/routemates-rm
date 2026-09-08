@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeProjectRevenue, realizationMetrics, wipMetrics, type MilestoneRevenueInput, type ProjectRevenueInput } from "@/lib/revenue";
+import { computeProjectRevenue, realizationMetrics, wipMetrics, effectiveBillRate, type MilestoneRevenueInput, type ProjectRevenueInput } from "@/lib/revenue";
 
 function ms(o: Partial<MilestoneRevenueInput> = {}): MilestoneRevenueInput {
   return { salesPrice: 0, budgetHours: 0, status: "ACTIVE", approvedHours: 0, plannedHours: 0, billable: true, ...o };
@@ -280,5 +280,58 @@ describe("computeProjectRevenue — cost split", () => {
     );
     expect(r.totalCost).toBe(0.3); // not 0.30000000000000004
     expect(r.margin).toBe(0.7);
+  });
+});
+
+// ---------- resolving an hour's bill rate ----------
+
+describe("effectiveBillRate", () => {
+  const tm = { milestoneSalesPrice: 50, milestoneBudgetHours: 640, billingType: "TIME_AND_MATERIALS" as const };
+
+  it("prefers the rate frozen on the entry", () => {
+    expect(effectiveBillRate({ ...tm, entryBillRate: 75, assignmentBillRate: 60 })).toBe(75);
+  });
+
+  it("falls back to the assignment snapshot", () => {
+    expect(effectiveBillRate({ ...tm, entryBillRate: null, assignmentBillRate: 60 })).toBe(60);
+  });
+
+  it("falls back to the milestone rate for T&M — NOT to zero", () => {
+    // The real-data failure: 483 approved entries and 16 assignments all had null bill rates, so a
+    // `: 0` fallback reported zero revenue and a margin of exactly minus the cost for everyone.
+    expect(effectiveBillRate({ ...tm, entryBillRate: null, assignmentBillRate: null })).toBe(50);
+    expect(effectiveBillRate({ ...tm, billingType: "RETAINER" })).toBe(50);
+  });
+
+  it("spreads a FIXED_PRICE lump sum over its budget hours", () => {
+    // salesPrice is the whole milestone's value here — using it directly would value one hour at
+    // the entire contract.
+    expect(effectiveBillRate({
+      entryBillRate: null, assignmentBillRate: null,
+      milestoneSalesPrice: 9300, milestoneBudgetHours: 148.8, billingType: "FIXED_PRICE",
+    })).toBe(62.5);
+  });
+
+  it("returns 0 for a FIXED_PRICE milestone with no budget hours rather than the lump sum", () => {
+    expect(effectiveBillRate({
+      entryBillRate: null, assignmentBillRate: null,
+      milestoneSalesPrice: 9300, milestoneBudgetHours: 0, billingType: "FIXED_PRICE",
+    })).toBe(0);
+    expect(effectiveBillRate({
+      entryBillRate: null, assignmentBillRate: null,
+      milestoneSalesPrice: 9300, milestoneBudgetHours: null, billingType: "FIXED_PRICE",
+    })).toBe(0);
+  });
+
+  it("still honours an explicit frozen rate on fixed-price work", () => {
+    expect(effectiveBillRate({
+      entryBillRate: 80, assignmentBillRate: null,
+      milestoneSalesPrice: 9300, milestoneBudgetHours: 148.8, billingType: "FIXED_PRICE",
+    })).toBe(80);
+  });
+
+  it("handles a genuinely zero rate (internal work) without falling through", () => {
+    expect(effectiveBillRate({ ...tm, entryBillRate: 0, assignmentBillRate: 60 })).toBe(0);
+    expect(effectiveBillRate({ ...tm, milestoneSalesPrice: 0 })).toBe(0);
   });
 });

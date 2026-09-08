@@ -74,6 +74,37 @@ function round2(n: number): number {
   return Math.round((n + Number.EPSILON) * 100) / 100;
 }
 
+// ---------- resolving an hour's bill rate ----------
+
+export type BillRateSources = {
+  /** Rate frozen onto the entry at approval — authoritative when present. */
+  entryBillRate?: number | null;
+  /** Rate snapshotted on the assignment when it was created. */
+  assignmentBillRate?: number | null;
+  /** For T&M/RETAINER this IS the hourly rate; for FIXED_PRICE it's the milestone's LUMP SUM. */
+  milestoneSalesPrice: number;
+  /** Only meaningful for FIXED_PRICE, where the per-hour value is lump sum / budget hours. */
+  milestoneBudgetHours?: number | null;
+  billingType: ProjectBillingType;
+};
+
+/** The hourly rate to value one worked hour at.
+ *
+ *  Entries approved before bill rates existed carry no frozen rate and their assignment carries no
+ *  snapshot, so without a final fallback every such hour is worth 0 — which silently reported zero
+ *  revenue and a margin equal to minus the cost. Falls back to the milestone, taking care that a
+ *  FIXED_PRICE salesPrice is a lump sum: its per-hour value is the milestone value spread over its
+ *  budget hours (the same "effective rate" the project page shows), never the lump sum itself. */
+export function effectiveBillRate(s: BillRateSources): number {
+  if (s.entryBillRate != null) return round2(s.entryBillRate);
+  if (s.assignmentBillRate != null) return round2(s.assignmentBillRate);
+  if (s.billingType === "FIXED_PRICE") {
+    const hours = s.milestoneBudgetHours ?? 0;
+    return hours > 0 ? round2(s.milestoneSalesPrice / hours) : 0;
+  }
+  return round2(s.milestoneSalesPrice);
+}
+
 // ---------- work in progress (earned vs invoiced) ----------
 
 export type WipInput = {

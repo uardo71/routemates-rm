@@ -1,3 +1,9 @@
+// Fixed-price work is NOT billed by the hour: its milestone `salesPrice` is the LUMP SUM for the
+// whole milestone, and `billRate` is deliberately null. Valuing hours against it would multiply the
+// entire contract by every hour worked (148.8h x a EUR 9,300 lump sum = EUR 1.38M). Unbilled value
+// for those projects comes from earned - invoiced at project level instead, never from time.
+export const TIME_BILLED_TYPES = ["TIME_AND_MATERIALS", "RETAINER"] as const;
+
 // Pure work-in-progress (unbilled) shaping — no Prisma/server imports, so both the server loader
 // and the client detail view can use it.
 
