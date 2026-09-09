@@ -182,6 +182,17 @@ export function realizationMetrics(input: RealizationInput): RealizationResult {
   };
 }
 
+/** How much each milestone's LIST value is scaled by to reach the negotiated contract value.
+ *
+ *  Milestones deliberately keep list prices; the deal-level discount lives on the project
+ *  (`contractValue` = list − discount). Sharing this factor means the Revenue report and the
+ *  project page can never disagree about what a milestone is actually worth. Returns 1 when there
+ *  is no contract value or no list total to scale (i.e. nothing to discount). */
+export function contractValueScale(contractValue: number, totalListValue: number): number {
+  if (!(totalListValue > 0) || !(contractValue > 0)) return 1;
+  return contractValue / totalListValue;
+}
+
 export function computeProjectRevenue(input: ProjectRevenueInput): ProjectRevenueResult {
   const plannedHours = round2(input.milestones.reduce((s, m) => s + m.plannedHours, 0));
   const approvedHours = round2(input.milestones.reduce((s, m) => s + m.approvedHours, 0));
@@ -203,7 +214,7 @@ export function computeProjectRevenue(input: ProjectRevenueInput): ProjectRevenu
     // discount is respected and a fully-delivered project earns exactly the contract value, not the
     // pre-discount list total. Fall back to list values when no contract value is set.
     const totalList = input.milestones.reduce((s, m) => s + effective(m), 0);
-    const scale = totalList > 0 && input.contractValue > 0 ? input.contractValue / totalList : 1;
+    const scale = contractValueScale(input.contractValue, totalList);
     earnedRevenue = round2(
       input.milestones.reduce((s, m) => {
         const value = effective(m) * scale;

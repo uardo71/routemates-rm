@@ -30,6 +30,7 @@ import { loadExternalCost } from "@/lib/external-cost";
 import { can, canManageProject, visibleProjectIds } from "@/lib/permissions";
 import { requirePermission } from "@/lib/session";
 import { formatMoney, formatNumber } from "@/lib/format";
+import { contractValueScale } from "@/lib/revenue";
 import { cn } from "@/lib/utils";
 import { DocumentsCard, type DocRow } from "@/components/documents-card";
 import { TimeEntriesTable } from "./time-entries-table";
@@ -230,6 +231,20 @@ export default async function ProjectDetailPage({
   const baseValueOf = (m: ProjMilestone) =>
     project.billingType === "FIXED_PRICE" ? Number(m.salesPrice) : Number(m.salesPrice) * Number(m.budgetHours ?? 0);
   const effValueOf = (m: ProjMilestone) => baseValueOf(m) + (adjByMs.get(m.id) ?? 0);
+  // The deal-level discount lives on the project, so a milestone's list value overstates what it's
+  // actually worth. Revenue already scales it (see contractValueScale); showing the same figure here
+  // is what makes "the discount isn't reflected on the milestone" go away. Fixed price only — for
+  // T&M the discount isn't applied to earned revenue either, so showing it would be a lie.
+  const dealScale = (() => {
+    if (project.billingType !== "FIXED_PRICE") return 1;
+    const cv = project.contractValue != null ? Number(project.contractValue) : 0;
+    const totalList = project.milestones.reduce((s, m) => s + baseValueOf(m) + (adjByMs.get(m.id) ?? 0), 0);
+    return contractValueScale(cv, totalList);
+  })();
+  const isDiscounted = Math.abs(dealScale - 1) > 0.0001;
+  /** What the milestone is really worth: list, minus its own adjustments, minus its share of the deal discount. */
+  const contractedValueOf = (m: ProjMilestone) => (baseValueOf(m) + (adjByMs.get(m.id) ?? 0)) * dealScale;
+
   const isFullyAbsorbed = (m: ProjMilestone) => {
     const base = baseValueOf(m);
     return base > 0 && (adjByMs.get(m.id) ?? 0) < 0 && effValueOf(m) <= 0.005;
@@ -600,8 +615,16 @@ export default async function ProjectDetailPage({
                     <TableHead>Billable</TableHead>
                     <TableHead>Hours</TableHead>
                     <TableHead className="text-right">Planned</TableHead>
-                    {canViewRates && <TableHead className="text-right">Sales price</TableHead>}
-                    {canViewRates && <TableHead className="text-right">Value</TableHead>}
+                    {canViewRates && (
+                      <TableHead className="text-right" title={isDiscounted ? "List rate, and the rate after the deal discount" : undefined}>
+                        Sales price
+                      </TableHead>
+                    )}
+                    {canViewRates && (
+                      <TableHead className="text-right" title={isDiscounted ? "List value, and the value after the deal discount" : undefined}>
+                        Value{isDiscounted && <span className="ml-1 font-normal text-muted-foreground">(net of discount)</span>}
+                      </TableHead>
+                    )}
                     <TableHead>People / Tasks</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -665,9 +688,17 @@ export default async function ProjectDetailPage({
                                   ? Number(m.salesPrice) / bh
                                   : null
                                 : Number(m.salesPrice);
-                            return rate != null
-                              ? `${formatMoney(rate, project.company.currency)}/h`
-                              : formatMoney(m.salesPrice, project.company.currency);
+                            if (rate == null) return formatMoney(m.salesPrice, project.company.currency);
+                            const listRate = `${formatMoney(rate, project.company.currency)}/h`;
+                            // With a deal discount the list rate isn't what the hour actually earns.
+                            if (!isDiscounted || !bh) return listRate;
+                            const netRate = contractedValueOf(m) / bh;
+                            return (
+                              <span className="flex flex-col items-end leading-tight">
+                                <span className="text-xs text-muted-foreground line-through">{listRate}</span>
+                                <span>{formatMoney(netRate, project.company.currency)}/h</span>
+                              </span>
+                            );
                           })()}
                         </TableCell>
                       )}
@@ -678,11 +709,19 @@ export default async function ProjectDetailPage({
                               return `${formatMoney(m.salesPrice, project.company.currency)}/h`;
                             }
                             const base = baseValueOf(m);
-                            const eff = effValueOf(m);
-                            const adjusted = Math.abs(eff - base) > 0.005;
-                            if (!adjusted) return formatMoney(base, project.company.currency);
+                            // Final worth: own adjustments AND this milestone's share of the deal discount.
+                            const eff = contractedValueOf(m);
+                            const changed = Math.abs(eff - base) > 0.005;
+                            if (!changed) return formatMoney(base, project.company.currency);
                             return (
-                              <span className="flex flex-col items-end leading-tight">
+                              <span
+                                className="flex flex-col items-end leading-tight"
+                                title={
+                                  isDiscounted
+                                    ? `List ${formatMoney(base, project.company.currency)} · after the deal discount this milestone is worth ${formatMoney(eff, project.company.currency)}`
+                                    : undefined
+                                }
+                              >
                                 <span className="text-xs text-muted-foreground line-through">{formatMoney(base, project.company.currency)}</span>
                                 <span className={cn(eff <= 0.005 && "text-violet-600 dark:text-violet-300")}>{formatMoney(eff, project.company.currency)}</span>
                               </span>

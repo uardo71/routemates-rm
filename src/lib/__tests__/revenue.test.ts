@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeProjectRevenue, realizationMetrics, wipMetrics, effectiveBillRate, type MilestoneRevenueInput, type ProjectRevenueInput } from "@/lib/revenue";
+import { computeProjectRevenue, realizationMetrics, wipMetrics, effectiveBillRate, contractValueScale, type MilestoneRevenueInput, type ProjectRevenueInput } from "@/lib/revenue";
 
 function ms(o: Partial<MilestoneRevenueInput> = {}): MilestoneRevenueInput {
   return { salesPrice: 0, budgetHours: 0, status: "ACTIVE", approvedHours: 0, plannedHours: 0, billable: true, ...o };
@@ -333,5 +333,46 @@ describe("effectiveBillRate", () => {
   it("handles a genuinely zero rate (internal work) without falling through", () => {
     expect(effectiveBillRate({ ...tm, entryBillRate: 0, assignmentBillRate: 60 })).toBe(0);
     expect(effectiveBillRate({ ...tm, milestoneSalesPrice: 0 })).toBe(0);
+  });
+});
+
+// ---------- deal discount scaling onto milestones ----------
+
+describe("contractValueScale", () => {
+  it("scales list values down to the negotiated contract value", () => {
+    // The real case: a EUR 12,000 list quote sold at EUR 10,000.
+    expect(contractValueScale(10000, 12000)).toBeCloseTo(0.8333, 4);
+    // A single EUR 12,000 milestone is therefore worth EUR 10,000.
+    expect(12000 * contractValueScale(10000, 12000)).toBeCloseTo(10000, 6);
+  });
+
+  it("is 1 when there is nothing to discount", () => {
+    expect(contractValueScale(12000, 12000)).toBe(1);
+    expect(contractValueScale(0, 12000)).toBe(1); // no contract value recorded
+    expect(contractValueScale(10000, 0)).toBe(1); // no list total to scale
+    expect(contractValueScale(-5, 12000)).toBe(1);
+  });
+
+  it("splits the discount across milestones by their list share", () => {
+    const list = [9000, 3000]; // 12,000 total, sold at 10,000
+    const scale = contractValueScale(10000, list.reduce((a, b) => a + b, 0));
+    const contracted = list.map((v) => v * scale);
+    expect(contracted[0]).toBeCloseTo(7500, 6);
+    expect(contracted[1]).toBeCloseTo(2500, 6);
+    // The whole deal still adds up to exactly the contract value — no rounding leak.
+    expect(contracted.reduce((a, b) => a + b, 0)).toBeCloseTo(10000, 6);
+  });
+
+  it("matches what computeProjectRevenue earns for a delivered fixed-price project", () => {
+    const r = computeProjectRevenue(
+      project({
+        billingType: "FIXED_PRICE",
+        contractValue: 10000,
+        internalCost: 0,
+        milestones: [ms({ salesPrice: 12000, budgetHours: 192, approvedHours: 192, status: "COMPLETE" })],
+      }),
+    );
+    // Delivered in full, so it earns the contract value — not the 12,000 list total.
+    expect(r.earnedRevenue).toBe(10000);
   });
 });
