@@ -1457,3 +1457,47 @@ Migration `20260911120000_normalize_date_only_columns_utc` (applied to erp_dev; 
 - **Audit UI**: long text values (notes, descriptions) show a 40-char preview with "show full" that
   expands to the complete before/after in place — History card and `/admin/audit` share `FieldLine`.
 
+---
+
+## Session update — 2026-09-11 (skills & certifications; end customers can be completed)
+
+Two migrations (`20260911130000_skills_certifications`, `20260911140000_engagement_status`; applied to
+erp_dev, prod via the pipeline). tsc + lint + build + **183 tests** green. UI not clicked through
+(SSO-only).
+
+### Skills & certifications (Prompt 12) — staffing starts from a filter
+- **Model**: `Skill { companyId, name, category }` (`SkillCategory`: SAP_MODULE / TECHNOLOGY /
+  LANGUAGE / INDUSTRY / METHODOLOGY; unique per company+name), `UserSkill { userId, skillId, level
+  1–5 (DB CHECK), lastUsedYear }`, `Certification { userId, name, issuer, issuedDate, expiryDate,
+  documentId? }` — the certificate file is a `Document` of the new kind `CERTIFICATE` (served by
+  `/api/documents/[fileName]` to the owner, `users:manage` and `people:search`).
+- **Permissions**: `skills:manage` (ADMIN) for the catalogue; `people:search` (ADMIN, PM, SALES)
+  for Find people / matrix / read-only person pages.
+- **Pure `src/lib/skills.ts` (tested)**: `matchPeople(people, requirements, { minFreeHours })` —
+  full matches first, then fewest missing, then Σ level, then free hours; `parseRequirements` /
+  `serializeRequirements` (URL form `skillId:minLevel,…`, default min 3); `skillCoverage` (gap =
+  MISSING when nobody is at 3+, SINGLE when one person); `certificationStatus` (EXPIRING within 90
+  days inclusive). `STARTER_SKILLS` is the one-click SAP-practice seed.
+- **Pages**: `/profile` gains Skills (level dots, last-used year) + Certifications (file attach)
+  cards — self-service only (`profile/skills-actions.ts`, always scoped to the caller).
+  `/admin/skills` — catalogue CRUD + "Add SAP starter set". `/people` — Find people: required
+  skills with a minimum level each + a window (start, weeks, min free hours) using
+  `src/lib/availability-data.ts#loadAvailability` (same booked/available arithmetic as
+  `/planning/availability`); one URL answers "who can do a DRC rollout in French from October".
+  `/people/matrix` — people × skills heatmap with gap columns highlighted. `/people/[userId]` and
+  `/admin/users/[id]` show the read-only `SkillsSummary`.
+- **Alert**: `certification_expiry` rule (default tiers 90 and 30 days, key = expiry date + tier so
+  a renewal restarts; never fires once expired) → the person + `users:manage`. Configurable on the
+  Alerts settings tab.
+
+### End customers can be completed; a closed project reads as completed
+- `Engagement.status` (ACTIVE / COMPLETED) + `completedAt`; "Mark completed" / "Reopen" beside the
+  Viewing selector and in the Manage panel (`setEngagementStatusAction`). **The umbrella project's
+  status is untouched** — BEKO can be done while the Tungsten portfolio stays open.
+- `WorkspaceRow.completed` = project COMPLETED/CANCELLED or engagement COMPLETED. Done workspaces:
+  no status-due nudges, no day items, no upcoming, rag GREEN with label "Completed"/"Cancelled";
+  the Portfolio hides them by default behind a "Completed (N)" chip; the cockpit shows a neutral
+  Completed pill instead of the RAG and suppresses the attention/UAT/cutover banners.
+- Fix: the "← Portfolio" back link survives tab switches and end-customer switches (`?from=portfolio`
+  is kept by `tHref` and the engagement bar's `keepParams`).
+

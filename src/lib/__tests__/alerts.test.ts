@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { DEFAULT_ALERTS_CONFIG, mergeAlertsConfig, type AlertsConfig } from "@/lib/alerts/config";
 import {
-  projectBudgetRule, invoiceOverdueRule, approvalStaleRule, expiryRule, milestoneOverdueRule,
+  projectBudgetRule, invoiceOverdueRule, approvalStaleRule, expiryRule, milestoneOverdueRule, certificationExpiryRule,
   evaluateAll, daysBetween, type AlertData, type Alert,
 } from "@/lib/alerts/rules";
 
@@ -17,7 +17,7 @@ function ledger() {
   };
 }
 function data(o: Partial<AlertData> = {}): AlertData {
-  return { today: TODAY, projects: [], invoices: [], timecards: [], expenses: [], assignments: [], opportunities: [], milestones: [], ...o };
+  return { today: TODAY, projects: [], invoices: [], timecards: [], expenses: [], assignments: [], opportunities: [], milestones: [], certifications: [], ...o };
 }
 const project = (o: Partial<AlertData["projects"][number]> = {}): AlertData["projects"][number] => ({
   id: "p1", number: "PR-0000001", name: "AFW", managerId: "pm", status: "ACTIVE",
@@ -222,3 +222,35 @@ describe("evaluateAll + config", () => {
     expect(mergeAlertsConfig("junk").enabled).toBe(true);
   });
 });
+
+describe("certification expiry", () => {
+  const cert = (o: Partial<AlertData["certifications"][number]> = {}): AlertData["certifications"][number] => ({
+    id: "c1", userId: "u1", userName: "Ana", name: "SAP S/4HANA Finance", issuer: "SAP", expiryDate: "2026-12-09", ...o,
+  });
+  const run = (c: AlertData["certifications"][number], isSent: (k: string, t: string, p: string) => boolean = never) => certificationExpiryRule(data({ certifications: [c] }), cfg.rules.certification_expiry, isSent as never);
+
+  it("fires the 90-day tier at exactly 90 days, the 30-day tier at 30, and both once inside 30", () => {
+    expect(run(cert({ expiryDate: "2026-12-09" })).map((a) => a.payloadKey)).toEqual(["2026-12-09:d90"]); // 90
+    expect(run(cert({ expiryDate: "2026-12-10" }))).toHaveLength(0); // 91
+    expect(run(cert({ expiryDate: "2026-10-10" })).map((a) => a.payloadKey)).toEqual(["2026-10-10:d90", "2026-10-10:d30"]); // 30
+    expect(run(cert({ expiryDate: TODAY })).map((a) => a.payloadKey)).toEqual([`${TODAY}:d90`, `${TODAY}:d30`]);
+  });
+  it("never fires once expired, or without an expiry date", () => {
+    expect(run(cert({ expiryDate: "2026-09-09" }))).toHaveLength(0);
+    expect(run(cert({ expiryDate: null }))).toHaveLength(0);
+  });
+  it("goes to the person and to user managers, and a renewal restarts the tiers", () => {
+    const a = run(cert({ expiryDate: "2026-10-10" }));
+    expect(a[0].recipients).toEqual([{ userId: "u1" }, { action: "users:manage" }]);
+    const l = ledger();
+    l.record(a);
+    expect(run(cert({ expiryDate: "2026-10-10" }), l.isSent)).toHaveLength(0);
+    expect(run(cert({ expiryDate: "2026-10-05" }), l.isSent)).toHaveLength(2); // new date (25 days out) ⇒ new keys, both tiers
+  });
+  it("is part of evaluateAll and honours its enable switch", () => {
+    expect(evaluateAll(data({ certifications: [cert({ expiryDate: "2026-10-10" })] }), cfg, never).filter((a) => a.kind === "certification_expiry")).toHaveLength(2);
+    const off = mergeAlertsConfig({ rules: { certification_expiry: { enabled: false } } });
+    expect(evaluateAll(data({ certifications: [cert({ expiryDate: "2026-10-10" })] }), off, never).filter((a) => a.kind === "certification_expiry")).toHaveLength(0);
+  });
+});
+

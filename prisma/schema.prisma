@@ -151,6 +151,7 @@ model Company {
   ticketViews       TicketView[]
   slaPolicies       SlaPolicy[]
   engagements       Engagement[]
+  skills            Skill[]
   milestoneAdjustments MilestoneAdjustment[]
 }
 
@@ -221,6 +222,8 @@ model User {
   @@index([clientId])
   clientTeams        ClientTeamMember[] @relation("ClientTeamMemberUser")
   engagementMemberships EngagementMember[]
+  skills             UserSkill[]
+  certifications     Certification[]
   clientTeamsCreated ClientTeamMember[] @relation("ClientTeamMemberCreatedBy")
 }
 
@@ -1100,6 +1103,7 @@ enum DocumentKind {
   KICKOFF // kickoff deck
   SCOPE // scope / SoW document
   CUTOVER_PLAN // cutover plan / go-live runbook shared with the customer
+  CERTIFICATE // a person's certification file (profile)
   OTHER
 }
 
@@ -1144,6 +1148,7 @@ model Document {
   minutes         MeetingMinutes? @relation(fields: [minutesId], references: [id], onDelete: SetNull)
   statusReportId  String?
   statusReport    StatusReport?   @relation(fields: [statusReportId], references: [id], onDelete: SetNull)
+  certification   Certification?
   uploadedAt    DateTime     @default(now())
 
   @@index([invoiceId])
@@ -2010,6 +2015,11 @@ model TicketAttachment {
 // A project-management-only breakdown of a project into end-customer streams (e.g. Zambon,
 // Bonfiglioli, Q8 under a Tungsten project). It never creates a separate Project/budget/invoice —
 // governance items (status reports, plan, RAID, minutes, documents) are optionally scoped to one.
+enum EngagementStatus {
+  ACTIVE
+  COMPLETED
+}
+
 model Engagement {
   id        String   @id @default(cuid())
   companyId String
@@ -2017,6 +2027,9 @@ model Engagement {
   projectId String
   project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   name      String
+  /// An end customer can be finished while the umbrella project (e.g. a portfolio) stays open.
+  status      EngagementStatus @default(ACTIVE)
+  completedAt DateTime?
   sortOrder Int      @default(0)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2110,4 +2123,61 @@ model AuditLog {
 
   @@index([entityType, entityId, at])
   @@index([companyId, at])
+}
+
+// ---------- skills & certifications (staffing: module, technology, language, industry, method) ----------
+
+enum SkillCategory {
+  SAP_MODULE
+  TECHNOLOGY
+  LANGUAGE
+  INDUSTRY
+  METHODOLOGY
+}
+
+/// The company's skill catalogue (admin-managed). People rate themselves against it.
+model Skill {
+  id         String        @id @default(cuid())
+  companyId  String
+  company    Company       @relation(fields: [companyId], references: [id])
+  name       String
+  category   SkillCategory
+  createdAt  DateTime      @default(now())
+  userSkills UserSkill[]
+
+  @@unique([companyId, name])
+  @@index([companyId, category])
+}
+
+/// A person's self-assessed level (1 basic … 5 expert) on a catalogue skill.
+model UserSkill {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  skillId      String
+  skill        Skill    @relation(fields: [skillId], references: [id], onDelete: Cascade)
+  level        Int
+  lastUsedYear Int?
+  updatedAt    DateTime @updatedAt
+
+  @@unique([userId, skillId])
+  @@index([skillId])
+}
+
+/// A certification held by a person; the certificate file is a Document (kind CERTIFICATE).
+model Certification {
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name       String
+  issuer     String?
+  issuedDate DateTime?
+  expiryDate DateTime?
+  documentId String?   @unique
+  document   Document? @relation(fields: [documentId], references: [id], onDelete: SetNull)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  @@index([userId])
+  @@index([expiryDate])
 }

@@ -14,12 +14,12 @@ import type { AlertsConfig, AlertKind } from "./config";
 // date is moved.
 
 export type { AlertKind };
-export type RecipientAction = "invoices:manage" | "expenses:manage" | "timesheet:approve:any";
+export type RecipientAction = "invoices:manage" | "expenses:manage" | "timesheet:approve:any" | "users:manage";
 export type Recipient = { userId: string } | { action: RecipientAction };
 
 export type Alert = {
   kind: AlertKind;
-  targetType: "project" | "invoice" | "timecard" | "expense" | "assignment" | "opportunity" | "milestone";
+  targetType: "project" | "invoice" | "timecard" | "expense" | "assignment" | "opportunity" | "milestone" | "certification";
   targetId: string;
   payloadKey: string;
   subject: string;
@@ -53,6 +53,7 @@ export type AlertData = {
     stage: string; projectManagerId: string | null;
   }[];
   milestones: { id: string; name: string; projectName: string; projectManagerId: string | null; endDate: string | null; status: string }[];
+  certifications: { id: string; userId: string; userName: string; name: string; issuer: string | null; expiryDate: string | null }[];
 };
 
 // ---------- date + text helpers (pure) ----------
@@ -237,12 +238,44 @@ export function milestoneOverdueRule(data: AlertData, cfg: AlertsConfig["rules"]
   return out;
 }
 
+/** Certification expiry: at each tier (e.g. 90 and 30 days before). The expiry date is part of the
+ *  key, so renewing the certificate (a new date) starts the tiers over. Nothing fires once expired —
+ *  by then it is a profile fact, not an alert. */
+export function certificationExpiryRule(data: AlertData, cfg: AlertsConfig["rules"]["certification_expiry"], isSent: IsSent): Alert[] {
+  if (!cfg.enabled) return [];
+  const out: Alert[] = [];
+  const tiers = [...cfg.days].sort((a, b) => b - a);
+  for (const c of data.certifications) {
+    if (!c.expiryDate) continue;
+    const left = daysBetween(data.today, c.expiryDate);
+    if (left < 0) continue;
+    const date = c.expiryDate.slice(0, 10);
+    for (const d of tiers) {
+      if (left > d) continue;
+      const payloadKey = `${date}:d${d}`;
+      if (isSent("certification_expiry", c.id, payloadKey)) continue;
+      out.push({
+        kind: "certification_expiry", targetType: "certification", targetId: c.id, payloadKey,
+        subject: `${c.userName}'s ${c.name} certification expires in ${left} day${left === 1 ? "" : "s"}`,
+        html: page(`Certification · ${c.userName}`, [
+          `<strong>${esc(c.name)}</strong>${c.issuer ? ` (${esc(c.issuer)})` : ""} expires on <strong>${esc(date)}</strong> — ${left} day${left === 1 ? "" : "s"} from now.`,
+          `Plan the renewal and update the expiry date on the profile once done.`,
+        ]),
+        teamsText: `**${c.userName}** — ${c.name} expires ${date} (${left}d).`,
+        recipients: uniq([{ userId: c.userId }, { action: "users:manage" }]),
+      });
+    }
+  }
+  return out;
+}
+
 export const RULES: { kind: AlertKind; run: (data: AlertData, cfg: AlertsConfig, isSent: IsSent) => Alert[] }[] = [
   { kind: "project_budget", run: (d, c, s) => projectBudgetRule(d, c.rules.project_budget, s) },
   { kind: "invoice_overdue", run: (d, c, s) => invoiceOverdueRule(d, c.rules.invoice_overdue, s) },
   { kind: "approval_stale", run: (d, c, s) => approvalStaleRule(d, c.rules.approval_stale, s) },
   { kind: "expiry", run: (d, c, s) => expiryRule(d, c.rules.expiry, s) },
   { kind: "milestone_overdue", run: (d, c, s) => milestoneOverdueRule(d, c.rules.milestone_overdue, s) },
+  { kind: "certification_expiry", run: (d, c, s) => certificationExpiryRule(d, c.rules.certification_expiry, s) },
 ];
 
 /** Every alert that should go out today, across all enabled rules. */

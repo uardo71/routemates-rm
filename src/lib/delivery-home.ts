@@ -26,7 +26,7 @@ export async function loadDeliveryHome(user: { id: string; companyId: string; ro
     where,
     include: {
       client: { select: { name: true } },
-      engagements: { orderBy: { sortOrder: "asc" }, select: { id: true, name: true } },
+      engagements: { orderBy: { sortOrder: "asc" }, select: { id: true, name: true, status: true } },
       statusReports: {
         orderBy: { reportDate: "desc" },
         select: { engagementId: true, reportDate: true, sentAt: true, overallRag: true, cadence: true, progressPercent: true, summary: true },
@@ -53,6 +53,7 @@ export async function loadDeliveryHome(user: { id: string; companyId: string; ro
 
   for (const p of projects) {
     const active = p.status === "ACTIVE";
+    const projectDone = p.status === "COMPLETED" || p.status === "CANCELLED";
     const hasEng = p.engagements.length > 0;
 
     // Latest status report per scope.
@@ -81,17 +82,17 @@ export async function loadDeliveryHome(user: { id: string; companyId: string; ro
 
     // Which scopes become their own workspace row. No-engagement project → just Overall (the project).
     // Multi-engagement project → each engagement, plus Overall only if it carries project-level items.
-    const scopes: { engagementId: string | null; name: string; isEngagement: boolean }[] = [];
+    const scopes: { engagementId: string | null; name: string; isEngagement: boolean; done: boolean }[] = [];
     if (!hasEng) {
-      scopes.push({ engagementId: null, name: p.name, isEngagement: false });
+      scopes.push({ engagementId: null, name: p.name, isEngagement: false, done: projectDone });
     } else {
       const overallHasItems =
         (latestByScope.has(OVERALL)) ||
         (raidByScope.get(OVERALL)?.length ?? 0) > 0 ||
         (planByScope.get(OVERALL)?.length ?? 0) > 0 ||
         (actionsByScope.get(OVERALL)?.length ?? 0) > 0;
-      if (overallHasItems) scopes.push({ engagementId: null, name: "Overall", isEngagement: false });
-      for (const e of p.engagements) scopes.push({ engagementId: e.id, name: e.name, isEngagement: true });
+      if (overallHasItems) scopes.push({ engagementId: null, name: "Overall", isEngagement: false, done: projectDone });
+      for (const e of p.engagements) scopes.push({ engagementId: e.id, name: e.name, isEngagement: true, done: projectDone || e.status === "COMPLETED" });
     }
 
     for (const s of scopes) {
@@ -109,7 +110,7 @@ export async function loadDeliveryHome(user: { id: string; companyId: string; ro
       const lastStatusDays = last ? differenceInCalendarDays(today, new Date(last.reportDate)) : null;
       const cad = cadenceDays(last?.cadence);
       let statusDue = false;
-      if (customerFacing && active) {
+      if (customerFacing && active && !s.done) {
         if (lastStatusDays === null) statusDue = true; // never reported
         else if (cad !== null && lastStatusDays > cad) statusDue = true;
       }
@@ -121,8 +122,9 @@ export async function loadDeliveryHome(user: { id: string; companyId: string; ro
       const highOpenIssues = raid.filter((r) => (r.severity === "HIGH" || r.severity === "CRITICAL") && !(r.dueDate != null && new Date(r.dueDate) < today));
       const overdueActions = actions.filter((a) => !a.done && a.dueDate != null && new Date(a.dueDate) < today);
 
-      // ----- day items (the path) -----
+      // ----- day items (the path) — a finished workspace asks nothing of anyone -----
       const mk = (kind: DayItem["kind"], priority: DayPriority, title: string) => {
+        if (s.done) return;
         const h = DAY_HINT[kind];
         dayItems.push({ id: `${p.id}:${k}:${kind}`, kind, priority, title, context, projectId: p.id, engagementId: s.engagementId, tab: h.tab, cta: h.cta, how: h.how });
       };
@@ -140,7 +142,7 @@ export async function loadDeliveryHome(user: { id: string; companyId: string; ro
 
       // ----- upcoming this week -----
       for (const t of plan) {
-        if (!planOpen(t) || t.dueDate == null) continue;
+        if (s.done || !planOpen(t) || t.dueDate == null) continue;
         const d = new Date(t.dueDate);
         if (d >= today && d <= soon) {
           const days = differenceInCalendarDays(d, today);
@@ -151,12 +153,16 @@ export async function loadDeliveryHome(user: { id: string; companyId: string; ro
       // ----- workspace row -----
       let rag: RagStatus = last?.overallRag ?? (customerFacing && active ? "AMBER" : "GREEN");
       if (overdueIssues.some((r) => r.severity === "HIGH" || r.severity === "CRITICAL")) rag = "RED";
+      if (s.done) rag = "GREEN";
+      const doneLabel = p.status === "CANCELLED" ? "Cancelled" : "Completed";
 
       const nextT = plan
         .filter((t) => planOpen(t) && t.dueDate != null && new Date(t.dueDate) >= today)
         .sort((a, b) => new Date(a.dueDate!).getTime() - new Date(b.dueDate!).getTime())[0] ?? null;
       const nextMilestone = nextT ? `${nextT.name} · ${format(new Date(nextT.dueDate!), "MMM d")}` : null;
-      const statusLine = last?.summary?.trim()
+      const statusLine = s.done
+        ? doneLabel
+        : last?.summary?.trim()
         ? last.summary.trim()
         : lastStatusDays === null && customerFacing && active
           ? "No status update sent yet"
@@ -172,8 +178,9 @@ export async function loadDeliveryHome(user: { id: string; companyId: string; ro
         account: hasEng ? p.name : null,
         customerName: p.client.name,
         isEngagement: s.isEngagement,
+        completed: s.done,
         rag,
-        ragLabel: RAG_LABEL[rag],
+        ragLabel: s.done ? doneLabel : RAG_LABEL[rag],
         lastStatusDays,
         lastStatusDraft: last ? !last.sentAt : false,
         statusDue,
@@ -214,7 +221,7 @@ export async function loadDeliveryHome(user: { id: string; companyId: string; ro
       });
     }
 
-    if (!cutoverComplete && (p.uatAccepted || (active && goLiveNear))) {
+    if (!projectDone && !cutoverComplete && (p.uatAccepted || (active && goLiveNear))) {
       const h = DAY_HINT.CUTOVER_DUE;
       const progress = cutoverLeaves.length > 0
         ? `${cutoverLeaves.filter((t) => t.status === "DONE" || t.status === "SKIPPED").length}/${cutoverLeaves.length} steps`

@@ -25,7 +25,9 @@ export type Action =
   | "reports:view"
   | "tickets:view"
   | "tickets:manage"
-  | "audit:view";
+  | "audit:view"
+  | "skills:manage"
+  | "people:search";
 
 // Employees and contractors are delivery staff, not delivery managers: for now they
 // only get the Dashboard, their own Time page (logging hours against assignments
@@ -57,10 +59,12 @@ const ROLE_PERMISSIONS: Record<SystemRole, Action[]> = {
     "tickets:view",
     "tickets:manage",
     "audit:view",
+    "skills:manage",
+    "people:search",
   ],
   FINANCE: ["clients:view", "projects:view", "rates:view:any", "invoices:manage", "salaries:manage", "expenses:manage", "opportunities:view", "reports:view", "tickets:view"],
-  SALES: ["clients:manage", "clients:view", "opportunities:view", "opportunities:manage", "tickets:view"],
-  PM: ["projects:view", "projects:create", "planning:view", "delivery:manage", "vacations:view:any", "opportunities:view", "opportunities:manage", "tickets:view", "tickets:manage"],
+  SALES: ["clients:manage", "clients:view", "opportunities:view", "opportunities:manage", "tickets:view", "people:search"],
+  PM: ["projects:view", "projects:create", "planning:view", "delivery:manage", "vacations:view:any", "opportunities:view", "opportunities:manage", "tickets:view", "tickets:manage", "people:search"],
   EMPLOYEE: [],
   CONTRACTOR: [],
   // Customer portal users never hold internal permissions — their access is granted through the

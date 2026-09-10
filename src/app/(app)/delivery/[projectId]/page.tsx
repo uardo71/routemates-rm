@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { format, differenceInCalendarDays } from "date-fns";
-import { TriangleAlertIcon, CalendarIcon, MessageSquareIcon, DiamondIcon, RocketIcon, ClipboardCheckIcon } from "lucide-react";
+import { TriangleAlertIcon, CalendarIcon, MessageSquareIcon, DiamondIcon, RocketIcon, ClipboardCheckIcon, CheckCircle2Icon } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { InitialsAvatar } from "@/components/initials-avatar";
 import { LinkButton } from "@/components/link-button";
@@ -39,7 +39,7 @@ export default async function DeliveryProjectPage({ params, searchParams }: { pa
     include: {
       client: { select: { name: true } },
       manager: { select: { name: true } },
-      engagements: { orderBy: { sortOrder: "asc" }, select: { id: true, name: true, members: { select: { user: { select: { id: true, name: true } } } } } },
+      engagements: { orderBy: { sortOrder: "asc" }, select: { id: true, name: true, status: true, members: { select: { user: { select: { id: true, name: true } } } } } },
       statusReports: { orderBy: { reportDate: "desc" }, include: { author: { select: { name: true } }, actions: { orderBy: { sortOrder: "asc" } }, documents: { select: { id: true, fileName: true, originalName: true } } } },
       raidItems: { orderBy: [{ status: "asc" }, { createdAt: "desc" }], include: { createdBy: { select: { name: true } } } },
       meetings: { orderBy: { date: "desc" }, include: { createdBy: { select: { name: true } }, actions: { orderBy: { sortOrder: "asc" } }, participants: { orderBy: { sortOrder: "asc" } }, documents: { select: { id: true, fileName: true, originalName: true } } } },
@@ -96,6 +96,12 @@ export default async function DeliveryProjectPage({ params, searchParams }: { pa
   // ---- workspace health + "needs attention" (same lightweight checks as My Day, scoped here) ----
   const todayIso = new Date().toISOString().slice(0, 10);
   const activeProj = project.status === "ACTIVE";
+  const projectDone = project.status === "COMPLETED" || project.status === "CANCELLED";
+  const selectedEngRow = project.engagements.find((e) => e.id === selectedEng) ?? null;
+  // A closed project is done everywhere; an end customer can be done on its own while the
+  // umbrella project stays open. Done ⇒ no health colour, no nudges, no banners.
+  const done = projectDone || selectedEngRow?.status === "COMPLETED";
+  const doneLabel = project.status === "CANCELLED" ? "Cancelled" : "Completed";
   const customerFacing = selectedEng !== null || project.engagements.length === 0;
   const latest = reports[0] ?? null;
 
@@ -111,16 +117,17 @@ export default async function DeliveryProjectPage({ params, searchParams }: { pa
 
   const lastDays = latest ? differenceInCalendarDays(new Date(todayIso), new Date(latest.reportDate)) : null;
   const cad = cadenceDays(latest?.cadence);
-  const statusDue = customerFacing && activeProj && (lastDays === null || (cad !== null && lastDays > cad));
+  const statusDue = !done && customerFacing && activeProj && (lastDays === null || (cad !== null && lastDays > cad));
 
   let rag: RagStatus = latest?.overallRag ?? (activeProj && customerFacing ? "AMBER" : "GREEN");
   if (overdueIssues.some((r) => r.severity === "HIGH" || r.severity === "CRITICAL")) rag = "RED";
 
   const attention: string[] = [];
-  if (statusDue) attention.push(lastDays === null ? "No status update yet" : "Status update due");
-  if (overduePlan.length) attention.push(`${overduePlan.length} plan task${overduePlan.length === 1 ? "" : "s"} overdue`);
-  if (overdueIssues.length) attention.push(`${overdueIssues.length} issue${overdueIssues.length === 1 ? "" : "s"} past due`);
-  if (overdueActions.length) attention.push(`${overdueActions.length} action${overdueActions.length === 1 ? "" : "s"} overdue`);
+  if (done) { /* nothing to chase on a finished workspace */ }
+  else if (statusDue) attention.push(lastDays === null ? "No status update yet" : "Status update due");
+  if (!done && overduePlan.length) attention.push(`${overduePlan.length} plan task${overduePlan.length === 1 ? "" : "s"} overdue`);
+  if (!done && overdueIssues.length) attention.push(`${overdueIssues.length} issue${overdueIssues.length === 1 ? "" : "s"} past due`);
+  if (!done && overdueActions.length) attention.push(`${overdueActions.length} action${overdueActions.length === 1 ? "" : "s"} overdue`);
 
   // ---- Cutover readiness: once UAT is accepted (or go-live is near), the cutover to production must
   // be completed. Surface it here so PM/Admin can push the consultant who owns the go-live. ----
@@ -136,7 +143,7 @@ export default async function DeliveryProjectPage({ params, searchParams }: { pa
   const daysToGoLive = goLiveIso ? differenceInCalendarDays(new Date(goLiveIso), new Date(todayIso)) : null;
   const goLiveNear = daysToGoLive != null && daysToGoLive <= 14;
   // Trigger after UAT acceptance, or when go-live is within two weeks — and the cutover isn't finished.
-  const cutoverDue = !cutoverComplete && (project.uatAccepted || (activeProj && goLiveNear));
+  const cutoverDue = !done && !cutoverComplete && (project.uatAccepted || (activeProj && goLiveNear));
   const cutoverUrgent = cutoverDue && daysToGoLive != null && daysToGoLive <= 3;
   const cutoverReason = project.uatAccepted
     ? "UAT is accepted — the project is ready for go-live."
@@ -149,7 +156,7 @@ export default async function DeliveryProjectPage({ params, searchParams }: { pa
   // ---- UAT test-script readiness: the consultant must prepare & send the test script before UAT.
   // Surface it so the PM can check it actually reached "Sent". ----
   const uatWindow = project.uatStatus !== "NOT_STARTED" || (activeProj && daysToGoLive != null && daysToGoLive >= 0 && daysToGoLive <= 30);
-  const uatScriptDue = activeProj && uatWindow && (scopedScripts.length === 0 || scopedScripts.some((s) => s.status !== "SENT"));
+  const uatScriptDue = !done && activeProj && uatWindow && (scopedScripts.length === 0 || scopedScripts.some((s) => s.status !== "SENT"));
   const uatScriptReason = project.uatStatus !== "NOT_STARTED"
     ? "UAT is under way, but the test script isn't marked sent to the customer."
     : "UAT is coming up — the customer test script must be prepared and sent first.";
@@ -160,6 +167,7 @@ export default async function DeliveryProjectPage({ params, searchParams }: { pa
     const p = new URLSearchParams();
     if (selectedEng) p.set("eng", selectedEng);
     p.set("tab", t);
+    if (fromPortfolio) p.set("from", "portfolio"); // keep the "← Portfolio" back link while moving around
     return `/delivery/${project.id}?${p.toString()}`;
   };
 
@@ -183,7 +191,9 @@ export default async function DeliveryProjectPage({ params, searchParams }: { pa
         })()}
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <span className={cn("inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold", RAG_PILL[rag])}><span className={cn("size-2 rounded-full", RAG_DOT[rag])} />{RAG_LABEL[rag]}</span>
+            {done
+              ? <span className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2.5 py-0.5 text-xs font-semibold text-muted-foreground"><CheckCircle2Icon className="size-3.5" />{doneLabel}</span>
+              : <span className={cn("inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold", RAG_PILL[rag])}><span className={cn("size-2 rounded-full", RAG_DOT[rag])} />{RAG_LABEL[rag]}</span>}
             <span className="text-xs text-muted-foreground">{latest ? `${latest.sentAt ? "Last sent" : "Draft"} ${format(new Date(latest.reportDate), "MMM d")}` : "No status update yet"}</span>
             <span className="text-xs text-muted-foreground">· {plan.length > 0 ? `${planDone}/${plan.length} plan tasks done` : "no plan yet"}</span>
           </div>
@@ -272,7 +282,9 @@ export default async function DeliveryProjectPage({ params, searchParams }: { pa
             <div>
               <div className="flex items-center gap-2.5 flex-wrap">
                 <h1 className="text-2xl font-semibold">{engName ?? project.name}</h1>
-                <span className={cn("inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium", RAG_PILL[rag])}><span className={cn("size-2 rounded-full", RAG_DOT[rag])} />{RAG_LABEL[rag]}</span>
+                {done
+                  ? <span className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2.5 py-0.5 text-xs font-medium text-muted-foreground"><CheckCircle2Icon className="size-3.5" />{doneLabel}</span>
+                  : <span className={cn("inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium", RAG_PILL[rag])}><span className={cn("size-2 rounded-full", RAG_DOT[rag])} />{RAG_LABEL[rag]}</span>}
               </div>
               <p className="text-sm text-muted-foreground mt-1">
                 {engName && <span className="font-medium text-foreground">{project.name}</span>}
@@ -293,9 +305,10 @@ export default async function DeliveryProjectPage({ params, searchParams }: { pa
 
       <EngagementBar
         projectId={project.id}
-        engagements={project.engagements.map((e) => ({ id: e.id, name: e.name, members: e.members.map((m) => m.user) }))}
+        engagements={project.engagements.map((e) => ({ id: e.id, name: e.name, status: e.status, members: e.members.map((m) => m.user) }))}
         staff={staff}
         selectedId={selectedEng}
+        keepParams={fromPortfolio ? { from: "portfolio" } : undefined}
       />
 
       {uatScriptDue && (

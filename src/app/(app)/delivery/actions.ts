@@ -84,6 +84,20 @@ export async function setEngagementMembersAction(input: { engagementId: string; 
   return {};
 }
 
+/** Marks an end customer completed (or reopens it). The umbrella project's own status is untouched —
+ *  that is the point: BEKO can be done while the Tungsten portfolio keeps running. */
+export async function setEngagementStatusAction(input: { id: string; status: "ACTIVE" | "COMPLETED" }): Promise<{ error?: string }> {
+  const eng = await prisma.engagement.findUnique({ where: { id: input.id }, select: { projectId: true } });
+  if (!eng) return { error: "Engagement not found." };
+  const ctx = await assertManage(eng.projectId);
+  if (ctx.error) return { error: ctx.error };
+  await prisma.engagement.update({ where: { id: input.id }, data: { status: input.status, completedAt: input.status === "COMPLETED" ? new Date() : null } });
+  revalidatePath(`/delivery/${eng.projectId}`);
+  revalidatePath("/delivery");
+  revalidatePath("/portfolio");
+  return {};
+}
+
 export async function updateEngagementAction(input: { id: string; name: string }): Promise<{ error?: string }> {
   const name = z.string().trim().min(1, "Enter a name.").max(200).safeParse(input.name);
   if (!name.success) return { error: name.error.issues[0]?.message ?? "Enter a name." };

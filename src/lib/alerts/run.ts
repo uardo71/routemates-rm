@@ -33,7 +33,7 @@ const iso = (d: Date | null | undefined) => (d ? d.toISOString() : null);
 // ---------- data loading ----------
 
 async function loadAlertData(companyId: string, today: string): Promise<AlertData> {
-  const [projects, entries, invoices, timecards, expenses, assignments, opportunities, milestones] = await Promise.all([
+  const [projects, entries, invoices, timecards, expenses, assignments, opportunities, milestones, certifications] = await Promise.all([
     prisma.project.findMany({
       where: { companyId, isInternal: false },
       select: { id: true, number: true, name: true, managerId: true, status: true, budgetHours: true, budgetAmount: true },
@@ -67,6 +67,10 @@ async function loadAlertData(companyId: string, today: string): Promise<AlertDat
     prisma.milestone.findMany({
       where: { status: { notIn: ["COMPLETE", "INVOICED"] }, endDate: { not: null }, project: { companyId, isInternal: false } },
       select: { id: true, name: true, endDate: true, status: true, project: { select: { name: true, managerId: true } } },
+    }),
+    prisma.certification.findMany({
+      where: { expiryDate: { not: null }, user: { companyId, active: true } },
+      select: { id: true, userId: true, name: true, issuer: true, expiryDate: true, user: { select: { name: true } } },
     }),
   ]);
 
@@ -110,6 +114,7 @@ async function loadAlertData(companyId: string, today: string): Promise<AlertDat
       projectManagerId: o.project?.managerId ?? null,
     })),
     milestones: milestones.map((m) => ({ id: m.id, name: m.name, projectName: m.project.name, projectManagerId: m.project.managerId, endDate: iso(m.endDate), status: m.status })),
+    certifications: certifications.map((c) => ({ id: c.id, userId: c.userId, userName: c.user.name, name: c.name, issuer: c.issuer, expiryDate: iso(c.expiryDate) })),
   };
 }
 

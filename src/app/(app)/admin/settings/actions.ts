@@ -48,6 +48,7 @@ const AlertsConfigSchema = z.object({
     approval_stale: z.object({ enabled: z.boolean(), staleDays: z.number().int().min(0).max(365) }),
     expiry: z.object({ enabled: z.boolean(), days: z.number().int().min(0).max(3650) }),
     milestone_overdue: z.object({ enabled: z.boolean() }),
+    certification_expiry: z.object({ enabled: z.boolean(), days: z.array(z.number().int().min(0).max(3650)).min(1) }),
   }),
 });
 

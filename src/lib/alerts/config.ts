@@ -18,6 +18,8 @@ export type AlertsConfig = {
     expiry: { enabled: boolean; days: number };
     /** Milestone endDate passed while not COMPLETE/INVOICED. */
     milestone_overdue: { enabled: boolean };
+    /** A person's certification reaches each of these many days before expiryDate. */
+    certification_expiry: { enabled: boolean; days: number[] };
   };
 };
 
@@ -31,6 +33,7 @@ export const DEFAULT_ALERTS_CONFIG: AlertsConfig = {
     approval_stale: { enabled: true, staleDays: 3 },
     expiry: { enabled: true, days: 30 },
     milestone_overdue: { enabled: true },
+    certification_expiry: { enabled: true, days: [90, 30] },
   },
 };
 
@@ -62,6 +65,11 @@ export const ALERT_RULE_META: Record<AlertKind, { label: string; description: st
     description: "A milestone's end date has passed and it is neither complete nor invoiced. Re-fires if the date is re-planned.",
     recipients: "the project manager",
   },
+  certification_expiry: {
+    label: "Certification expiring",
+    description: "A person's certification is within each listed number of days of its expiry date. Fires once per tier; a renewed expiry date starts over.",
+    recipients: "the person and everyone who manages users",
+  },
 };
 
 /** Deep-merges a stored (possibly older/partial) config onto the defaults so every field has a value. */
@@ -83,6 +91,7 @@ export function mergeAlertsConfig(stored: unknown): AlertsConfig {
       approval_stale: { enabled: bool(r.approval_stale?.enabled, true), staleDays: num(r.approval_stale?.staleDays, d.rules.approval_stale.staleDays) },
       expiry: { enabled: bool(r.expiry?.enabled, true), days: num(r.expiry?.days, d.rules.expiry.days) },
       milestone_overdue: { enabled: bool(r.milestone_overdue?.enabled, true) },
+      certification_expiry: { enabled: bool(r.certification_expiry?.enabled, true), days: nums(r.certification_expiry?.days, d.rules.certification_expiry.days) },
     },
   };
 }

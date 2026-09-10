@@ -37,7 +37,7 @@ const TYPE_META = (w: WorkspaceRow) =>
       : { label: "Project", cls: "bg-blue-500/12 text-blue-600 dark:text-blue-400" };
 
 // "Needs attention" = anything that isn't quietly green — the same rule the old card board used.
-const needsAttention = (w: WorkspaceRow) => !(w.rag === "GREEN" && !w.statusDue && w.overdueTasks === 0);
+const needsAttention = (w: WorkspaceRow) => !w.completed && !(w.rag === "GREEN" && !w.statusDue && w.overdueTasks === 0);
 
 function wsHref(w: WorkspaceRow) {
   const p = new URLSearchParams();
@@ -89,6 +89,7 @@ export function PortfolioClient({ workspaces, isAdmin }: { workspaces: Workspace
   const [due, setDue] = useState(sp.get("due") === "1");
   const [over, setOver] = useState(sp.get("over") === "1");
   const [group, setGroup] = useState(sp.get("group") === "1");
+  const [showDone, setShowDone] = useState(sp.get("done") === "1");
   const [sort, setSort] = useState<SortKey>(() => (isSortKey(sp.get("sort")) ? (sp.get("sort") as SortKey) : DEFAULT_SORT));
   const [dir, setDir] = useState<Dir>(sp.get("dir") === "desc" ? "desc" : DEFAULT_DIR);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -101,16 +102,19 @@ export function PortfolioClient({ workspaces, isAdmin }: { workspaces: Workspace
     if (due) p.set("due", "1");
     if (over) p.set("over", "1");
     if (group) p.set("group", "1");
+    if (showDone) p.set("done", "1");
     if (sort !== DEFAULT_SORT) p.set("sort", sort);
     if (dir !== DEFAULT_DIR) p.set("dir", dir);
     const qs = p.toString();
     window.history.replaceState(null, "", qs ? `${window.location.pathname}?${qs}` : window.location.pathname);
-  }, [q, rag, attention, due, over, group, sort, dir]);
+  }, [q, rag, attention, due, over, group, showDone, sort, dir]);
 
   // Counts over everything (not the filtered set), so the strip reads as "state of the portfolio".
+  const completedCount = workspaces.filter((w) => w.completed).length;
   const counts = useMemo(() => {
-    const c = { total: workspaces.length, RED: 0, AMBER: 0, GREEN: 0, due: 0, over: 0, attention: 0 };
-    for (const w of workspaces) {
+    const live = workspaces.filter((w) => !w.completed);
+    const c = { total: live.length, RED: 0, AMBER: 0, GREEN: 0, due: 0, over: 0, attention: 0 };
+    for (const w of live) {
       c[w.rag]++;
       if (w.statusDue) c.due++;
       if (w.overdueTasks > 0) c.over++;
@@ -122,6 +126,7 @@ export function PortfolioClient({ workspaces, isAdmin }: { workspaces: Workspace
   const rows = useMemo(() => {
     const needle = q.trim().toLowerCase();
     const out = workspaces.filter((w) => {
+      if (w.completed && !showDone) return false;
       if (rag.size > 0 && !rag.has(w.rag)) return false;
       if (attention && !needsAttention(w)) return false;
       if (due && !w.statusDue) return false;
@@ -134,7 +139,7 @@ export function PortfolioClient({ workspaces, isAdmin }: { workspaces: Workspace
       return dir === "asc" ? c : -c;
     });
     return out;
-  }, [workspaces, q, rag, attention, due, over, sort, dir]);
+  }, [workspaces, q, rag, attention, due, over, showDone, sort, dir]);
 
   // Optional grouping by the client company; groups themselves order worst-health first.
   const groups = useMemo(() => {
@@ -198,6 +203,12 @@ export function PortfolioClient({ workspaces, isAdmin }: { workspaces: Workspace
         <span aria-hidden className="mx-1 h-4 w-px bg-border" />
         <Chip active={due} onClick={() => setDue((v) => !v)}>Status due <span className="font-mono">{counts.due}</span></Chip>
         <Chip active={over} onClick={() => setOver((v) => !v)}>Tasks overdue <span className="font-mono">{counts.over}</span></Chip>
+        {completedCount > 0 && (
+          <>
+            <span aria-hidden className="mx-1 h-4 w-px bg-border" />
+            <Chip active={showDone} onClick={() => setShowDone((v) => !v)}>Completed <span className="font-mono">{completedCount}</span></Chip>
+          </>
+        )}
 
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <Button variant={group ? "secondary" : "outline"} size="sm" aria-pressed={group} onClick={() => setGroup((v) => !v)}>
@@ -324,10 +335,17 @@ function WorkspaceTableRow({ w, showCustomer, onOpen }: { w: WorkspaceRow; showC
   return (
     <TableRow onClick={onOpen} className="cursor-pointer">
       <TableCell>
-        <span className={cn("inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium", RAG_PILL[w.rag])}>
-          <span className={cn("size-2 rounded-full", RAG_DOT[w.rag])} />
-          {w.ragLabel}
-        </span>
+        {w.completed ? (
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+            <span className="size-2 rounded-full bg-muted-foreground/50" />
+            {w.ragLabel}
+          </span>
+        ) : (
+          <span className={cn("inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium", RAG_PILL[w.rag])}>
+            <span className={cn("size-2 rounded-full", RAG_DOT[w.rag])} />
+            {w.ragLabel}
+          </span>
+        )}
       </TableCell>
       {/* w-full + max-w-0 lets this column take the remaining width and still truncate. */}
       <TableCell className="w-full max-w-0">

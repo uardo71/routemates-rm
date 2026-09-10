@@ -21,6 +21,7 @@ import { avatarSrc } from "@/lib/avatar";
 import { formatNumber } from "@/lib/format";
 import { AvatarUploader } from "./avatar-uploader";
 import { ProfileForm } from "./profile-form";
+import { SkillsClient } from "./skills-client";
 
 export default async function ProfilePage() {
   const session = await requireUser();
@@ -31,10 +32,14 @@ export default async function ProfilePage() {
   });
   if (!me) notFound();
 
-  const [balance, activeAssignments] = await Promise.all([
+  const [balance, activeAssignments, catalogue, mySkills, myCerts] = await Promise.all([
     computeVacationBalance(me.id),
     prisma.assignment.count({ where: { userId: me.id, status: "ACTIVE" } }),
+    prisma.skill.findMany({ where: { companyId: me.companyId }, orderBy: [{ category: "asc" }, { name: "asc" }], select: { id: true, name: true, category: true } }),
+    prisma.userSkill.findMany({ where: { userId: me.id }, select: { skillId: true, level: true, lastUsedYear: true } }),
+    prisma.certification.findMany({ where: { userId: me.id }, orderBy: [{ expiryDate: "asc" }, { name: "asc" }], select: { id: true, name: true, issuer: true, issuedDate: true, expiryDate: true, document: { select: { fileName: true, originalName: true } } } }),
   ]);
+  const isoDay = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : null);
 
   const src = avatarSrc(me.avatarUrl);
 
@@ -135,6 +140,13 @@ export default async function ProfilePage() {
           </Card>
         </div>
       </div>
+
+      <SkillsClient
+        catalogue={catalogue}
+        mine={mySkills}
+        certifications={myCerts.map((c) => ({ id: c.id, name: c.name, issuer: c.issuer, issuedDate: isoDay(c.issuedDate), expiryDate: isoDay(c.expiryDate), file: c.document }))}
+        today={format(new Date(), "yyyy-MM-dd")}
+      />
     </div>
   );
 }

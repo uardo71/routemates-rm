@@ -17,6 +17,7 @@ import { DeleteButton } from "@/components/delete-button";
 import { InitialsAvatar } from "@/components/initials-avatar";
 import { RoleBadge } from "@/components/role-badge";
 import { StatCard } from "@/components/stat-card";
+import { SkillsSummary } from "@/components/skills-summary";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/session";
 import { computeHourlyCostRateEUR } from "@/lib/cost-rate";
@@ -38,14 +39,17 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
   // Customer portal users are managed from their client page, not the staff directory.
   if (target.role === "CUSTOMER") notFound();
 
-  const [timeEntries, assignments, approvals, managedProjects, salaries, computedRate] = await Promise.all([
+  const [timeEntries, assignments, approvals, managedProjects, salaries, computedRate, userSkills, certifications] = await Promise.all([
     prisma.timeEntry.count({ where: { userId: id } }),
     prisma.assignment.count({ where: { userId: id } }),
     prisma.timeCard.count({ where: { approverId: id } }),
     prisma.project.count({ where: { managerId: id } }),
     prisma.salary.findMany({ where: { userId: id }, orderBy: { effectiveFrom: "desc" } }),
     computeHourlyCostRateEUR(id),
+    prisma.userSkill.findMany({ where: { userId: id }, select: { level: true, lastUsedYear: true, skill: { select: { name: true, category: true } } } }),
+    prisma.certification.findMany({ where: { userId: id }, orderBy: [{ expiryDate: "asc" }], select: { id: true, name: true, issuer: true, issuedDate: true, expiryDate: true, document: { select: { fileName: true, originalName: true } } } }),
   ]);
+  const isoDay = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : null);
 
   const canDelete =
     target.id !== currentUser.id && timeEntries + assignments + approvals + managedProjects === 0;
@@ -138,6 +142,14 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
           />
         </CardContent>
       </Card>
+
+      {/* Skills & certifications — the person edits these on /profile; admins see them read-only. */}
+      <SkillsSummary
+        today={format(new Date(), "yyyy-MM-dd")}
+        skills={userSkills.map((s) => ({ name: s.skill.name, category: s.skill.category, level: s.level, lastUsedYear: s.lastUsedYear }))}
+        certifications={certifications.map((c) => ({ id: c.id, name: c.name, issuer: c.issuer, issuedDate: isoDay(c.issuedDate), expiryDate: isoDay(c.expiryDate), file: c.document }))}
+        emptyHint={`${target.name} hasn't rated any skills yet — they do that on their own profile.`}
+      />
 
       {target.employment && (
         <Card>

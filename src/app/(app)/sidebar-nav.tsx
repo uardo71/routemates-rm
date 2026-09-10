@@ -33,6 +33,9 @@ import {
   SettingsIcon,
   HistoryIcon,
   LayoutListIcon,
+  UserSearchIcon,
+  LayoutGridIcon,
+  SparklesIcon,
 } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
@@ -67,6 +70,9 @@ const ICONS = {
   budgets: PiggyBankIcon,
   settings: SettingsIcon,
   audit: HistoryIcon,
+  people: UserSearchIcon,
+  matrix: LayoutGridIcon,
+  skills: SparklesIcon,
 } as const;
 
 export type NavItem = { href: string; label: string; icon: keyof typeof ICONS; badge?: string };

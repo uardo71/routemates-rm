@@ -41,6 +41,8 @@ export type WorkspaceRow = {
   account: string | null; // set when this row is a stream under a multi-engagement project
   customerName: string;
   isEngagement: boolean;
+  /** Project closed/cancelled, or the end customer marked completed — no nudges, sorted out of the way. */
+  completed: boolean;
   rag: RagStatus;
   ragLabel: string;
   lastStatusDays: number | null; // days since last status report (null = never)

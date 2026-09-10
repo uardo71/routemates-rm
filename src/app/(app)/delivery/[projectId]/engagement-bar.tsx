@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
   PlusIcon, PencilIcon, Trash2Icon, LayersIcon, ChevronDownIcon, CheckIcon,
-  ArrowUpIcon, ArrowDownIcon, Settings2Icon, XIcon, UsersIcon,
+  ArrowUpIcon, ArrowDownIcon, Settings2Icon, XIcon, UsersIcon, CheckCircle2Icon, RotateCcwIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,13 +17,13 @@ import {
 import { InitialsAvatar } from "@/components/initials-avatar";
 import { cn } from "@/lib/utils";
 import {
-  createEngagementAction, updateEngagementAction, deleteEngagementAction, reorderEngagementAction, setEngagementMembersAction,
+  createEngagementAction, updateEngagementAction, deleteEngagementAction, reorderEngagementAction, setEngagementMembersAction, setEngagementStatusAction,
 } from "../actions";
 
 export type Person = { id: string; name: string };
-export type Engagement = { id: string; name: string; members: Person[] };
+export type Engagement = { id: string; name: string; members: Person[]; status: "ACTIVE" | "COMPLETED" };
 
-export function EngagementBar({ projectId, engagements, staff, selectedId }: { projectId: string; engagements: Engagement[]; staff: Person[]; selectedId: string | null }) {
+export function EngagementBar({ projectId, engagements, staff, selectedId, keepParams }: { projectId: string; engagements: Engagement[]; staff: Person[]; selectedId: string | null; keepParams?: Record<string, string> }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [addOpen, setAddOpen] = useState(false);
@@ -38,7 +38,10 @@ export function EngagementBar({ projectId, engagements, staff, selectedId }: { p
   const selected = engagements.find((e) => e.id === selectedId) ?? null;
 
   function go(id: string | null) {
-    router.push(id ? `/delivery/${projectId}?eng=${id}` : `/delivery/${projectId}`);
+    // Query params such as ?from=portfolio survive switching end customer, so the back link holds.
+    const p = new URLSearchParams(keepParams ?? {});
+    if (id) p.set("eng", id);
+    router.push(`/delivery/${projectId}${p.size ? `?${p.toString()}` : ""}`);
   }
 
   function add() {
@@ -92,6 +95,14 @@ export function EngagementBar({ projectId, engagements, staff, selectedId }: { p
     });
   }
   const toggle = (list: string[], id: string) => (list.includes(id) ? list.filter((x) => x !== id) : [...list, id]);
+  function setStatus(e: Engagement, status: "ACTIVE" | "COMPLETED") {
+    if (status === "COMPLETED" && !confirm(`Mark "${e.name}" as completed? It stops asking for status updates and drops out of the day path; the project itself stays as it is.`)) return;
+    start(async () => {
+      const r = await setEngagementStatusAction({ id: e.id, status });
+      if (r.error) toast.error(r.error);
+      else { toast.success(status === "COMPLETED" ? "Marked completed." : "Reopened."); router.refresh(); }
+    });
+  }
 
   return (
     <div className="flex items-center gap-2 flex-wrap">
@@ -112,7 +123,7 @@ export function EngagementBar({ projectId, engagements, staff, selectedId }: { p
           {engagements.length > 0 && <DropdownMenuSeparator />}
           {engagements.map((e) => (
             <DropdownMenuItem key={e.id} onClick={() => go(e.id)} className="justify-between gap-3">
-              <span className="truncate">{e.name}</span>
+              <span className={cn("truncate", e.status === "COMPLETED" && "text-muted-foreground")}>{e.name}{e.status === "COMPLETED" && <span className="ml-1.5 text-[10px] uppercase tracking-wide">done</span>}</span>
               <span className="flex items-center gap-1.5">
                 {e.members.length > 0 && <span className="text-[11px] text-muted-foreground">{e.members.length}<UsersIcon className="ml-0.5 inline size-3" /></span>}
                 {selectedId === e.id && <CheckIcon className="size-4 shrink-0 text-primary" />}
@@ -145,6 +156,18 @@ export function EngagementBar({ projectId, engagements, staff, selectedId }: { p
             </>
           )}
         </button>
+      )}
+
+      {selected && (
+        selected.status === "COMPLETED" ? (
+          <Button size="sm" variant="ghost" className="gap-1.5 text-muted-foreground" onClick={() => setStatus(selected, "ACTIVE")} disabled={pending} title="Reopen this end customer">
+            <RotateCcwIcon className="size-3.5" /> Reopen
+          </Button>
+        ) : (
+          <Button size="sm" variant="ghost" className="gap-1.5 text-muted-foreground" onClick={() => setStatus(selected, "COMPLETED")} disabled={pending} title="Mark this end customer completed — the project stays open">
+            <CheckCircle2Icon className="size-3.5" /> Mark completed
+          </Button>
+        )
       )}
 
       <Button size="sm" variant="ghost" className="text-muted-foreground gap-1.5" onClick={() => setManageOpen(true)}>
@@ -206,9 +229,10 @@ export function EngagementBar({ projectId, engagements, staff, selectedId }: { p
                   ) : (
                     <>
                       <div className="flex min-w-0 flex-1 flex-col">
-                        <span className="truncate text-sm">{e.name}</span>
+                        <span className="truncate text-sm">{e.name}{e.status === "COMPLETED" && <span className="ml-2 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">Completed</span>}</span>
                         <span className="truncate text-[11px] text-muted-foreground">{e.members.length === 0 ? "Nobody assigned" : e.members.map((m) => m.name).join(", ")}</span>
                       </div>
+                      <Button size="sm" variant="ghost" className="text-muted-foreground" onClick={() => setStatus(e, e.status === "COMPLETED" ? "ACTIVE" : "COMPLETED")} disabled={pending} title={e.status === "COMPLETED" ? "Reopen" : "Mark completed"}>{e.status === "COMPLETED" ? <RotateCcwIcon className="size-3.5" /> : <CheckCircle2Icon className="size-3.5" />}</Button>
                       <Button size="sm" variant="ghost" className="gap-1 text-muted-foreground" onClick={() => openPeople(e)} title="Assign people"><UsersIcon className="size-3.5" />{e.members.length > 0 && <span className="text-xs">{e.members.length}</span>}</Button>
                       <Button size="sm" variant="ghost" className="text-muted-foreground" onClick={() => { setEditingId(e.id); setEditVal(e.name); }}><PencilIcon className="size-3.5" /></Button>
                       <Button size="sm" variant="ghost" className="text-muted-foreground hover:text-destructive" onClick={() => remove(e)} disabled={pending}><Trash2Icon className="size-3.5" /></Button>

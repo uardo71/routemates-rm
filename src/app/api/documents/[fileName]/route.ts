@@ -10,7 +10,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ fileNam
   const { fileName } = await params;
   const user = await requireUser();
 
-  const doc = await prisma.document.findFirst({ where: { fileName } });
+  const doc = await prisma.document.findFirst({ where: { fileName }, include: { certification: { select: { userId: true } } } });
   // 404 (not 403) on cross-tenant so we don't leak that a file exists.
   if (!doc || doc.companyId !== user.companyId) {
     return NextResponse.json({ error: "Not found." }, { status: 404 });
@@ -18,7 +18,10 @@ export async function GET(_req: Request, { params }: { params: Promise<{ fileNam
 
   // Authorize by parent entity: invoice docs need invoices:manage (Admin/Finance); opportunity
   // docs need opportunities:view; project docs (e.g. the signed UAT acceptance) need projects:view.
-  const allowed = doc.invoiceId
+  // A certificate is the person's own file: the owner, whoever manages users, and staffing search.
+  const allowed = doc.certification
+    ? doc.certification.userId === user.id || can(user, "users:manage") || can(user, "people:search")
+    : doc.invoiceId
     ? can(user, "invoices:manage")
     : doc.projectId
       ? can(user, "projects:view")

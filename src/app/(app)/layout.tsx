@@ -70,6 +70,12 @@ export default async function AppLayout({ children }: { children: React.ReactNod
               },
             ]
           : []),
+        ...(can(user, "people:search")
+          ? [
+              { href: "/people", label: "Find people", icon: "people" as const },
+              { href: "/people/matrix", label: "Skills matrix", icon: "matrix" as const },
+            ]
+          : []),
         { href: "/vacations", label: "Vacations", icon: "vacations" as const },
         { href: "/expenses", label: "Expenses", icon: "expenses" as const },
       ],
@@ -122,6 +128,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
                 : []),
               ...(can(user, "users:manage")
                 ? [{ href: "/admin/settings", label: "Settings", icon: "settings" as const }]
+                : []),
+              ...(can(user, "skills:manage")
+                ? [{ href: "/admin/skills", label: "Skills catalogue", icon: "skills" as const }]
                 : []),
               ...(can(user, "audit:view")
                 ? [{ href: "/admin/audit", label: "Audit log", icon: "audit" as const }]
