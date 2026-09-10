@@ -213,7 +213,13 @@ export function computeProjectRevenue(input: ProjectRevenueInput): ProjectRevenu
     // − discount). Distribute the contract value across milestones by their list-value share, so the
     // discount is respected and a fully-delivered project earns exactly the contract value, not the
     // pre-discount list total. Fall back to list values when no contract value is set.
-    const totalList = input.milestones.reduce((s, m) => s + effective(m), 0);
+    //
+    // The denominator is the LIST total, before adjustments: the contract value was negotiated
+    // against list, and recording an adjustment (money absorbed onto another PO) does not change
+    // it. Dividing by the adjusted total instead made the absorbed money reappear as a >1 "scale"
+    // that inflated every other milestone above list (Pirelli: €185k contract, €7.7k absorbed ⇒
+    // every milestone shown at ×1.043).
+    const totalList = input.milestones.reduce((s, m) => s + m.salesPrice, 0);
     const scale = contractValueScale(input.contractValue, totalList);
     earnedRevenue = round2(
       input.milestones.reduce((s, m) => {

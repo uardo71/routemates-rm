@@ -1588,3 +1588,23 @@ No migration. 215 tests green. Build green.
   The repository secret `NUDGE_SECRET` must equal the app setting `TIMESHEET_NUDGE_SECRET`; a 401 in
   the workflow log is the signal it is not set.
 
+
+---
+
+## Session update — 2026-09-11 (fix: absorbed milestone value inflated the other milestones)
+
+Owner's report: on PR-0000006 (Pirelli, fixed price) every milestone showed a post-discount rate
+and value HIGHER than list (€62.50/h struck through, €65.21/h; €11,500 → €11,999.44). The contract
+value is €185,000 = Σ list, and one milestone had €7,700 absorbed onto another PO. The deal scale
+was `contractValue / Σ(list + adjustments)` = 185,000 / 177,300 = 1.043 — the absorbed money
+resurfaced as a premium on everything else, in the project page, the Revenue report and the
+Command Center's unbilled view alike.
+
+- **Fix**: the scale denominator is the LIST total, before adjustments, everywhere
+  (`revenue.ts computeProjectRevenue`, `projects/[id]/page.tsx dealScale`, `command-center.ts`,
+  the last now via the shared `contractValueScale`). Model: `contracted = (list + adjustment) ×
+  contractValue / Σ list`. Recording an adjustment never changes `contractValue`, so the contract
+  is measured against list; an absorbed amount simply leaves the earnable total. Pirelli now earns
+  €177,300 when fully delivered, and no milestone is shown above list.
+- Tests: the earlier "negative adjustment" test encoded the bug (it dropped the contract value by
+  the adjustment); replaced with the Pirelli case plus a combined discount + adjustment case.

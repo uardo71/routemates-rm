@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { visibleProjectIds, type SessionUser } from "@/lib/permissions";
 import { computeCompanyRevenue } from "@/lib/revenue-data";
 import { invoiceTotals, outstanding } from "@/lib/invoice";
+import { contractValueScale } from "@/lib/revenue";
 import { computeQuoteTotals, TERMINAL_STAGES, STAGE_LABELS } from "@/lib/opportunity";
 
 export type CmdRag = RagStatus | "NONE";
@@ -356,8 +357,10 @@ export async function assembleCommandCenter(user: SessionUser): Promise<CommandC
       const projMs = msByProj.get(r.projectId) ?? [];
       // Same discount-aware scaling as revenue.ts: distribute the contract value across milestones by
       // their list-value share, so a project-level discount is reflected here too.
-      const totalList = projMs.reduce((s, m) => s + Number(m.salesPrice) + (adjM.get(m.id) ?? 0), 0);
-      const scale = isFP && totalList > 0 && r.contractValue > 0 ? r.contractValue / totalList : 1;
+      // List total BEFORE adjustments (same denominator as revenue.ts) — absorbed money must not
+      // resurface as a >1 scale on the remaining milestones.
+      const totalList = projMs.reduce((s, m) => s + Number(m.salesPrice), 0);
+      const scale = contractValueScale(isFP ? r.contractValue : 0, totalList);
       const milestones: UnbilledMilestone[] = [];
       for (const m of projMs) {
         const rate = Number(m.salesPrice);

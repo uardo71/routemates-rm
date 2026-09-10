@@ -240,7 +240,9 @@ export default async function ProjectDetailPage({
   const dealScale = (() => {
     if (project.billingType !== "FIXED_PRICE") return 1;
     const cv = project.contractValue != null ? Number(project.contractValue) : 0;
-    const totalList = project.milestones.reduce((s, m) => s + baseValueOf(m) + (adjByMs.get(m.id) ?? 0), 0);
+    // List total BEFORE adjustments — the contract value was negotiated against list, and absorbing
+    // a milestone's value onto another PO doesn't change it (same denominator as revenue.ts).
+    const totalList = project.milestones.reduce((s, m) => s + baseValueOf(m), 0);
     return contractValueScale(cv, totalList);
   })();
   const isDiscounted = Math.abs(dealScale - 1) > 0.0001;

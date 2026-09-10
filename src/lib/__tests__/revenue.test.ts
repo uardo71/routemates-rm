@@ -69,9 +69,34 @@ describe("computeProjectRevenue — FIXED_PRICE", () => {
 
   it("a negative adjustment reduces the effective value", () => {
     const r = computeProjectRevenue(
+      project({ billingType: "FIXED_PRICE", contractValue: 10000, budgetHours: 100, milestones: [ms({ salesPrice: 10000, adjustment: -2000, budgetHours: 100, approvedHours: 100, status: "COMPLETE" })] }),
+    );
+    expect(r.earnedRevenue).toBe(8000); // effective = 10000 + (−2000); contract = list ⇒ scale 1
+  });
+
+  it("an absorbed milestone never inflates the others (scale denominator is the LIST total)", () => {
+    // Pirelli case: contract = list (no discount), one milestone fully absorbed onto another PO.
+    // The remaining milestones must stay AT list, and the project earns list − absorbed.
+    const r = computeProjectRevenue(
+      project({
+        billingType: "FIXED_PRICE", contractValue: 185000, budgetHours: 1000,
+        milestones: [
+          ms({ salesPrice: 7700, adjustment: -7700, budgetHours: 100, approvedHours: 0, status: "PLANNED" }),
+          ms({ salesPrice: 11500, budgetHours: 184, approvedHours: 184, status: "COMPLETE" }),
+          ms({ salesPrice: 165800, budgetHours: 716, approvedHours: 0, status: "PLANNED" }),
+        ],
+      }),
+    );
+    expect(r.recognizedRevenue).toBe(11500); // exactly list, not 11500 × 185000/177300
+    expect(r.earnedRevenue).toBe(11500);
+  });
+
+  it("a discount and an adjustment combine: (list + adjustment) × contract/list", () => {
+    // 20% discount on a 10000 list; 2000 of list value absorbed ⇒ 8000 × 0.8.
+    const r = computeProjectRevenue(
       project({ billingType: "FIXED_PRICE", contractValue: 8000, budgetHours: 100, milestones: [ms({ salesPrice: 10000, adjustment: -2000, budgetHours: 100, approvedHours: 100, status: "COMPLETE" })] }),
     );
-    expect(r.earnedRevenue).toBe(8000); // effective = 10000 + (−2000); contractValue 8000 ⇒ scale 1
+    expect(r.earnedRevenue).toBe(6400);
   });
 
   it("over-delivery is capped at 100%", () => {
