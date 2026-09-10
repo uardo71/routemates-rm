@@ -62,6 +62,14 @@ describe("diffFields", () => {
     });
     expect(diffFields({ name: "M1", endDate: null }, null)).toEqual({ name: { from: "M1", to: null } });
   });
+  it("hides foreign keys on create/delete but keeps them on update", () => {
+    expect(diffFields(null, { invoiceId: "inv1", description: "Line", amount: 5 })).toEqual({
+      description: { from: null, to: "Line" },
+      amount: { from: null, to: 5 },
+    });
+    expect(diffFields({ invoiceId: "inv1", amount: 5 }, null)).toEqual({ amount: { from: 5, to: null } });
+    expect(diffFields({ managerId: "a" }, { managerId: "b" })).toEqual({ managerId: { from: "a", to: "b" } });
+  });
   it("returns an empty diff when nothing changed", () => {
     expect(diffFields({ a: 1, b: "x" }, { a: 1, b: "x" })).toEqual({});
   });

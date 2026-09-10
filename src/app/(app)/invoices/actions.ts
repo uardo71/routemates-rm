@@ -18,9 +18,12 @@ async function nextInvoiceNumber(companyId: string, type: InvoiceType): Promise<
   return `${prefix}-${String(count + 1).padStart(4, "0")}`;
 }
 
+// Date-only inputs ("2026-09-07") are stored at UTC midnight, the same convention as the service
+// period and TimeEntry.date. parseISO alone would use the server's local midnight, which on a
+// UTC+2 machine reads back as the previous day and silently shifts the date on every save.
 function parseDate(value: string | null | undefined): Date | null | "invalid" {
   if (!value) return null;
-  const d = parseISO(value);
+  const d = /^\d{4}-\d{2}-\d{2}$/.test(value) ? new Date(`${value}T00:00:00.000Z`) : parseISO(value);
   return Number.isNaN(d.getTime()) ? "invalid" : d;
 }
 
@@ -680,7 +683,9 @@ export async function updateInvoiceAction(input: UpdateInvoiceInput): Promise<{ 
           await recordAudit(tx, { entityType: "InvoiceLine", entityId: lineAfter.id, action: "create", actor: user, after: lineAfter, label: lineAfter.description, parent: { entityType: "Invoice", entityId: inv.id } });
         }
       }
-      const removedIds = inv.lines.filter((l) => !keptIds.has(l.id)).map((l) => l.id);
+      // The commission line is owned by setInvoiceCommissionAction (it is never part of the work-line
+      // payload), so it must survive a line replace — otherwise every edit deletes and recreates it.
+      const removedIds = inv.lines.filter((l) => !keptIds.has(l.id) && l.description !== COMMISSION_DESC).map((l) => l.id);
       if (removedIds.length > 0) {
         await tx.timeEntry.updateMany({ where: { invoiceLineId: { in: removedIds } }, data: { invoiceLineId: null } });
         await tx.invoiceLine.deleteMany({ where: { id: { in: removedIds } } });

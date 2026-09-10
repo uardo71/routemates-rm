@@ -197,7 +197,7 @@ export function CommandCenterClient({ data, periodLabel }: { data: CommandCenter
         <div className="flex flex-col gap-3">
           <SectionHeader
             title="Delivery health"
-            action={<Link href="/delivery?view=workspaces" className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-primary">Open cockpit <ArrowRightIcon className="size-3" /></Link>}
+            action={<Link href="/portfolio" className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-primary">Open cockpit <ArrowRightIcon className="size-3" /></Link>}
           />
           <Card className="flex-1">
             <CardContent className="flex flex-col justify-center gap-4 py-5">

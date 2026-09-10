@@ -32,6 +32,7 @@ import {
   TicketIcon,
   SettingsIcon,
   HistoryIcon,
+  LayoutListIcon,
 } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
@@ -54,6 +55,7 @@ const ICONS = {
   taxes: LandmarkIcon,
   vendors: HandCoinsIcon,
   delivery: CompassIcon,
+  portfolio: LayoutListIcon,
   cutover: RocketIcon,
   uat: ClipboardCheckIcon,
   guides: LifeBuoyIcon,

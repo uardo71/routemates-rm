@@ -1429,3 +1429,18 @@ tsc + lint + build + 170 tests green.
   the list then shows only that end customer's runbooks ("Showing BEKO only · Show all"), and when
   there is exactly one it redirects straight into the editor.
 
+### Follow-up — Portfolio moved out of the cockpit toggle (`/portfolio`)
+No migration. tsc + lint + build + 170 tests green. Owner's report: the "Overview" (customer cards)
+inside the delivery cockpit was hidden behind a view toggle and unusable at 100+ customers.
+- **`/portfolio`** is its own page and sidebar entry (Delivery group, under "Delivery cockpit"), with
+  a "Portfolio →" shortcut in the My Day header. `/delivery` is now purely My Day.
+- **Cards → a dense triage table** (`portfolio-client.tsx`), worst health first: summary strip where
+  every chip is also a filter (Red/Amber/Green, Status due, Tasks overdue) plus All / Needs
+  attention; sortable columns (Health, Workspace, Customer, Progress, Last status, Issues, Overdue);
+  "Group by client" with collapsible sections; search; sticky header; filters/sort mirrored to the
+  URL with `replaceState` so they survive opening a workspace and coming back.
+- **`src/lib/delivery-home.ts`** holds the shared data model (one Prisma pass → day items, stats,
+  upcoming, workspace rows) so `/delivery` and `/portfolio` can never disagree on RAG / "status
+  due". The cockpit's back link reads `?from=portfolio` (legacy `from=overview` still accepted).
+- Built in a separate chat/worktree, reviewed and merged here; the UI was not clicked through.
+

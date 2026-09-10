@@ -67,6 +67,9 @@ export function diffFields(
     const t = to ?? null;
     if (!before && t === null) continue; // create: don't list every unset column
     if (!after && f === null) continue; // delete: same
+    // On a create/delete the parent/foreign keys are just plumbing (an invoice line's invoiceId);
+    // on an update a changed key (managerId, approverId) is the point, so those stay.
+    if ((!before || !after) && /Id$/.test(key)) continue;
     if (before && after && same(f, t)) continue;
     out[key] = { from: f, to: t };
   }

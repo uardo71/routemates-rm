@@ -27,7 +27,9 @@ const COCKPIT_TABS = ["overview", "status", "plan", "minutes", "documents"];
 export default async function DeliveryProjectPage({ params, searchParams }: { params: Promise<{ projectId: string }>; searchParams: Promise<{ eng?: string; tab?: string; from?: string }> }) {
   const { projectId } = await params;
   const { eng, tab, from } = await searchParams;
-  const backHref = from === "overview" ? "/delivery?view=workspaces" : "/delivery";
+  // "overview" is the legacy value from when the portfolio was a tab inside the cockpit.
+  const fromPortfolio = from === "portfolio" || from === "overview";
+  const backHref = fromPortfolio ? "/portfolio" : "/delivery";
   const activeTab = COCKPIT_TABS.includes(tab ?? "") ? (tab as string) : "overview";
   const user = await requirePermission("delivery:manage");
   if (!(await canManageProject(user, projectId))) notFound();
@@ -263,7 +265,7 @@ export default async function DeliveryProjectPage({ params, searchParams }: { pa
   return (
     <div className="flex flex-col gap-5">
       <div>
-        <Link href={backHref} className="text-sm text-muted-foreground hover:underline">← Delivery</Link>
+        <Link href={backHref} className="text-sm text-muted-foreground hover:underline">{fromPortfolio ? "← Portfolio" : "← Delivery"}</Link>
         <div className="mt-1 flex items-start justify-between flex-wrap gap-3">
           <div className="flex items-center gap-3">
             <InitialsAvatar name={engName ?? project.client.name} className="size-11 text-sm" />
