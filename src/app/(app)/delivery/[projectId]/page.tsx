@@ -38,9 +38,9 @@ export default async function DeliveryProjectPage({ params, searchParams }: { pa
       client: { select: { name: true } },
       manager: { select: { name: true } },
       engagements: { orderBy: { sortOrder: "asc" }, select: { id: true, name: true, members: { select: { user: { select: { id: true, name: true } } } } } },
-      statusReports: { orderBy: { reportDate: "desc" }, include: { author: { select: { name: true } }, actions: { orderBy: { sortOrder: "asc" } } } },
+      statusReports: { orderBy: { reportDate: "desc" }, include: { author: { select: { name: true } }, actions: { orderBy: { sortOrder: "asc" } }, documents: { select: { id: true, fileName: true, originalName: true } } } },
       raidItems: { orderBy: [{ status: "asc" }, { createdAt: "desc" }], include: { createdBy: { select: { name: true } } } },
-      meetings: { orderBy: { date: "desc" }, include: { createdBy: { select: { name: true } }, actions: { orderBy: { sortOrder: "asc" } }, participants: { orderBy: { sortOrder: "asc" } } } },
+      meetings: { orderBy: { date: "desc" }, include: { createdBy: { select: { name: true } }, actions: { orderBy: { sortOrder: "asc" } }, participants: { orderBy: { sortOrder: "asc" } }, documents: { select: { id: true, fileName: true, originalName: true } } } },
       documents: { orderBy: { uploadedAt: "desc" }, include: { uploadedBy: { select: { name: true } } } },
       planTasks: { orderBy: { sortOrder: "asc" } },
       cutoverPlans: { select: { id: true, engagementId: true, tasks: { select: { id: true, parentId: true, status: true } } } },
@@ -64,6 +64,7 @@ export default async function DeliveryProjectPage({ params, searchParams }: { pa
     summary: r.summary, correctiveActions: r.correctiveActions, milestoneNotes: r.milestoneNotes,
     actions: r.actions.map((a) => ({ description: a.description, owner: a.owner, dueDate: iso(a.dueDate), critical: a.critical })),
     sentAt: iso(r.sentAt), authorName: r.author.name,
+    documents: r.documents.map((d) => ({ id: d.id, fileName: d.fileName, originalName: d.originalName })),
   }));
 
   const raid: RaidRow[] = project.raidItems.filter(inEng).map((r) => ({
@@ -77,6 +78,7 @@ export default async function DeliveryProjectPage({ params, searchParams }: { pa
     agendaTopic: m.agendaTopic, agendaWho: m.agendaWho, agendaDuration: m.agendaDuration,
     participants: m.participants.map((p) => ({ name: p.name, company: p.company, role: p.role, group: p.group })),
     actions: m.actions.map((a) => ({ description: a.description, owner: a.owner, dueDate: iso(a.dueDate), done: a.done })),
+    documents: m.documents.map((d) => ({ id: d.id, fileName: d.fileName, originalName: d.originalName })),
   }));
   const docs: LibraryDoc[] = project.documents.filter(inEng).map((d) => ({
     id: d.id, kind: d.kind, fileName: d.fileName, originalName: d.originalName, uploadedAt: iso(d.uploadedAt)!, uploadedByName: d.uploadedBy.name,

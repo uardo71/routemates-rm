@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { PlusIcon, PencilIcon, Trash2Icon, DownloadIcon, SendIcon, XIcon, PresentationIcon, ChevronDownIcon, SearchIcon } from "lucide-react";
+import { PlusIcon, PencilIcon, Trash2Icon, DownloadIcon, SendIcon, XIcon, PresentationIcon, ChevronDownIcon, SearchIcon, PaperclipIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -32,6 +32,8 @@ export type ReportRow = {
   actions: ReportAction[];
   sentAt: string | null;
   authorName: string;
+  /** Files uploaded as "Status update" that created / are attached to this entry. */
+  documents: { id: string; fileName: string; originalName: string }[];
 };
 
 const RAGS: RagStatus[] = ["GREEN", "AMBER", "RED"];
@@ -145,6 +147,15 @@ export function StatusReportsClient({ projectId, engagementId, reports }: { proj
                 {r.reportDate}{r.cadence ? ` · ${CADENCE_LABEL[r.cadence] ?? r.cadence}` : ""}
                 {r.periodStart && r.periodEnd ? ` · period ${r.periodStart} – ${r.periodEnd}` : ""} · by {r.authorName}
               </div>
+              {r.documents.length > 0 && (
+                <div className="mt-1 flex flex-wrap items-center gap-2 text-xs" onClick={(e) => e.stopPropagation()}>
+                  {r.documents.map((d) => (
+                    <a key={d.id} href={`/api/documents/${d.fileName}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-primary hover:underline">
+                      <PaperclipIcon className="size-3" /> {d.originalName}
+                    </a>
+                  ))}
+                </div>
+              )}
             </div>
             <div className="flex items-center gap-1.5 shrink-0" onClick={(e) => e.stopPropagation()}>
               <a href={`/api/status-reports/${r.id}/pptx`}><Button size="sm" variant="outline"><PresentationIcon className="size-3.5" /> PPT</Button></a>

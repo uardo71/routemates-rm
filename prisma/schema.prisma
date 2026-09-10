@@ -1099,6 +1099,7 @@ enum DocumentKind {
   MEETING_MINUTES // meeting minutes document
   KICKOFF // kickoff deck
   SCOPE // scope / SoW document
+  CUTOVER_PLAN // cutover plan / go-live runbook shared with the customer
   OTHER
 }
 
@@ -1137,6 +1138,12 @@ model Document {
   taxPayment    TaxPayment?  @relation(fields: [taxPaymentId], references: [id], onDelete: Cascade)
   vendorPaymentId String?
   vendorPayment   VendorPayment? @relation(fields: [vendorPaymentId], references: [id], onDelete: Cascade)
+  // A minutes / status-update file uploaded to the delivery library also creates the matching
+  // MeetingMinutes / StatusReport entry; these link the file to it (SetNull: the file outlives it).
+  minutesId       String?
+  minutes         MeetingMinutes? @relation(fields: [minutesId], references: [id], onDelete: SetNull)
+  statusReportId  String?
+  statusReport    StatusReport?   @relation(fields: [statusReportId], references: [id], onDelete: SetNull)
   uploadedAt    DateTime     @default(now())
 
   @@index([invoiceId])
@@ -1144,6 +1151,8 @@ model Document {
   @@index([projectId])
   @@index([taxPaymentId])
   @@index([vendorPaymentId])
+  @@index([minutesId])
+  @@index([statusReportId])
   @@index([companyId])
 }
 
@@ -1311,7 +1320,8 @@ model StatusReport {
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
-  actions StatusReportAction[]
+  actions   StatusReportAction[]
+  documents Document[]
 
   @@index([projectId])
   @@index([companyId])
@@ -1389,6 +1399,7 @@ model MeetingMinutes {
 
   actions      MeetingActionItem[]
   participants MeetingParticipant[]
+  documents    Document[]
 
   @@index([projectId])
   @@index([companyId])

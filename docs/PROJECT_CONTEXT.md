@@ -1412,3 +1412,20 @@ same project (2 plans); deleting the engagement left the plan with `engagementId
   defaults inside the cutover grid.
 - The UI could not be clicked through (SSO-only login).
 
+### Follow-up the same day — documents that create entries, plan deletion, end-customer focus
+Migration `20260911110000_document_cutover_kind_and_links` (applied to erp_dev; prod via the pipeline).
+tsc + lint + build + 170 tests green.
+- **"Cutover plan" is a delivery-library document type** (`DocumentKind.CUTOVER_PLAN`).
+- **A "Meeting minutes" or "Status update" file creates its entry.** `uploadDeliveryDocumentAction`
+  now, in the same transaction, creates a `MeetingMinutes` (title from the file name, date parsed from
+  it — `src/lib/doc-naming.ts`, pure + tested — else today) or a `StatusReport` (seeded from the latest
+  report in the same scope so the overview keeps its health/progress until the PM edits it), and links
+  the file through `Document.minutesId` / `Document.statusReportId` (SetNull: the file outlives the
+  entry). The Minutes / Status updates cards show the attached file with a paperclip.
+- **Plan deletion**: a per-row trash icon in the plan grid, and a "Delete plan" button that removes
+  every task in the current scope (`clearPlanAction`) — status updates, minutes, documents untouched.
+  Status updates and minutes already had per-row delete.
+- **Cockpit buttons follow the viewed end customer**: "UAT scripts" / "Cutover plans" carry `?eng=`;
+  the list then shows only that end customer's runbooks ("Showing BEKO only · Show all"), and when
+  there is exactly one it redirects straight into the editor.
+

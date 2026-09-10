@@ -12,7 +12,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import type { PlanTaskStatus } from "@prisma/client";
-import { createPlanTaskAction, updatePlanTaskAction, deletePlanTaskAction, seedDefaultPlanAction, movePlanTaskAction } from "../actions";
+import { createPlanTaskAction, updatePlanTaskAction, deletePlanTaskAction, seedDefaultPlanAction, movePlanTaskAction, clearPlanAction } from "../actions";
 
 export type PlanRow = {
   id: string; phase: string | null; name: string; owner: string | null;
@@ -155,6 +155,11 @@ export function PlanClient({ projectId, engagementId, tasks }: { projectId: stri
               <Button size="sm" variant="outline"><FileDownIcon className="size-3.5" /> Export PDF</Button>
             </a>
             <Button size="sm" onClick={() => setDraft(emptyDraft(phases[0] === "General" ? "" : phases[0] ?? ""))}><PlusIcon className="size-3.5" /> Add task</Button>
+            <Button
+              size="sm" variant="outline" className="text-destructive hover:bg-destructive/10 hover:text-destructive" disabled={busy}
+              title="Delete every task of this plan"
+              onClick={() => { if (confirm(`Delete this whole plan (${list.length} task${list.length === 1 ? "" : "s"})? Status updates, minutes and documents are kept.`)) structural(() => clearPlanAction(projectId, engagementId), "Plan deleted."); }}
+            ><Trash2Icon className="size-3.5" /> Delete plan</Button>
           </div>
         </CardHeader>
         <CardContent className="p-0">
@@ -180,7 +185,8 @@ export function PlanClient({ projectId, engagementId, tasks }: { projectId: stri
               ) : (
                 <TaskLeftRow key={r.t.id} wbs={r.wbs} t={r.t} busy={busy} grid={grid} onPatch={patch}
                   onEdit={() => setDraft({ id: r.t.id, phase: r.t.phase ?? "", name: r.t.name, owner: r.t.owner ?? "", startDate: r.t.startDate ?? "", dueDate: r.t.dueDate ?? "", progress: String(r.t.progress), status: r.t.status, isMilestone: r.t.isMilestone })}
-                  onMove={(dir) => structural(() => movePlanTaskAction(r.t.id, dir))} />
+                  onMove={(dir) => structural(() => movePlanTaskAction(r.t.id, dir))}
+                  onDelete={() => { if (confirm(`Delete "${r.t.name}"?`)) structural(() => deletePlanTaskAction(r.t.id), "Deleted."); }} />
               ))}
             </div>
 
@@ -259,9 +265,9 @@ function ColHead({ label, align, onResize }: { label: string; align?: "right"; o
   );
 }
 
-function TaskLeftRow({ wbs, t, busy, grid, onPatch, onEdit, onMove }: {
+function TaskLeftRow({ wbs, t, busy, grid, onPatch, onEdit, onMove, onDelete }: {
   wbs: string; t: PlanRow; busy: boolean; grid: string;
-  onPatch: (t: PlanRow, p: Partial<PlanRow>) => void; onEdit: () => void; onMove: (dir: "up" | "down") => void;
+  onPatch: (t: PlanRow, p: Partial<PlanRow>) => void; onEdit: () => void; onMove: (dir: "up" | "down") => void; onDelete: () => void;
 }) {
   const eff = derive(t.progress, t.status);
   return (
@@ -282,6 +288,7 @@ function TaskLeftRow({ wbs, t, busy, grid, onPatch, onEdit, onMove }: {
         <button type="button" title="Up" onClick={() => onMove("up")} disabled={busy} className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"><ChevronUpIcon className="size-3.5" /></button>
         <button type="button" title="Down" onClick={() => onMove("down")} disabled={busy} className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"><ChevronDownIcon className="size-3.5" /></button>
         <button type="button" title="More…" onClick={onEdit} className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"><Settings2Icon className="size-3.5" /></button>
+        <button type="button" title="Delete" onClick={onDelete} disabled={busy} className="rounded p-0.5 text-muted-foreground hover:bg-destructive/10 hover:text-destructive disabled:opacity-40"><Trash2Icon className="size-3.5" /></button>
       </div>
     </div>
   );

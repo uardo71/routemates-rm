@@ -19,6 +19,7 @@ const KINDS: { value: string; label: string }[] = [
   { value: "PROJECT_PLAN", label: "Project plan" },
   { value: "STATUS_UPDATE", label: "Status update" },
   { value: "MEETING_MINUTES", label: "Meeting minutes" },
+  { value: "CUTOVER_PLAN", label: "Cutover plan" },
   { value: "KICKOFF", label: "Kickoff" },
   { value: "SCOPE", label: "Scope / SoW" },
   { value: "UAT_ACCEPTANCE", label: "Signed acceptance" },
@@ -76,7 +77,7 @@ export function DocumentsLibraryClient({ projectId, engagementId, docs }: { proj
             </div>
             <Button size="sm" onClick={upload} disabled={pending || !file}><UploadIcon className="size-3.5" /> Upload</Button>
           </div>
-          <p className="mt-2 text-[11px] text-muted-foreground">PDF, images, and Office files (Excel/Word/PowerPoint) up to 10MB. Files are stored securely and served only to authorized users.</p>
+          <p className="mt-2 text-[11px] text-muted-foreground">PDF, images, and Office files (Excel/Word/PowerPoint) up to 10MB. Files are stored securely and served only to authorized users. A <span className="font-medium text-foreground">Meeting minutes</span> or <span className="font-medium text-foreground">Status update</span> file also creates its entry in the Minutes / Status updates tab, so decks made in another template still count.</p>
         </CardContent>
       </Card>
 

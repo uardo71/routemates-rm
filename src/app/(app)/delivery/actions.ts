@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/session";
 import { canManageProject, STAFF_ONLY } from "@/lib/permissions";
 import { MAX_RECEIPT_SIZE_BYTES, saveReceiptFile, deleteReceiptFile } from "@/lib/receipt-storage";
+import { dateFromFileName, titleFromFileName } from "@/lib/doc-naming";
 
 // The delivery library accepts the everyday deliverable formats (PDF, images, Office, email), matched
 // by extension so a browser mis-reporting the MIME (common for .msg/.pptx) doesn't block a valid file.
@@ -400,7 +401,7 @@ export async function deleteMeetingAction(id: string): Promise<{ error?: string 
 
 // ---------- document library ----------
 
-const DELIVERY_DOC_KINDS = ["PROJECT_PLAN", "STATUS_UPDATE", "MEETING_MINUTES", "KICKOFF", "SCOPE", "UAT_ACCEPTANCE", "OTHER"] as const;
+const DELIVERY_DOC_KINDS = ["PROJECT_PLAN", "STATUS_UPDATE", "MEETING_MINUTES", "CUTOVER_PLAN", "KICKOFF", "SCOPE", "UAT_ACCEPTANCE", "OTHER"] as const;
 type DeliveryDocKind = (typeof DELIVERY_DOC_KINDS)[number];
 
 export async function uploadDeliveryDocumentAction(projectId: string, formData: FormData): Promise<{ error?: string }> {
@@ -415,9 +416,51 @@ export async function uploadDeliveryDocumentAction(projectId: string, formData: 
   if (!ALLOWED_DOC_EXT.has(ext)) return { error: "Unsupported file type — use a PDF, image, Office file, or email." };
   const engagementId = await resolveEngagement(projectId, (formData.get("engagementId") as string) || null);
   const saved = await saveReceiptFile(file, "documents");
-  await prisma.document.create({ data: { companyId: ctx.companyId!, kind: kind as DeliveryDocKind, projectId, engagementId, uploadedById: ctx.userId!, ...saved } });
+  const companyId = ctx.companyId!;
+  const userId = ctx.userId!;
+  const docDate = dateFromFileName(file.name) ?? new Date(new Date().toISOString().slice(0, 10));
+  const title = titleFromFileName(file.name);
+
+  // A minutes or status-update file made in another template still counts: create the matching
+  // entry so it shows in its tab (and drives the overview), linked to the file. Same transaction.
+  await prisma.$transaction(async (tx) => {
+    const doc = await tx.document.create({ data: { companyId, kind: kind as DeliveryDocKind, projectId, engagementId, uploadedById: userId, ...saved } });
+    if (kind === "MEETING_MINUTES") {
+      const m = await tx.meetingMinutes.create({
+        data: { companyId, projectId, engagementId, createdById: userId, date: docDate, title, notes: `Minutes attached as a document: ${file.name}` },
+      });
+      await tx.document.update({ where: { id: doc.id }, data: { minutesId: m.id } });
+    } else if (kind === "STATUS_UPDATE") {
+      // Start from the latest report in the same scope so the overview keeps its health/progress
+      // until the PM edits the new entry.
+      const prev = await tx.statusReport.findFirst({ where: { projectId, engagementId }, orderBy: { reportDate: "desc" } });
+      const r = await tx.statusReport.create({
+        data: {
+          companyId, projectId, engagementId, authorId: userId, reportDate: docDate,
+          cadence: prev?.cadence ?? "ADHOC",
+          overallRag: prev?.overallRag ?? "GREEN", scheduleRag: prev?.scheduleRag ?? "GREEN", budgetRag: prev?.budgetRag ?? "GREEN", scopeRag: prev?.scopeRag ?? "GREEN",
+          progressPercent: prev?.progressPercent ?? null,
+          summary: `Status update attached as a document: ${file.name}`,
+        },
+      });
+      await tx.document.update({ where: { id: doc.id }, data: { statusReportId: r.id } });
+    }
+  });
   revalidatePath(`/delivery/${projectId}`);
+  revalidatePath("/delivery");
   return {};
+}
+
+/** Removes every plan task in scope (an end customer, or the project overall) — the "delete the
+ *  plan" button. Tasks only; status reports, minutes and documents are untouched. */
+export async function clearPlanAction(projectId: string, engagementIdInput?: string | null): Promise<{ error?: string; deleted?: number }> {
+  const ctx = await assertManage(projectId);
+  if (ctx.error) return { error: ctx.error };
+  const engagementId = await resolveEngagement(projectId, engagementIdInput);
+  const res = await prisma.planTask.deleteMany({ where: { projectId, engagementId } });
+  revalidatePath(`/delivery/${projectId}`);
+  revalidatePath("/delivery");
+  return { deleted: res.count };
 }
 
 export async function deleteDeliveryDocumentAction(documentId: string): Promise<{ error?: string }> {

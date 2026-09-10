@@ -1,4 +1,4 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { format } from "date-fns";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/session";
@@ -49,6 +49,12 @@ export default async function CutoverPlansPage({ params, searchParams }: { param
     };
   });
 
+  // Arriving from a cockpit that was viewing one end customer: show that customer's plans only, and
+  // when there is exactly one, open it straight away.
+  const focus = engagements.find((e) => e.id === eng) ?? null;
+  const focused = focus ? items.filter((i) => i.engagementId === focus.id) : items;
+  if (focus && focused.length === 1) redirect(`/delivery/${projectId}/cutover/${focused[0].id}`);
+
   return (
     <RunbookListClient
       kind="cutover"
@@ -56,9 +62,10 @@ export default async function CutoverPlansPage({ params, searchParams }: { param
       projectName={project.name}
       projectNumber={project.number}
       clientName={project.client.name}
-      items={items}
+      items={focused}
       engagements={engagements}
-      initialEngagementId={engagements.some((e) => e.id === eng) ? (eng as string) : null}
+      initialEngagementId={focus?.id ?? null}
+      focus={focus ? { id: focus.id, name: focus.name } : null}
       canCreate
       backHref={canManage ? `/delivery/${projectId}${eng ? `?eng=${eng}` : ""}` : "/cutover"}
     />

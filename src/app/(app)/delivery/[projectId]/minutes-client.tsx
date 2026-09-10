@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { PlusIcon, PencilIcon, Trash2Icon, XIcon, FileDownIcon, ClockIcon, MapPinIcon, ChevronDownIcon, SearchIcon, UsersIcon } from "lucide-react";
+import { PlusIcon, PencilIcon, Trash2Icon, XIcon, FileDownIcon, ClockIcon, MapPinIcon, ChevronDownIcon, SearchIcon, UsersIcon, PaperclipIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -26,6 +26,8 @@ export type MinutesRow = {
   participants: MinutesParticipant[];
   createdByName: string;
   actions: MinutesAction[];
+  /** Files uploaded as "Meeting minutes" that created / are attached to this entry. */
+  documents: { id: string; fileName: string; originalName: string }[];
 };
 
 const todayIso = () => new Date().toISOString().slice(0, 10);
@@ -120,6 +122,11 @@ export function MinutesClient({ projectId, engagementId, items }: { projectId: s
                   {m.location && <span className="inline-flex items-center gap-1"><MapPinIcon className="size-3" />{m.location}</span>}
                   {m.participants.length > 0 && <span className="inline-flex items-center gap-1"><UsersIcon className="size-3" />{m.participants.length}</span>}
                   {m.actions.length > 0 && <span>{m.actions.filter((a) => !a.done).length} open · {m.actions.length} next step{m.actions.length === 1 ? "" : "s"}</span>}
+                  {m.documents.map((d) => (
+                    <a key={d.id} href={`/api/documents/${d.fileName}`} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="inline-flex items-center gap-1 text-primary hover:underline">
+                      <PaperclipIcon className="size-3" /> {d.originalName}
+                    </a>
+                  ))}
                 </div>
               </div>
             </div>

@@ -35,7 +35,7 @@ const KIND = {
 } as const;
 
 export function RunbookListClient({
-  kind, projectId, projectName, projectNumber, clientName, items, engagements, initialEngagementId, canCreate, backHref,
+  kind, projectId, projectName, projectNumber, clientName, items, engagements, initialEngagementId, focus, canCreate, backHref,
 }: {
   kind: RunbookKind;
   projectId: string;
@@ -46,6 +46,8 @@ export function RunbookListClient({
   engagements: RunbookEngagement[];
   /** Preselects the end customer in "New" when arriving from a scoped cockpit (?eng=). */
   initialEngagementId: string | null;
+  /** When set, the page shows only that end customer's runbooks (the cockpit was viewing it). */
+  focus: { id: string; name: string } | null;
   canCreate: boolean;
   backHref: string;
 }) {
@@ -103,10 +105,12 @@ export function RunbookListClient({
 
   // Group: project-level first, then each end customer in its order (empty groups still render so
   // it's obvious where a new runbook can go).
-  const groups: { id: string | null; name: string; members: string[]; items: RunbookItem[] }[] = [
-    { id: null, name: engagements.length ? "Project overall" : projectName, members: [], items: items.filter((i) => i.engagementId === null) },
-    ...engagements.map((e) => ({ id: e.id, name: e.name, members: e.members, items: items.filter((i) => i.engagementId === e.id) })),
-  ];
+  const groups: { id: string | null; name: string; members: string[]; items: RunbookItem[] }[] = focus
+    ? engagements.filter((e) => e.id === focus.id).map((e) => ({ id: e.id, name: e.name, members: e.members, items: items.filter((i) => i.engagementId === e.id) }))
+    : [
+        { id: null, name: engagements.length ? "Project overall" : projectName, members: [], items: items.filter((i) => i.engagementId === null) },
+        ...engagements.map((e) => ({ id: e.id, name: e.name, members: e.members, items: items.filter((i) => i.engagementId === e.id) })),
+      ];
 
   return (
     <div className="flex flex-col gap-5">
@@ -117,6 +121,12 @@ export function RunbookListClient({
             <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight"><Icon className="size-5 text-muted-foreground" /> {k.title}</h1>
             <p className="mt-0.5 text-sm text-muted-foreground">{projectName}{projectNumber ? ` · ${projectNumber}` : ""} · {clientName}</p>
             <p className="mt-1 text-xs text-muted-foreground">{k.blurb}</p>
+            {focus && (
+              <p className="mt-1 text-xs">
+                <span className="rounded-full bg-primary/10 px-2 py-0.5 font-medium text-primary">Showing {focus.name} only</span>
+                <Link href={`/delivery/${projectId}/${kind}`} className="ml-2 text-muted-foreground hover:underline">Show all end customers</Link>
+              </p>
+            )}
           </div>
           {canCreate && (
             <Button size="sm" className="gap-1.5" onClick={() => openNew()}><PlusIcon className="size-4" /> New {k.one}</Button>
@@ -124,7 +134,7 @@ export function RunbookListClient({
         </div>
       </div>
 
-      {items.length === 0 && engagements.length === 0 && (
+      {!focus && items.length === 0 && engagements.length === 0 && (
         <div className="rounded-lg border border-dashed p-10 text-center text-sm text-muted-foreground">
           No {k.title.toLowerCase()} yet.{canCreate ? ` Create the first ${k.one} — you can add more for other phases or end customers later.` : ""}
         </div>
