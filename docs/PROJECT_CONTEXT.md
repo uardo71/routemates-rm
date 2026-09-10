@@ -1501,3 +1501,22 @@ erp_dev, prod via the pipeline). tsc + lint + build + **183 tests** green. UI no
 - Fix: the "← Portfolio" back link survives tab switches and end-customer switches (`?from=portfolio`
   is kept by `tHref` and the engagement bar's `keepParams`).
 
+### A1 · Wave 1 defects (delivery cockpit) — five commits, 2026-09-11
+Two migrations (`status_report_drop_next_steps`, `project_track_overall_status`). 190 tests green.
+1. **Issues tab** (`raid`): `RaidClient` was never rendered and My Day's issue nudges deep-linked to a
+   missing tab. Label `Issues (n)` = non-closed items in scope; new entries default to ISSUE; search
+   box; "Open only" default filter (other RAID types remain in the type filter).
+2. **Status-report fields**: `accomplishments` and `decisionsNeeded` are in the editor, the card,
+   the Excel and the PPTX (status slide shrinks the status box / splits the bottom strip when they
+   exist). `nextSteps` dropped — structured actions cover it. `reportData()` no longer nulls them.
+3. **Three RAG dimensions**: schedule/budget/scope selects ("Same as overall" until changed —
+   stored equal to overall when following), three small pills on the card and the PPTX severity
+   card, and health everywhere = `worstRag(overall, schedule, budget, scope)` (pure, tested).
+4. **Silent exemptions**: `WorkspaceRow.tracking` = TRACKED / ADHOC / OFF. "Ad-hoc — not tracked"
+   and "Programme level — not tracked" tags on the cockpit hero and the Portfolio row.
+   `Project.trackOverallStatus` (toggle in Manage end customers) makes a programme's Overall scope
+   customer-facing for status chasing; Overall then always appears as a workspace row.
+5. **Plan/PPTX**: Gantt paginated at 30 rows per slide ("Project Plan (i/n)"); phase progress is
+   duration-weighted (`phaseProgress`, inclusive days, plain average when any task has no dates),
+   shared by the plan grid and the deck; `paginate` helper. Both pure + tested in `src/lib/delivery.ts`.
+
