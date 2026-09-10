@@ -3,7 +3,7 @@ import { createHash } from "crypto";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { can, STAFF_ONLY, type SessionUser } from "@/lib/permissions";
-import { invoiceTotals, outstanding } from "@/lib/invoice";
+import { invoiceTotals, outstanding, effectiveDueDate } from "@/lib/invoice";
 import { notify, delivered, noChannelAvailable } from "@/lib/notify";
 import { getAlertsConfig, getAlertsLastRun, setAlertsLastRun } from "@/lib/settings";
 import { toDateParam } from "@/lib/week";
@@ -45,7 +45,7 @@ async function loadAlertData(companyId: string, today: string): Promise<AlertDat
     }),
     prisma.invoice.findMany({
       where: { companyId, status: { in: ["ISSUED", "RECONCILED"] } },
-      select: { id: true, invoiceNumber: true, status: true, dueDate: true, vatRate: true, currency: true, client: { select: { name: true } }, lines: { select: { amount: true } }, payments: { select: { amount: true, bankFee: true } } },
+      select: { id: true, invoiceNumber: true, status: true, dueDate: true, issueDate: true, vatRate: true, currency: true, client: { select: { name: true, paymentTermsDays: true } }, lines: { select: { amount: true } }, payments: { select: { amount: true, bankFee: true } } },
     }),
     prisma.timeCard.findMany({
       where: { status: "SUBMITTED", user: { companyId } },
@@ -93,7 +93,9 @@ async function loadAlertData(companyId: string, today: string): Promise<AlertDat
       const t = invoiceTotals(i.lines.map((l) => ({ amount: Number(l.amount) })), i.vatRate == null ? null : Number(i.vatRate));
       return {
         id: i.id, invoiceNumber: i.invoiceNumber, clientName: i.client.name, status: i.status,
-        dueDate: iso(i.dueDate), currency: i.currency,
+        // Same rule as the AR aging page: the invoice's own due date, else issue date + the client's
+        // payment terms, else nothing — a missing due date is never guessed into being overdue.
+        dueDate: iso(effectiveDueDate(i.dueDate, i.issueDate, i.client.paymentTermsDays)), currency: i.currency,
         outstanding: outstanding(t.gross, i.payments.map((p) => ({ amount: Number(p.amount), bankFee: Number(p.bankFee) }))),
       };
     }),
