@@ -13,14 +13,22 @@ import { serializeTicketRow, TICKET_ROW_SELECT } from "../../serialize";
 import { TicketsClient, type ClientConfig } from "../../tickets-client";
 import { ClientTeamCard } from "../../client-team-card";
 import { ClientSwitcher } from "../../client-switcher";
+import type { TicketFocus } from "../../filters";
+
+const FOCUS = new Set(["open", "breached", "unassigned", "critical", "resolved7d"]);
+function parseFocus(v: string | undefined): TicketFocus | null {
+  return v && FOCUS.has(v) ? (v as TicketFocus) : null;
+}
+
 
 // One client's support workspace — the Azure DevOps "project" idea: its queue, its numbers and its
 // team on one screen, reachable from the overview or the switcher without re-filtering a
 // company-wide list. 404s (not 403s) for accounts the user isn't staffed on, so the existence of a
 // client relationship isn't leaked.
 
-export default async function ClientWorkspacePage({ params }: { params: Promise<{ clientId: string }> }) {
+export default async function ClientWorkspacePage({ params, searchParams }: { params: Promise<{ clientId: string }>; searchParams: Promise<{ focus?: string }> }) {
   const { clientId } = await params;
+  const focus = parseFocus((await searchParams).focus);
   const user = await requireUser();
 
   const client = await prisma.client.findFirst({
@@ -107,14 +115,16 @@ export default async function ClientWorkspacePage({ params }: { params: Promise<
       </div>
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <StatCard label="Open" value={open.length} icon={TicketIcon} sublabel={`${rows.length} total`} />
-        <StatCard label="SLA breached" value={breached} icon={AlertTriangleIcon} tone={breached > 0 ? "destructive" : "default"} sublabel="past respond / resolve target" />
-        <StatCard label="Unassigned" value={unassigned} icon={UserXIcon} tone={unassigned > 0 ? "warning" : "default"} sublabel="open, nobody on it" />
-        <StatCard label="Resolved" value={resolved7d} icon={CheckCircle2Icon} sublabel="last 7 days" />
+        <Link href={`/tickets/c/${client.id}?focus=open`} className="block rounded-lg ring-primary/40 hover:ring-2"><StatCard label="Open" value={open.length} icon={TicketIcon} sublabel={`${rows.length} total · click to list`} /></Link>
+        <Link href={`/tickets/c/${client.id}?focus=breached`} className="block rounded-lg ring-primary/40 hover:ring-2"><StatCard label="SLA breached" value={breached} icon={AlertTriangleIcon} tone={breached > 0 ? "destructive" : "default"} sublabel="past respond / resolve target" /></Link>
+        <Link href={`/tickets/c/${client.id}?focus=unassigned`} className="block rounded-lg ring-primary/40 hover:ring-2"><StatCard label="Unassigned" value={unassigned} icon={UserXIcon} tone={unassigned > 0 ? "warning" : "default"} sublabel="open, nobody on it" /></Link>
+        <Link href={`/tickets/c/${client.id}?focus=resolved7d`} className="block rounded-lg ring-primary/40 hover:ring-2"><StatCard label="Resolved" value={resolved7d} icon={CheckCircle2Icon} sublabel="last 7 days" /></Link>
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
         <TicketsClient
+          key={focus ?? "all"}
+          initialFocus={focus}
           embedded
           lockedClient={{ id: client.id, name: client.name }}
           rows={rows}

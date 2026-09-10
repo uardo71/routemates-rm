@@ -99,11 +99,12 @@ export default async function SupportOverviewPage() {
         </div>
       </div>
 
+      {/* Every number drills into the list of exactly the tickets it counted. */}
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <StatCard label="Open" value={total.open} icon={TicketIcon} sublabel={`across ${cards.length} client${cards.length === 1 ? "" : "s"}`} />
-        <StatCard label="SLA breached" value={total.breached} icon={AlertTriangleIcon} tone={total.breached > 0 ? "destructive" : "default"} sublabel="past respond / resolve target" />
-        <StatCard label="Unassigned" value={total.unassigned} icon={UserXIcon} tone={total.unassigned > 0 ? "warning" : "default"} sublabel="open, nobody on it" />
-        <StatCard label="Resolved" value={total.resolved7d} icon={CheckCircle2Icon} sublabel="last 7 days" />
+        <Link href="/tickets/all?focus=open" className="block rounded-lg ring-primary/40 hover:ring-2"><StatCard label="Open" value={total.open} icon={TicketIcon} sublabel={`across ${cards.length} client${cards.length === 1 ? "" : "s"} · click to list`} /></Link>
+        <Link href="/tickets/all?focus=breached" className="block rounded-lg ring-primary/40 hover:ring-2"><StatCard label="SLA breached" value={total.breached} icon={AlertTriangleIcon} tone={total.breached > 0 ? "destructive" : "default"} sublabel="past respond / resolve target" /></Link>
+        <Link href="/tickets/all?focus=unassigned" className="block rounded-lg ring-primary/40 hover:ring-2"><StatCard label="Unassigned" value={total.unassigned} icon={UserXIcon} tone={total.unassigned > 0 ? "warning" : "default"} sublabel="open, nobody on it" /></Link>
+        <Link href="/tickets/all?focus=resolved7d" className="block rounded-lg ring-primary/40 hover:ring-2"><StatCard label="Resolved" value={total.resolved7d} icon={CheckCircle2Icon} sublabel="last 7 days" /></Link>
       </div>
 
       {cards.length === 0 ? (
@@ -118,15 +119,14 @@ export default async function SupportOverviewPage() {
             const team = [...leads, ...others];
             const attention = c.s.breached > 0 || c.s.critical > 0;
             return (
-              <Link
+              <div
                 key={c.id}
-                href={`/tickets/c/${c.id}`}
                 className={cn(
-                  "group flex flex-col gap-4 rounded-lg border bg-card p-4 transition-colors hover:border-primary/50",
+                  "flex flex-col gap-4 rounded-lg border bg-card p-4 transition-colors hover:border-primary/50",
                   attention && "border-rose-500/40",
                 )}
               >
-                <div className="flex items-center gap-3">
+                <Link href={`/tickets/c/${c.id}`} className="group flex items-center gap-3">
                   <InitialsAvatar name={c.name} size="lg" />
                   <div className="min-w-0 flex-1">
                     <div className="truncate font-semibold group-hover:text-primary">{c.name}</div>
@@ -136,17 +136,18 @@ export default async function SupportOverviewPage() {
                     <div className="font-mono text-2xl font-semibold tabular-nums">{c.s.open}</div>
                     <div className="text-[10px] uppercase tracking-wide text-muted-foreground">open</div>
                   </div>
-                </div>
+                </Link>
 
+                {/* each number opens the workspace already narrowed to exactly those tickets */}
                 <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
-                  <span className={cn("inline-flex items-center gap-1", c.s.breached > 0 ? "font-medium text-rose-600 dark:text-rose-400" : "text-muted-foreground/60")}>
+                  <Link href={`/tickets/c/${c.id}?focus=breached`} className={cn("inline-flex items-center gap-1 hover:underline", c.s.breached > 0 ? "font-medium text-rose-600 dark:text-rose-400" : "text-muted-foreground/60")}>
                     <AlertTriangleIcon className="size-3" /> {c.s.breached} breached
-                  </span>
-                  <span className={cn("inline-flex items-center gap-1", c.s.unassigned > 0 ? "font-medium text-amber-600" : "text-muted-foreground/60")}>
+                  </Link>
+                  <Link href={`/tickets/c/${c.id}?focus=unassigned`} className={cn("inline-flex items-center gap-1 hover:underline", c.s.unassigned > 0 ? "font-medium text-amber-600" : "text-muted-foreground/60")}>
                     <UserXIcon className="size-3" /> {c.s.unassigned} unassigned
-                  </span>
-                  {c.s.critical > 0 && <span className="font-medium text-rose-600 dark:text-rose-400">{c.s.critical} critical</span>}
-                  <span className="text-muted-foreground/60">{c.s.resolved7d} resolved this week</span>
+                  </Link>
+                  {c.s.critical > 0 && <Link href={`/tickets/c/${c.id}?focus=critical`} className="font-medium text-rose-600 hover:underline dark:text-rose-400">{c.s.critical} critical</Link>}
+                  <Link href={`/tickets/c/${c.id}?focus=resolved7d`} className="text-muted-foreground/60 hover:underline">{c.s.resolved7d} resolved this week</Link>
                 </div>
 
                 <div className="flex items-center gap-1.5 border-t pt-3 text-xs text-muted-foreground">
@@ -159,7 +160,7 @@ export default async function SupportOverviewPage() {
                     </span>
                   )}
                 </div>
-              </Link>
+              </div>
             );
           })}
         </div>

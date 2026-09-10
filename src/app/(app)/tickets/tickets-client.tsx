@@ -19,7 +19,7 @@ import type { TicketRow } from "./serialize";
 import { slaState, SlaPill } from "./sla";
 import { TypeChip, StatusChip } from "./ticket-visuals";
 import { NATIVE_COLUMNS, DEFAULT_COLUMNS, columnValue } from "./columns";
-import { filterRows, sortRows, type TicketFilters } from "./filters";
+import { filterRows, sortRows, FOCUS_LABEL, type TicketFilters, type TicketFocus } from "./filters";
 import { saveTicketViewAction, deleteTicketViewAction } from "./view-actions";
 
 type ClientStatus = { id: string; name: string; color: string | null; category: TicketStatusCategory };
@@ -31,8 +31,10 @@ type SavedView = { id: string; name: string; shared: boolean; mine: boolean; fil
 
 const EMPTY: TicketFilters = { onlyOpen: true };
 
-export function TicketsClient({ rows, config, canManage, currentUserName, views, lockedClient, embedded = false }: {
+export function TicketsClient({ rows, config, canManage, currentUserName, views, lockedClient, embedded = false, initialFocus = null }: {
   rows: TicketRow[]; config: ClientConfig; canManage: boolean; currentUserName: string; views: SavedView[];
+  /** Drill-down from an overview number (?focus=…): opens the list already narrowed to those tickets. */
+  initialFocus?: TicketFocus | null;
   /** Set inside a client workspace: rows are already scoped server-side, so the client filter is
    *  hidden, new tickets pre-select this client, and exports stay within it. */
   lockedClient?: { id: string; name: string };
@@ -40,7 +42,8 @@ export function TicketsClient({ rows, config, canManage, currentUserName, views,
   embedded?: boolean;
 }) {
   const router = useRouter();
-  const [filters, setFilters] = React.useState<TicketFilters>(EMPTY);
+  // "Resolved" must not be hidden by the default open-only filter.
+  const [filters, setFilters] = React.useState<TicketFilters>(initialFocus ? { focus: initialFocus, onlyOpen: initialFocus !== "resolved7d" } : EMPTY);
   const [columns, setColumns] = React.useState<string[]>(DEFAULT_COLUMNS);
   const [sort, setSort] = React.useState<{ key: string; dir: "asc" | "desc" } | null>({ key: "createdAt", dir: "desc" });
   const [activeView, setActiveView] = React.useState<string | null>(null);
@@ -116,6 +119,12 @@ export function TicketsClient({ rows, config, canManage, currentUserName, views,
           </form>
         </div>
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+          <div className="flex flex-wrap items-center gap-1">
+            <span className="text-[0.625rem] font-semibold uppercase tracking-wide text-muted-foreground/70">Show</span>
+            {(Object.keys(FOCUS_LABEL) as TicketFocus[]).map((k) => (
+              <button key={k} onClick={() => setFilters((f) => f.focus === k ? { ...f, focus: null } : { ...f, focus: k, onlyOpen: k !== "resolved7d" })} className={cn("rounded-full border px-2 py-0.5 text-xs transition-colors", filters.focus === k ? "border-primary bg-primary/10 font-medium text-primary" : "text-muted-foreground hover:bg-muted")}>{FOCUS_LABEL[k]}</button>
+            ))}
+          </div>
           <ChipGroup label="Type" options={config.types.map((t) => ({ v: t.id, l: t.name }))} on={(v) => chipOn("typeIds", v)} toggle={(v) => toggle("typeIds", v)} />
           <ChipGroup label="Stage" options={STATUS_CATEGORIES.map((c) => ({ v: c, l: STATUS_CATEGORY_LABEL[c] }))} on={(v) => chipOn("statusCategories", v)} toggle={(v) => toggle<TicketStatusCategory>("statusCategories", v as TicketStatusCategory)} />
           <ChipGroup label="Priority" options={TICKET_PRIORITIES.map((p) => ({ v: p, l: TICKET_PRIORITY_LABEL[p] }))} on={(v) => chipOn("priorities", v)} toggle={(v) => toggle("priorities", v)} />

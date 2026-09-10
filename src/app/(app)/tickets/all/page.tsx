@@ -4,12 +4,20 @@ import { assignedClientIds, visibleTicketWhere } from "@/lib/permissions";
 import { loadTicketConfig } from "@/lib/ticket-config.server";
 import { serializeTicketRow, TICKET_ROW_SELECT } from "../serialize";
 import { TicketsClient, type ClientConfig } from "../tickets-client";
+import type { TicketFocus } from "../filters";
 
 export const metadata = { title: "All tickets" };
 
+const FOCUS = new Set(["open", "breached", "unassigned", "critical", "resolved7d"]);
+function parseFocus(v: string | undefined): TicketFocus | null {
+  return v && FOCUS.has(v) ? (v as TicketFocus) : null;
+}
+
+
 // The cross-client queue. `/tickets` itself is now the per-client overview; this is the flat list
 // for people who want every account in one table (still scoped to what they may see).
-export default async function AllTicketsPage() {
+export default async function AllTicketsPage({ searchParams }: { searchParams: Promise<{ focus?: string }> }) {
+  const focus = parseFocus((await searchParams).focus);
   const user = await requireUser();
   const cfg = await loadTicketConfig(user.companyId);
 
@@ -47,6 +55,8 @@ export default async function AllTicketsPage() {
 
   return (
     <TicketsClient
+      key={focus ?? "all"}
+      initialFocus={focus}
       rows={rows}
       config={config}
       canManage={canManage}

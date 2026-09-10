@@ -3,7 +3,15 @@ import { isOpenCategory } from "@/lib/ticket-config";
 import type { TicketRow } from "./serialize";
 import { columnValue } from "./columns";
 
+/** The drill-downs behind the overview numbers. Each must select exactly the tickets that number
+ *  counted, so clicking "2 breached" shows precisely those 2. */
+export type TicketFocus = "open" | "breached" | "unassigned" | "critical" | "resolved7d";
+export const FOCUS_LABEL: Record<TicketFocus, string> = {
+  open: "Open", breached: "SLA breached", unassigned: "Unassigned", critical: "Critical", resolved7d: "Resolved (7 days)",
+};
+
 export type TicketFilters = {
+  focus?: TicketFocus | null;
   text?: string;
   typeIds?: string[];
   statusIds?: string[];
@@ -21,7 +29,24 @@ function has(arr: string[] | undefined, v: string): boolean {
 
 export function filterRows(rows: TicketRow[], f: TicketFilters, currentUserName: string): TicketRow[] {
   const needle = (f.text ?? "").trim().toLowerCase();
+  const now = Date.now();
+  const weekAgo = now - 7 * 86_400_000;
   return rows.filter((r) => {
+    if (f.focus) {
+      const open = isOpenCategory(r.statusCategory);
+      switch (f.focus) {
+        case "open": if (!open) return false; break;
+        case "unassigned": if (!open || r.assigneeName) return false; break;
+        case "critical": if (!open || r.priority !== "CRITICAL") return false; break;
+        case "breached": {
+          // Same rule as the SLA pill and the overview: respond-by until answered, then resolve-by.
+          const target = r.firstResponseAt ? r.resolveBy : r.respondBy;
+          if (!open || !target || now <= new Date(target).getTime()) return false;
+          break;
+        }
+        case "resolved7d": if (!r.resolvedAt || new Date(r.resolvedAt).getTime() < weekAgo) return false; break;
+      }
+    }
     if (f.onlyOpen && !isOpenCategory(r.statusCategory)) return false;
     if (f.typeIds && f.typeIds.length && !f.typeIds.includes(r.typeId)) return false;
     if (f.statusIds && f.statusIds.length && !f.statusIds.includes(r.statusId)) return false;
