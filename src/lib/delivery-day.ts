@@ -99,12 +99,12 @@ export const DAY_HINT: Record<DayItemKind, { cta: string; tab: string; how: stri
   NO_STATUS: {
     cta: "Build update",
     tab: "status",
-    how: "This active customer has no status update yet — send the first one so the customer and your delivery lead can see where things stand.",
+    how: "This active customer has no status update yet. Open \"New status update\": the period, cadence and this week's approved hours are filled in — write the current status, set the health, and send it.",
   },
   STATUS_DUE: {
     cta: "Build update",
     tab: "status",
-    how: "A status update is due. Start from the last one, set the severity, and it pulls in this week's approved hours automatically.",
+    how: "A status update is due. \"New status update\" starts from the last one — same cadence and health, last progress figure, and every still-open action carried over — with the period and approved hours filled in. Rewrite the current status, check the health and progress, send.",
   },
   PLAN_OVERDUE: {
     cta: "Open plan",

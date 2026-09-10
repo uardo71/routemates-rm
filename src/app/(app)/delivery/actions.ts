@@ -17,6 +17,7 @@ async function validOwners(companyId: string, ids: (string | null | undefined)[]
 const ownerLink = (id: string | null | undefined, valid: Set<string>) => (id && valid.has(id) ? id : null);
 import { MAX_RECEIPT_SIZE_BYTES, saveReceiptFile, deleteReceiptFile } from "@/lib/receipt-storage";
 import { dateFromFileName, titleFromFileName } from "@/lib/doc-naming";
+import { approvedHoursForPeriod, type PeriodHours } from "@/lib/realization-data";
 
 // The delivery library accepts the everyday deliverable formats (PDF, images, Office, email), matched
 // by extension so a browser mis-reporting the MIME (common for .msg/.pptx) doesn't block a valid file.
@@ -224,6 +225,17 @@ function actionCreate(d: StatusReportInput, valid: Set<string>) {
   }));
 }
 const actionOwnerIds = (d: StatusReportInput) => (d.actions ?? []).map((a) => a.ownerUserId);
+
+/** The editor's read-only "This period" panel: approved hours in the period split by person, and
+ *  the running total against budget. Hours only (no rates), gated like the rest of the cockpit. */
+export async function periodHoursAction(input: { projectId: string; periodStart: string; periodEnd: string }): Promise<{ error?: string; data?: PeriodHours }> {
+  const ctx = await assertManage(input.projectId);
+  if (ctx.error) return { error: ctx.error };
+  const from = toUtc(input.periodStart);
+  const to = toUtc(input.periodEnd);
+  if (!from || !to || to < from) return { error: "Pick a valid period." };
+  return { data: await approvedHoursForPeriod(ctx.companyId!, input.projectId, from, to) };
+}
 
 export async function createStatusReportAction(input: StatusReportInput): Promise<{ error?: string; id?: string }> {
   const parsed = ReportSchema.safeParse(input);

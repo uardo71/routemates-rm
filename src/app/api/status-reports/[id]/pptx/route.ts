@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/session";
 import { can, canManageProject } from "@/lib/permissions";
 import { SEVERITY_LABEL, RAG_DIMENSIONS, RAG_DIMENSION_LABEL, RAG_LABEL, phaseProgress, paginate } from "@/lib/delivery";
+import { approvedHoursForPeriod } from "@/lib/realization-data";
 import type { RagStatus, PlanTaskStatus } from "@prisma/client";
 
 const fmt = (d: Date | null) => (d ? format(d, "dd MMM yyyy") : "—");
@@ -51,6 +52,10 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   const endCustomer = report.engagement?.name ?? p.client.name;
   const provider = p.company?.name ?? "Professional Services";
   const pct = report.progressPercent ?? 0;
+  const hours = report.periodStart && report.periodEnd ? await approvedHoursForPeriod(user.companyId, p.id, report.periodStart, report.periodEnd) : null;
+  const hoursLine = hours
+    ? `${hours.periodHours}h approved this period${hours.byPerson.length ? ` (${hours.byPerson.map((x) => `${x.name} ${x.hours}h`).join(", ")})` : ""} · ${hours.cumulativeHours}h${hours.budgetHours != null ? ` of ${hours.budgetHours}h budget` : ""} to date`
+    : null;
 
   const pptx = new pptxgen();
   pptx.layout = "LAYOUT_WIDE"; // 13.33 x 7.5
@@ -112,6 +117,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   s2.addText("REPORTING", { x: 9.8, y: cardY + 0.12, fontSize: 9, bold: true, color: MUTE, charSpacing: 1 });
   s2.addText(report.periodStart && report.periodEnd ? `${fmtShort(report.periodStart)} – ${fmtShort(report.periodEnd)}` : fmt(report.reportDate), { x: 9.8, y: cardY + 0.38, w: 2.8, fontSize: 15, bold: true, color: INK });
   s2.addText(report.cadence ? `${report.cadence.toLowerCase()} cadence` : "", { x: 9.8, y: cardY + 0.78, w: 2.8, fontSize: 10, color: MUTE });
+  if (hoursLine) s2.addText(hoursLine, { x: 0.6, y: cardY + cardH + 0.05, w: 12.13, h: 0.3, fontSize: 9, italic: true, color: MUTE, valign: "middle" });
 
   // current status (left) + next actions (right)
   const bodyY = 2.95;

@@ -34,18 +34,16 @@ function periodRanges(now: Date): { key: string; label: string; from: Date; to: 
   ];
 }
 
-/** Per-consultant realization for each selectable period, over the projects the user can see. Every
- *  aggregate comes from APPROVED time entries only; bill/cost use the frozen per-entry rate with the
- *  assignment snapshot as fallback. Callers MUST gate on `rates:view:any` before invoking this — it
- *  exposes cost/margin/rate. */
-export async function computeConsultantRealization(
-  user: SessionUser,
-): Promise<{ periods: RealizationPeriodMeta[]; byPeriod: Record<string, ConsultantRow[]> }> {
-  const projectIds = await visibleProjectIds(user);
-  const projectWhere = projectIds === "ALL" ? { companyId: user.companyId } : { companyId: user.companyId, id: { in: projectIds } };
-
-  const entries = await prisma.timeEntry.findMany({
-    where: { timeCard: { status: "APPROVED" }, milestone: { project: projectWhere } },
+/** THE approved-time aggregation source: every APPROVED time entry on the given projects, optionally
+ *  bounded by date, with what the rate/realization math needs. Both the per-consultant realization
+ *  and the status-report "this period" panel read through here — never a second query. */
+export async function loadApprovedEntries(projectWhere: { companyId: string; id?: string | { in: string[] } }, range?: { from?: Date; to?: Date }) {
+  return prisma.timeEntry.findMany({
+    where: {
+      timeCard: { status: "APPROVED" },
+      milestone: { project: projectWhere },
+      ...(range?.from || range?.to ? { date: { ...(range.from ? { gte: range.from } : {}), ...(range.to ? { lte: range.to } : {}) } } : {}),
+    },
     select: {
       userId: true,
       date: true,
@@ -60,6 +58,56 @@ export async function computeConsultantRealization(
       assignment: { select: { costRate: true, billRate: true } },
     },
   });
+}
+
+export type PeriodHours = {
+  periodHours: number;
+  byPerson: { userId: string; name: string; hours: number }[];
+  /** Approved hours on the project up to and including the period end. */
+  cumulativeHours: number;
+  budgetHours: number | null;
+};
+
+/** Approved hours for one project in [from, to] (UTC dates, inclusive) split by person, plus the
+ *  running total against the project's budget hours. Hours only — no rates, so any project manager
+ *  may read it. Time is logged per project/milestone, not per end customer, so an engagement's
+ *  figure is its project's figure. */
+export async function approvedHoursForPeriod(companyId: string, projectId: string, from: Date, to: Date): Promise<PeriodHours> {
+  const [entries, project] = await Promise.all([
+    loadApprovedEntries({ companyId, id: projectId }, { to }),
+    prisma.project.findFirst({ where: { id: projectId, companyId }, select: { budgetHours: true } }),
+  ]);
+  const byPerson = new Map<string, { userId: string; name: string; hours: number }>();
+  let periodHours = 0, cumulativeHours = 0;
+  for (const e of entries) {
+    const h = Number(e.hours);
+    cumulativeHours += h;
+    if (e.date < from) continue;
+    periodHours += h;
+    const p = byPerson.get(e.userId) ?? { userId: e.userId, name: e.user.name, hours: 0 };
+    p.hours += h;
+    byPerson.set(e.userId, p);
+  }
+  const r2 = (n: number) => Math.round(n * 100) / 100;
+  return {
+    periodHours: r2(periodHours),
+    byPerson: [...byPerson.values()].map((p) => ({ ...p, hours: r2(p.hours) })).sort((a, b) => b.hours - a.hours),
+    cumulativeHours: r2(cumulativeHours),
+    budgetHours: project?.budgetHours == null ? null : Number(project.budgetHours),
+  };
+}
+
+/** Per-consultant realization for each selectable period, over the projects the user can see. Every
+ *  aggregate comes from APPROVED time entries only; bill/cost use the frozen per-entry rate with the
+ *  assignment snapshot as fallback. Callers MUST gate on `rates:view:any` before invoking this — it
+ *  exposes cost/margin/rate. */
+export async function computeConsultantRealization(
+  user: SessionUser,
+): Promise<{ periods: RealizationPeriodMeta[]; byPeriod: Record<string, ConsultantRow[]> }> {
+  const projectIds = await visibleProjectIds(user);
+  const projectWhere = projectIds === "ALL" ? { companyId: user.companyId } : { companyId: user.companyId, id: { in: projectIds } };
+
+  const entries = await loadApprovedEntries(projectWhere);
 
   const ranges = periodRanges(new Date());
   const byPeriod: Record<string, ConsultantRow[]> = {};

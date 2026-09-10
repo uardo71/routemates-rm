@@ -10,7 +10,7 @@ import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/session";
 import { canManageProject, STAFF_ONLY } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
-import { RAG_DOT, RAG_LABEL, RAG_PILL, worstRag } from "@/lib/delivery";
+import { RAG_DOT, RAG_LABEL, RAG_PILL, worstRag, phaseProgress } from "@/lib/delivery";
 import { cadenceDays } from "@/lib/delivery-day";
 import type { RagStatus } from "@prisma/client";
 import { StatusReportsClient, type ReportRow } from "./status-reports-client";
@@ -65,7 +65,7 @@ export default async function DeliveryProjectPage({ params, searchParams }: { pa
     id: r.id, reportDate: iso(r.reportDate)!, periodStart: iso(r.periodStart), periodEnd: iso(r.periodEnd),
     cadence: r.cadence, overallRag: r.overallRag, scheduleRag: r.scheduleRag, budgetRag: r.budgetRag, scopeRag: r.scopeRag, progressPercent: r.progressPercent,
     summary: r.summary, accomplishments: r.accomplishments, correctiveActions: r.correctiveActions, decisionsNeeded: r.decisionsNeeded, milestoneNotes: r.milestoneNotes,
-    actions: r.actions.map((a) => ({ description: a.description, owner: a.owner, ownerUserId: a.ownerUserId, dueDate: iso(a.dueDate), critical: a.critical })),
+    actions: r.actions.map((a) => ({ id: a.id, description: a.description, owner: a.owner, ownerUserId: a.ownerUserId, dueDate: iso(a.dueDate), critical: a.critical, done: a.done, doneAt: a.doneAt ? a.doneAt.toISOString() : null })),
     sentAt: iso(r.sentAt), authorName: r.author.name,
     documents: r.documents.map((d) => ({ id: d.id, fileName: d.fileName, originalName: d.originalName })),
   }));
@@ -324,7 +324,7 @@ export default async function DeliveryProjectPage({ params, searchParams }: { pa
   // deep-link to it (tab: "raid"), so it must exist as a tab. The count is what is still open.
   const tabs: CockpitTab[] = [
     { value: "overview", label: "Overview", content: overview },
-    { value: "status", label: `Status updates (${reports.length})`, content: <StatusReportsClient projectId={project.id} engagementId={selectedEng} reports={reports} people={staff} /> },
+    { value: "status", label: `Status updates (${reports.length})`, content: <StatusReportsClient projectId={project.id} engagementId={selectedEng} reports={reports} people={staff} planProgress={plan.length ? phaseProgress(plan) : null} /> },
     { value: "plan", label: `Plan (${plan.length})`, content: <PlanClient projectId={project.id} engagementId={selectedEng} tasks={plan} people={staff} /> },
     { value: "raid", label: `Issues (${openRaidList.length})`, content: <RaidClient projectId={project.id} engagementId={selectedEng} items={raid} people={staff} /> },
     { value: "minutes", label: `Minutes (${minutes.length})`, content: <MinutesClient projectId={project.id} engagementId={selectedEng} items={minutes} people={staff} /> },

@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { PlusIcon, PencilIcon, Trash2Icon, DownloadIcon, SendIcon, XIcon, PresentationIcon, ChevronDownIcon, SearchIcon, PaperclipIcon } from "lucide-react";
+import { PlusIcon, PencilIcon, Trash2Icon, DownloadIcon, SendIcon, XIcon, PresentationIcon, ChevronDownIcon, SearchIcon, PaperclipIcon, RotateCcwIcon, ClockIcon, TriangleAlertIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,11 +14,12 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { OwnerCombobox, type OwnerPerson } from "@/components/owner-combobox";
-import { SEVERITY_LABEL, RAG_PILL, RAG_DOT, CADENCE_LABEL, RAG_DIMENSIONS, RAG_DIMENSION_LABEL, RAG_LABEL } from "@/lib/delivery";
+import { SEVERITY_LABEL, RAG_PILL, RAG_DOT, CADENCE_LABEL, RAG_DIMENSIONS, RAG_DIMENSION_LABEL, RAG_LABEL, defaultPeriod, actionsToCarry, progressMismatch } from "@/lib/delivery";
+import type { PeriodHours } from "@/lib/realization-data";
 import type { RagStatus } from "@prisma/client";
-import { createStatusReportAction, updateStatusReportAction, deleteStatusReportAction, markStatusReportSentAction } from "../actions";
+import { createStatusReportAction, updateStatusReportAction, deleteStatusReportAction, markStatusReportSentAction, periodHoursAction } from "../actions";
 
-export type ReportAction = { description: string; owner: string | null; ownerUserId: string | null; dueDate: string | null; critical: boolean };
+export type ReportAction = { id: string; description: string; owner: string | null; ownerUserId: string | null; dueDate: string | null; critical: boolean; done: boolean; doneAt: string | null };
 export type ReportRow = {
   id: string;
   reportDate: string;
@@ -60,7 +61,7 @@ function DeckRing({ pct, rag }: { pct: number; rag: RagStatus }) {
   );
 }
 
-type DraftAction = { description: string; owner: string; ownerUserId: string | null; dueDate: string; critical: boolean };
+type DraftAction = { description: string; owner: string; ownerUserId: string | null; dueDate: string; critical: boolean; /** rolled over from the previous report */ carried?: boolean };
 type Draft = {
   id?: string;
   reportDate: string; cadence: string; periodStart: string; periodEnd: string;
@@ -71,18 +72,63 @@ type Draft = {
   actions: DraftAction[];
 };
 const emptyDraft = (): Draft => ({
-  reportDate: todayIso(), cadence: "WEEKLY", periodStart: "", periodEnd: "",
+  reportDate: todayIso(), cadence: "WEEKLY", ...defaultPeriod("WEEKLY", todayIso()),
   overallRag: "GREEN", progressPercent: "", scheduleRag: "", budgetRag: "", scopeRag: "",
   summary: "", accomplishments: "", correctiveActions: "", decisionsNeeded: "", milestoneNotes: "",
   actions: [{ description: "", owner: "", ownerUserId: null, dueDate: "", critical: false }],
 });
 
-export function StatusReportsClient({ projectId, engagementId, reports, people }: { projectId: string; engagementId: string | null; reports: ReportRow[]; people: OwnerPerson[] }) {
+/** A new update starts from the latest report in the same scope: same cadence and RAGs, the last
+ *  progress figure, and every action that is still open (or was closed after that report went out),
+ *  marked "carried". Narrative fields start blank — those must be written fresh. */
+function seededDraft(latest: ReportRow | undefined): Draft {
+  const base = emptyDraft();
+  if (!latest) return base;
+  const cadence = latest.cadence ?? "WEEKLY";
+  const carried = actionsToCarry(latest.actions, latest.reportDate).map((a) => ({ description: a.description, owner: a.owner ?? "", ownerUserId: a.ownerUserId, dueDate: a.dueDate ?? "", critical: a.critical, carried: true }));
+  return {
+    ...base,
+    cadence,
+    ...defaultPeriod(cadence, base.reportDate, latest.periodEnd),
+    overallRag: latest.overallRag,
+    scheduleRag: latest.scheduleRag === latest.overallRag ? "" : latest.scheduleRag,
+    budgetRag: latest.budgetRag === latest.overallRag ? "" : latest.budgetRag,
+    scopeRag: latest.scopeRag === latest.overallRag ? "" : latest.scopeRag,
+    progressPercent: latest.progressPercent != null ? String(latest.progressPercent) : "",
+    actions: carried.length ? carried : base.actions,
+  };
+}
+
+export function StatusReportsClient({ projectId, engagementId, reports, people, planProgress }: { projectId: string; engagementId: string | null; reports: ReportRow[]; people: OwnerPerson[]; planProgress: number | null }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [draft, setDraft] = useState<Draft | null>(null);
   const [q, setQ] = useState("");
   const [open, setOpen] = useState<Set<string>>(() => new Set(reports[0] ? [reports[0].id] : []));
+  // The period follows cadence + report date until the PM edits it by hand.
+  const [periodTouched, setPeriodTouched] = useState(false);
+  const [period, setPeriod] = useState<{ key: string; data: PeriodHours | null; loading: boolean }>({ key: "", data: null, loading: false });
+  const periodKey = draft ? `${draft.periodStart}|${draft.periodEnd}` : "";
+  useEffect(() => {
+    if (!draft || !draft.periodStart || !draft.periodEnd || draft.periodEnd < draft.periodStart) return;
+    const key = periodKey;
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      setPeriod((p) => ({ ...p, key, loading: true }));
+      const r = await periodHoursAction({ projectId, periodStart: draft.periodStart, periodEnd: draft.periodEnd });
+      if (!cancelled) setPeriod({ key, data: r.data ?? null, loading: false });
+    }, 300);
+    return () => { cancelled = true; clearTimeout(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [periodKey, projectId]);
+  const openDraft = (d: Draft) => { setPeriodTouched(false); setPeriod({ key: "", data: null, loading: false }); setDraft(d); };
+  const setCadenceOrDate = (patch: Partial<Pick<Draft, "cadence" | "reportDate">>) =>
+    setDraft((d) => {
+      if (!d) return d;
+      const next = { ...d, ...patch };
+      return periodTouched ? next : { ...next, ...defaultPeriod(next.cadence, next.reportDate, reports.find((r) => r.id !== d.id)?.periodEnd) };
+    });
+  const planWarn = draft && draft.progressPercent !== "" && progressMismatch(Number(draft.progressPercent), planProgress);
   const toggle = (id: string) => setOpen((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const shown = reports.filter((r) => !q.trim() || `${r.reportDate} ${SEVERITY_LABEL[r.overallRag]} ${r.summary ?? ""} ${r.authorName}`.toLowerCase().includes(q.trim().toLowerCase()));
 
@@ -106,7 +152,7 @@ export function StatusReportsClient({ projectId, engagementId, reports, people }
     });
   }
   function edit(r: ReportRow) {
-    setDraft({
+    openDraft({
       id: r.id, reportDate: r.reportDate, cadence: r.cadence ?? "WEEKLY", periodStart: r.periodStart ?? "", periodEnd: r.periodEnd ?? "",
       overallRag: r.overallRag, progressPercent: r.progressPercent != null ? String(r.progressPercent) : "",
       // A dimension equal to the overall is shown as "follows overall" so it keeps following on edit.
@@ -134,7 +180,7 @@ export function StatusReportsClient({ projectId, engagementId, reports, people }
           <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search status updates…" className="w-64 pl-8" />
         </div>
-        <Button size="sm" onClick={() => setDraft(emptyDraft())}><PlusIcon className="size-3.5" /> New status update</Button>
+        <Button size="sm" onClick={() => openDraft(seededDraft(reports[0]))} title={reports[0] ? "Starts from the latest update: cadence, health, progress and open actions carried over" : undefined}><PlusIcon className="size-3.5" /> New status update</Button>
       </div>
 
       {reports.length === 0 && (
@@ -246,15 +292,33 @@ export function StatusReportsClient({ projectId, engagementId, reports, people }
             <DialogHeader><DialogTitle>{draft.id ? "Edit status update" : "New status update"}</DialogTitle></DialogHeader>
             <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-3 pr-1">
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <div className="flex flex-col gap-1.5"><Label>Report date</Label><Input type="date" value={draft.reportDate} onChange={(e) => setDraft({ ...draft, reportDate: e.target.value })} /></div>
+                <div className="flex flex-col gap-1.5"><Label>Report date</Label><Input type="date" value={draft.reportDate} onChange={(e) => setCadenceOrDate({ reportDate: e.target.value })} /></div>
                 <div className="flex flex-col gap-1.5"><Label>Cadence</Label>
-                  <Select value={draft.cadence} items={[{ value: "WEEKLY", label: "Weekly" }, { value: "MONTHLY", label: "Monthly" }, { value: "ADHOC", label: "Ad-hoc" }]} onValueChange={(v) => setDraft({ ...draft, cadence: v ?? "WEEKLY" })}>
+                  <Select value={draft.cadence} items={[{ value: "WEEKLY", label: "Weekly" }, { value: "MONTHLY", label: "Monthly" }, { value: "ADHOC", label: "Ad-hoc" }]} onValueChange={(v) => setCadenceOrDate({ cadence: v ?? "WEEKLY" })}>
                     <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                     <SelectContent><SelectItem value="WEEKLY">Weekly</SelectItem><SelectItem value="MONTHLY">Monthly</SelectItem><SelectItem value="ADHOC">Ad-hoc</SelectItem></SelectContent>
                   </Select>
                 </div>
-                <div className="flex flex-col gap-1.5"><Label>Period from</Label><Input type="date" value={draft.periodStart} onChange={(e) => setDraft({ ...draft, periodStart: e.target.value })} /></div>
-                <div className="flex flex-col gap-1.5"><Label>Period to</Label><Input type="date" value={draft.periodEnd} onChange={(e) => setDraft({ ...draft, periodEnd: e.target.value })} /></div>
+                <div className="flex flex-col gap-1.5"><Label>Period from</Label><Input type="date" value={draft.periodStart} onChange={(e) => { setPeriodTouched(true); setDraft({ ...draft, periodStart: e.target.value }); }} /></div>
+                <div className="flex flex-col gap-1.5"><Label>Period to</Label><Input type="date" value={draft.periodEnd} onChange={(e) => { setPeriodTouched(true); setDraft({ ...draft, periodEnd: e.target.value }); }} /></div>
+              </div>
+
+              {/* read-only: what the timesheets say about this period */}
+              <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="inline-flex items-center gap-1 font-semibold uppercase tracking-wide text-muted-foreground"><ClockIcon className="size-3" /> This period</span>
+                  {!draft.periodStart || !draft.periodEnd ? <span className="text-muted-foreground">Set a period to see approved hours.</span>
+                    : period.loading || period.key !== periodKey ? <span className="text-muted-foreground">Loading approved hours…</span>
+                    : !period.data ? <span className="text-muted-foreground">Could not load hours.</span>
+                    : (
+                      <>
+                        <span><span className="font-mono font-semibold text-foreground">{period.data.periodHours}h</span> approved</span>
+                        {period.data.byPerson.length > 0 && <span className="text-muted-foreground">({period.data.byPerson.map((p) => `${p.name} ${p.hours}h`).join(", ")})</span>}
+                        <span className="ml-auto text-muted-foreground">cumulative <span className="font-mono text-foreground">{period.data.cumulativeHours}h</span>{period.data.budgetHours != null ? <> of <span className="font-mono">{period.data.budgetHours}h</span> budget ({period.data.budgetHours > 0 ? Math.round((period.data.cumulativeHours / period.data.budgetHours) * 100) : 0}%)</> : " · no budget hours set"}</span>
+                      </>
+                    )}
+                </div>
+                <p className="mt-1 text-[10px] text-muted-foreground">Approved time on this project (time is logged per project, not per end customer). The same figure goes into the PPT and Excel exports.</p>
               </div>
               <div className="grid grid-cols-2 gap-3 rounded-md border bg-muted/30 p-3">
                 <div className="flex flex-col gap-1.5"><Label>Severity / timing</Label>
@@ -263,7 +327,9 @@ export function StatusReportsClient({ projectId, engagementId, reports, people }
                     <SelectContent>{RAGS.map((r) => <SelectItem key={r} value={r}><span className="inline-flex items-center gap-2"><span className={cn("size-2 rounded-full", RAG_DOT[r])} />{SEVERITY_LABEL[r]}</span></SelectItem>)}</SelectContent>
                   </Select>
                 </div>
-                <div className="flex flex-col gap-1.5"><Label>Progress %</Label><Input type="number" min="0" max="100" value={draft.progressPercent} onChange={(e) => setDraft({ ...draft, progressPercent: e.target.value })} placeholder="e.g. 90" /></div>
+                <div className="flex flex-col gap-1.5"><Label>Progress %</Label><Input type="number" min="0" max="100" value={draft.progressPercent} onChange={(e) => setDraft({ ...draft, progressPercent: e.target.value })} placeholder={planProgress != null ? `plan says ${planProgress}` : "e.g. 90"} />
+                  {planWarn && <p className="inline-flex items-center gap-1 text-[11px] text-amber-700 dark:text-amber-400"><TriangleAlertIcon className="size-3" /> The plan says {planProgress}% — is the report right?</p>}
+                </div>
                 <div className="col-span-2 grid grid-cols-3 gap-3 border-t pt-3">
                   {RAG_DIMENSIONS.map((d) => (
                     <div key={d} className="flex flex-col gap-1.5">
@@ -289,8 +355,11 @@ export function StatusReportsClient({ projectId, engagementId, reports, people }
               <div className="flex flex-col gap-2">
                 <div className="flex items-center justify-between"><Label>Next actions</Label><Button type="button" size="sm" variant="outline" onClick={addAction}><PlusIcon className="size-3.5" /> Add</Button></div>
                 {draft.actions.map((a, i) => (
-                  <div key={i} className="grid grid-cols-[1fr_120px_130px_auto_auto] gap-2 items-center">
-                    <Input placeholder="Action" value={a.description} onChange={(e) => setAction(i, { description: e.target.value })} />
+                  <div key={i} className={cn("grid grid-cols-[1fr_120px_130px_auto_auto] gap-2 items-center", a.carried && "rounded-md border border-dashed border-sky-300 bg-sky-500/[0.05] p-1")}>
+                    <div className="flex items-center gap-1.5">
+                      {a.carried && <span className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-medium text-sky-700 dark:text-sky-400" title="Carried over from the previous update"><RotateCcwIcon className="size-3" /> carried</span>}
+                      <Input placeholder="Action" value={a.description} onChange={(e) => setAction(i, { description: e.target.value })} />
+                    </div>
                     <OwnerCombobox value={{ owner: a.owner, ownerUserId: a.ownerUserId }} people={people} onChange={(v) => setAction(i, v)} placeholder="Owner" />
                     <Input type="date" value={a.dueDate} onChange={(e) => setAction(i, { dueDate: e.target.value })} />
                     <label className="flex items-center gap-1 text-xs whitespace-nowrap"><input type="checkbox" className="size-3.5" checked={a.critical} onChange={(e) => setAction(i, { critical: e.target.checked })} /> Critical</label>

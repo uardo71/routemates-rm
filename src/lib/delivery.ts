@@ -78,3 +78,37 @@ export function paginate<T>(rows: T[], perPage: number): T[][] {
   return pages.length ? pages : [[]];
 }
 
+// ---------- status-report seeding ----------
+
+const isoDay = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+const dayMs = (iso: string) => Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10));
+
+/** The reporting period a new update should propose: weekly = the 7 days ending on the report
+ *  date; monthly = the day after the previous period (else the 1st of the report month) up to the
+ *  report date; ad-hoc = from the day after the previous period when there is one, else blank. */
+export function defaultPeriod(cadence: string | null | undefined, reportDateIso: string, prevPeriodEndIso?: string | null): { periodStart: string; periodEnd: string } {
+  const end = dayMs(reportDateIso);
+  const after = prevPeriodEndIso ? dayMs(prevPeriodEndIso) + DAY_MS : null;
+  if (cadence === "MONTHLY") {
+    const first = Date.UTC(+reportDateIso.slice(0, 4), +reportDateIso.slice(5, 7) - 1, 1);
+    const start = after != null && after < end ? after : first;
+    return { periodStart: isoDay(start), periodEnd: reportDateIso };
+  }
+  if (cadence === "ADHOC") {
+    return after != null && after <= end ? { periodStart: isoDay(after), periodEnd: reportDateIso } : { periodStart: "", periodEnd: "" };
+  }
+  return { periodStart: isoDay(end - 6 * DAY_MS), periodEnd: reportDateIso };
+}
+
+/** Actions to roll over into the next report: still open, or closed after the previous report went out. */
+export function actionsToCarry<T extends { done: boolean; doneAt: string | null }>(actions: T[], prevReportDateIso: string): T[] {
+  const cut = dayMs(prevReportDateIso);
+  return actions.filter((a) => !a.done || (a.doneAt != null && dayMs(a.doneAt) > cut));
+}
+
+/** True when the reported % and the plan's duration-weighted % disagree by more than `tolerance` points. */
+export function progressMismatch(reportPct: number | null, planPct: number | null, tolerance = 15): boolean {
+  if (reportPct == null || planPct == null) return false;
+  return Math.abs(reportPct - planPct) > tolerance;
+}
+

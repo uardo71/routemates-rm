@@ -1544,3 +1544,24 @@ Migration `20260911170000_action_owner_user`. 197 tests green. Build green. Not 
   link to the register); **My Day** header shows "N my actions" (`DayStats.myActions`, counted
   cross-project by `countMyOpenActions`).
 
+### A3 · Wave 3 — status updates that write themselves (2026-09-11)
+No migration. 202 tests green. Build green. Not clicked through (SSO).
+- **"New status update" seeds from the latest report in scope** (`seededDraft` in
+  `status-reports-client.tsx`): cadence, overall + schedule/budget/scope RAGs, last progress %, and
+  every action still open or closed after that report's date (`actionsToCarry`, pure) — carried rows
+  are boxed with a "carried" badge. Summary, accomplishments, corrective actions, decisions and
+  notes start blank.
+- **Period auto-fill** (`defaultPeriod`, pure + tested): weekly = 7 days ending on the report date;
+  monthly = day after the previous period (else the 1st) → report date; ad-hoc = continues from the
+  previous period when there is one. Follows cadence/report-date changes until the PM edits the
+  period by hand (`periodTouched`).
+- **"This period" panel** (read-only, debounced `periodHoursAction`): approved hours in the period
+  split by person, plus cumulative approved hours vs `Project.budgetHours`. Source of truth is ONE
+  loader: `loadApprovedEntries()` in `src/lib/realization-data.ts`, now shared by the per-consultant
+  realization and `approvedHoursForPeriod()` (hours only — no rates — so PMs may read it). Time is
+  logged per project, so an engagement's figure is its project's figure (said so in the UI). The
+  same line goes on the PPTX status slide (under the stat cards) and into the XLSX meta rows.
+- **Plan-vs-report warning** (`progressMismatch`, > 15 points, never blocks): "The plan says 40% —
+  is the report right?" under Progress %, using duration-weighted `phaseProgress` of the tasks in scope.
+- `DAY_HINT.NO_STATUS` / `STATUS_DUE` coaching text now describes exactly this flow.
+

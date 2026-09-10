@@ -2,6 +2,7 @@ import ExcelJS from "exceljs";
 import { NextResponse } from "next/server";
 import { format } from "date-fns";
 import { prisma } from "@/lib/prisma";
+import { approvedHoursForPeriod } from "@/lib/realization-data";
 import { requireUser } from "@/lib/session";
 import { can, canManageProject } from "@/lib/permissions";
 import { SEVERITY_LABEL, RAG_HEX, RAID_TYPE_LABEL, RAID_STATUS_LABEL, RAID_SEVERITY_LABEL, CADENCE_LABEL } from "@/lib/delivery";
@@ -62,6 +63,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   ws.getRow(row).height = 20;
   row += 2;
 
+  const hours = report.periodStart && report.periodEnd ? await approvedHoursForPeriod(user.companyId, p.id, report.periodStart, report.periodEnd) : null;
   const meta: [string, string][] = [
     ["Report date", fmt(report.reportDate)],
     ["Cadence", report.cadence ? (CADENCE_LABEL[report.cadence] ?? report.cadence) : "—"],
@@ -69,6 +71,10 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     ["Progress", report.progressPercent != null ? `${report.progressPercent}%` : "—"],
     ["Severity / Timing", SEVERITY_LABEL[report.overallRag]],
     ["Prepared by", report.author.name],
+    ...(hours ? ([
+      ["Approved hours this period", `${hours.periodHours}h${hours.byPerson.length ? ` — ${hours.byPerson.map((x) => `${x.name} ${x.hours}h`).join(", ")}` : ""}`],
+      ["Approved hours to date", `${hours.cumulativeHours}h${hours.budgetHours != null ? ` of ${hours.budgetHours}h budget (${hours.budgetHours > 0 ? Math.round((hours.cumulativeHours / hours.budgetHours) * 100) : 0}%)` : ""}`],
+    ] as [string, string][]) : []),
   ];
   for (const [k, v] of meta) {
     ws.getCell(`A${row}`).value = k;
