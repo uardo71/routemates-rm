@@ -49,6 +49,11 @@ const AlertsConfigSchema = z.object({
     expiry: z.object({ enabled: z.boolean(), days: z.number().int().min(0).max(3650) }),
     milestone_overdue: z.object({ enabled: z.boolean() }),
     certification_expiry: z.object({ enabled: z.boolean(), days: z.array(z.number().int().min(0).max(3650)).min(1) }),
+    status_overdue: z.object({ enabled: z.boolean() }),
+    plan_slipping: z.object({ enabled: z.boolean() }),
+    issue_overdue: z.object({ enabled: z.boolean() }),
+    golive_readiness: z.object({ enabled: z.boolean() }),
+    delivery_digest: z.object({ enabled: z.boolean(), weekday: z.number().int().min(1).max(7) }),
   }),
 });
 

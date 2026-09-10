@@ -17,7 +17,7 @@ function ledger() {
   };
 }
 function data(o: Partial<AlertData> = {}): AlertData {
-  return { today: TODAY, projects: [], invoices: [], timecards: [], expenses: [], assignments: [], opportunities: [], milestones: [], certifications: [], ...o };
+  return { today: TODAY, projects: [], invoices: [], timecards: [], expenses: [], assignments: [], opportunities: [], milestones: [], certifications: [], delivery: { baseUrl: "", workspaces: [], planTasks: [], raidItems: [], projects: [] }, ...o };
 }
 const project = (o: Partial<AlertData["projects"][number]> = {}): AlertData["projects"][number] => ({
   id: "p1", number: "PR-0000001", name: "AFW", managerId: "pm", status: "ACTIVE",

@@ -8,6 +8,7 @@ import { notify, delivered, noChannelAvailable } from "@/lib/notify";
 import { getAlertsConfig, getAlertsLastRun, setAlertsLastRun } from "@/lib/settings";
 import { toDateParam } from "@/lib/week";
 import { evaluateAll, type Alert, type AlertData, type Recipient } from "./rules";
+import { loadDeliveryAlertData } from "./delivery-data";
 
 // The daily alerts runner. Loads what the pure rules need, evaluates them, dedups through the
 // Notification ledger, fans out through notify(). Idempotent per day via an AppSetting marker, and
@@ -33,7 +34,8 @@ const iso = (d: Date | null | undefined) => (d ? d.toISOString() : null);
 // ---------- data loading ----------
 
 async function loadAlertData(companyId: string, today: string): Promise<AlertData> {
-  const [projects, entries, invoices, timecards, expenses, assignments, opportunities, milestones, certifications] = await Promise.all([
+  const baseUrl = (process.env.AUTH_URL ?? "").replace(/\/$/, "");
+  const [projects, entries, invoices, timecards, expenses, assignments, opportunities, milestones, certifications, delivery] = await Promise.all([
     prisma.project.findMany({
       where: { companyId, isInternal: false },
       select: { id: true, number: true, name: true, managerId: true, status: true, budgetHours: true, budgetAmount: true },
@@ -72,6 +74,7 @@ async function loadAlertData(companyId: string, today: string): Promise<AlertDat
       where: { expiryDate: { not: null }, user: { companyId, active: true } },
       select: { id: true, userId: true, name: true, issuer: true, expiryDate: true, user: { select: { name: true } } },
     }),
+    loadDeliveryAlertData(companyId, baseUrl),
   ]);
 
   const hoursBy = new Map<string, number>();
@@ -115,6 +118,7 @@ async function loadAlertData(companyId: string, today: string): Promise<AlertDat
     })),
     milestones: milestones.map((m) => ({ id: m.id, name: m.name, projectName: m.project.name, projectManagerId: m.project.managerId, endDate: iso(m.endDate), status: m.status })),
     certifications: certifications.map((c) => ({ id: c.id, userId: c.userId, userName: c.user.name, name: c.name, issuer: c.issuer, expiryDate: iso(c.expiryDate) })),
+    delivery,
   };
 }
 

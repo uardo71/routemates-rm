@@ -110,6 +110,16 @@ export function AlertsSettingsClient({ config, emailConfigured, teamsConfigured,
             <Label htmlFor="al-ce" className="text-xs">Days before expiry</Label>
             <Input id="al-ce" value={certText} onChange={(e) => setCertText(e.target.value)} className="h-8 w-40" placeholder="90, 30" />
           </RuleRow>
+          <RuleRow kind="status_overdue" enabled={c.rules.status_overdue.enabled} onEnabled={(v) => rule("status_overdue", { enabled: v })} />
+          <RuleRow kind="plan_slipping" enabled={c.rules.plan_slipping.enabled} onEnabled={(v) => rule("plan_slipping", { enabled: v })} />
+          <RuleRow kind="issue_overdue" enabled={c.rules.issue_overdue.enabled} onEnabled={(v) => rule("issue_overdue", { enabled: v })} />
+          <RuleRow kind="golive_readiness" enabled={c.rules.golive_readiness.enabled} onEnabled={(v) => rule("golive_readiness", { enabled: v })} />
+          <RuleRow kind="delivery_digest" enabled={c.rules.delivery_digest.enabled} onEnabled={(v) => rule("delivery_digest", { enabled: v })}>
+            <Label htmlFor="al-dg" className="text-xs">Send on</Label>
+            <select id="al-dg" value={c.rules.delivery_digest.weekday} onChange={(e) => rule("delivery_digest", { weekday: Number(e.target.value) })} className="h-8 rounded-md border border-input bg-background px-2 text-xs">
+              {["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"].map((d, i) => <option key={d} value={i + 1}>{d}</option>)}
+            </select>
+          </RuleRow>
 
           <div className="flex flex-wrap items-center gap-2 border-t pt-3">
             <Button size="sm" onClick={save} disabled={pending}>{pending ? "Saving…" : "Save alert settings"}</Button>

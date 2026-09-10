@@ -2,8 +2,9 @@ import { format, differenceInCalendarDays } from "date-fns";
 import type { RagStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { RAG_LABEL, worstRag } from "@/lib/delivery";
+import { statusChase, overduePlanTasks, overdueRaidItems, highOpenRaidItems, overdueActions as overdueActionItems, goLiveReadiness, isPlanTaskOpen } from "@/lib/delivery-signals";
 import {
-  DAY_HINT, PRIORITY_RANK, cadenceDays,
+  DAY_HINT, PRIORITY_RANK,
   type DayItem, type DayPriority, type DayStats, type WorkspaceRow, type UpcomingItem,
 } from "@/lib/delivery-day";
 
@@ -108,21 +109,22 @@ export async function loadDeliveryHome(user: { id: string; companyId: string; ro
       const context = s.isEngagement ? `${p.client.name} · ${s.name}` : p.client.name;
       openIssuesTotal += raid.length;
 
-      const lastStatusDays = last ? differenceInCalendarDays(today, new Date(last.reportDate)) : null;
-      const cad = cadenceDays(last?.cadence);
-      const tracking: WorkspaceRow["tracking"] = !customerFacing ? "OFF" : last?.cadence === "ADHOC" ? "ADHOC" : "TRACKED";
-      let statusDue = false;
-      if (customerFacing && active && !s.done) {
-        if (lastStatusDays === null) statusDue = true; // never reported
-        else if (cad !== null && lastStatusDays > cad) statusDue = true;
-      }
+      // One definition of "due" for every screen and for the alert rules: delivery-signals.ts.
+      const todayIso = today.toISOString().slice(0, 10);
+      const sc = statusChase({
+        lastReportDateIso: last ? last.reportDate.toISOString().slice(0, 10) : null, cadence: last?.cadence, sinceIso: (p.startDate ?? p.createdAt).toISOString().slice(0, 10),
+        todayIso, customerFacing, active, done: s.done,
+      });
+      const lastStatusDays = sc.daysSince;
+      const tracking = sc.tracking;
+      const statusDue = sc.due;
 
-      // A task is done if COMPLETED or at 100% (progress drives status).
-      const planOpen = (t: (typeof plan)[number]) => t.status !== "COMPLETED" && t.progress < 100;
-      const overduePlan = plan.filter((t) => !t.isMilestone && planOpen(t) && t.dueDate != null && new Date(t.dueDate) < today);
-      const overdueIssues = raid.filter((r) => r.dueDate != null && new Date(r.dueDate) < today);
-      const highOpenIssues = raid.filter((r) => (r.severity === "HIGH" || r.severity === "CRITICAL") && !(r.dueDate != null && new Date(r.dueDate) < today));
-      const overdueActions = actions.filter((a) => !a.done && a.dueDate != null && new Date(a.dueDate) < today);
+      const isoOf = <T extends { dueDate: Date | null }>(x: T): Omit<T, "dueDate"> & { dueDate: string | null } => ({ ...x, dueDate: x.dueDate ? x.dueDate.toISOString().slice(0, 10) : null });
+      const planOpen = (t: (typeof plan)[number]) => isPlanTaskOpen(t);
+      const overduePlan = overduePlanTasks(plan.map(isoOf), todayIso);
+      const overdueIssues = overdueRaidItems(raid.map((r) => ({ ...isoOf(r), status: "OPEN" })), todayIso);
+      const highOpenIssues = highOpenRaidItems(raid.map((r) => ({ ...isoOf(r), status: "OPEN" })), todayIso);
+      const overdueActions = overdueActionItems(actions.map(isoOf), todayIso);
 
       // ----- day items (the path) — a finished workspace asks nothing of anyone -----
       const mk = (kind: DayItem["kind"], priority: DayPriority, title: string) => {
@@ -132,7 +134,7 @@ export async function loadDeliveryHome(user: { id: string; companyId: string; ro
       };
       if (statusDue) {
         if (lastStatusDays === null) mk("NO_STATUS", "WARN", `Send the first status update — ${s.name}`);
-        else mk("STATUS_DUE", cad !== null && lastStatusDays > cad * 2 ? "CRIT" : "WARN", `Status update overdue — ${s.name}`);
+        else mk("STATUS_DUE", sc.tier >= 2 ? "CRIT" : "WARN", `Status update overdue — ${s.name}`);
       }
       if (overduePlan.length > 0) mk("PLAN_OVERDUE", "WARN", overduePlan.length === 1 ? `Plan task overdue: ${overduePlan[0].name}` : `${overduePlan.length} plan tasks overdue — ${s.name}`);
       if (overdueIssues.length > 0) {
@@ -203,15 +205,15 @@ export async function loadDeliveryHome(user: { id: string; companyId: string; ro
     // flag that the cutover to production still needs finishing so the PM can push the consultant.
     const cutoverTasks = p.cutoverPlans.flatMap((x) => x.tasks);
     const cutoverLeaves = cutoverTasks.filter((t) => !cutoverTasks.some((c) => c.parentId === t.id));
-    const cutoverComplete = cutoverLeaves.length > 0 && cutoverLeaves.every((t) => t.status === "DONE" || t.status === "SKIPPED");
-    const goLive = p.endDate ? new Date(p.endDate.toISOString().slice(0, 10)) : null;
-    const daysToGoLive = goLive ? differenceInCalendarDays(goLive, today) : null;
-    const goLiveNear = daysToGoLive != null && daysToGoLive <= 14;
+    const g = goLiveReadiness({
+      active, done: projectDone, uatStatus: p.uatStatus, uatAccepted: p.uatAccepted, endDateIso: p.endDate ? p.endDate.toISOString().slice(0, 10) : null,
+      todayIso: today.toISOString().slice(0, 10), scripts: p.uatScripts, cutoverLeaves,
+    });
+    const daysToGoLive = g.daysToGoLive;
 
     // UAT test script must be prepared & sent before UAT (consultant owns it; PM governs).
-    const uatWindow = p.uatStatus !== "NOT_STARTED" || (active && daysToGoLive != null && daysToGoLive >= 0 && daysToGoLive <= 30);
     const uatCases = p.uatScripts.reduce((s, x) => s + x._count.cases, 0);
-    if (active && uatWindow && (p.uatScripts.length === 0 || p.uatScripts.some((x) => x.status !== "SENT"))) {
+    if (g.uatScriptDue) {
       const h = DAY_HINT.UAT_SCRIPT_DUE;
       dayItems.push({
         id: `${p.id}:uatscript`,
@@ -228,7 +230,7 @@ export async function loadDeliveryHome(user: { id: string; companyId: string; ro
       });
     }
 
-    if (!projectDone && !cutoverComplete && (p.uatAccepted || (active && goLiveNear))) {
+    if (g.cutoverDue) {
       const h = DAY_HINT.CUTOVER_DUE;
       const progress = cutoverLeaves.length > 0
         ? `${cutoverLeaves.filter((t) => t.status === "DONE" || t.status === "SKIPPED").length}/${cutoverLeaves.length} steps`

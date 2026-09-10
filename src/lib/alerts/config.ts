@@ -20,6 +20,16 @@ export type AlertsConfig = {
     milestone_overdue: { enabled: boolean };
     /** A person's certification reaches each of these many days before expiryDate. */
     certification_expiry: { enabled: boolean; days: number[] };
+    /** Status update past its cadence (1× and 2× tiers) → the PM. */
+    status_overdue: { enabled: boolean };
+    /** Open plan tasks past due, once per task per due date → PM + owner. */
+    plan_slipping: { enabled: boolean };
+    /** RAID items past due; HIGH/CRITICAL also reach admins. */
+    issue_overdue: { enabled: boolean };
+    /** UAT script not sent in the UAT window; cutover incomplete near go-live. */
+    golive_readiness: { enabled: boolean };
+    /** Weekly per-PM digest of everything needing attention (ISO weekday, 1 = Monday). */
+    delivery_digest: { enabled: boolean; weekday: number };
   };
 };
 
@@ -34,6 +44,11 @@ export const DEFAULT_ALERTS_CONFIG: AlertsConfig = {
     expiry: { enabled: true, days: 30 },
     milestone_overdue: { enabled: true },
     certification_expiry: { enabled: true, days: [90, 30] },
+    status_overdue: { enabled: true },
+    plan_slipping: { enabled: true },
+    issue_overdue: { enabled: true },
+    golive_readiness: { enabled: true },
+    delivery_digest: { enabled: true, weekday: 1 },
   },
 };
 
@@ -70,6 +85,31 @@ export const ALERT_RULE_META: Record<AlertKind, { label: string; description: st
     description: "A person's certification is within each listed number of days of its expiry date. Fires once per tier; a renewed expiry date starts over.",
     recipients: "the person and everyone who manages users",
   },
+  status_overdue: {
+    label: "Status update overdue",
+    description: "A customer-facing workspace is past its cadence (weekly / monthly) without a status update, or has never had one. Fires at one cadence and again at two.",
+    recipients: "the project manager",
+  },
+  plan_slipping: {
+    label: "Plan task overdue",
+    description: "An open plan task is past its due date. Once per task per due date — re-planning it re-arms the alert.",
+    recipients: "the project manager and the task owner",
+  },
+  issue_overdue: {
+    label: "Issue past due",
+    description: "An open RAID item is past its target date. High and critical ones also reach the administrators.",
+    recipients: "the project manager, the owner, and admins for high/critical",
+  },
+  golive_readiness: {
+    label: "Go-live readiness",
+    description: "UAT is under way or within 30 days but no test script is sent; or go-live is within 14 days (or UAT accepted) and the cutover isn't finished.",
+    recipients: "the project manager",
+  },
+  delivery_digest: {
+    label: "Monday digest",
+    description: "One email per project manager listing workspaces needing a status update, overdue tasks, issues past due and go-live items in the next 14 days, with links. Once per week.",
+    recipients: "each project manager, about their own projects",
+  },
 };
 
 /** Deep-merges a stored (possibly older/partial) config onto the defaults so every field has a value. */
@@ -92,6 +132,11 @@ export function mergeAlertsConfig(stored: unknown): AlertsConfig {
       expiry: { enabled: bool(r.expiry?.enabled, true), days: num(r.expiry?.days, d.rules.expiry.days) },
       milestone_overdue: { enabled: bool(r.milestone_overdue?.enabled, true) },
       certification_expiry: { enabled: bool(r.certification_expiry?.enabled, true), days: nums(r.certification_expiry?.days, d.rules.certification_expiry.days) },
+      status_overdue: { enabled: bool(r.status_overdue?.enabled, true) },
+      plan_slipping: { enabled: bool(r.plan_slipping?.enabled, true) },
+      issue_overdue: { enabled: bool(r.issue_overdue?.enabled, true) },
+      golive_readiness: { enabled: bool(r.golive_readiness?.enabled, true) },
+      delivery_digest: { enabled: bool(r.delivery_digest?.enabled, true), weekday: (() => { const w = num(r.delivery_digest?.weekday, 1); return w >= 1 && w <= 7 ? Math.round(w) : 1; })() },
     },
   };
 }

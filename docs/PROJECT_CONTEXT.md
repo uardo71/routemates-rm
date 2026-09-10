@@ -1565,3 +1565,26 @@ No migration. 202 tests green. Build green. Not clicked through (SSO).
   is the report right?" under Progress %, using duration-weighted `phaseProgress` of the tasks in scope.
 - `DAY_HINT.NO_STATUS` / `STATUS_DUE` coaching text now describes exactly this flow.
 
+### A4 · Wave 4 — delivery alerts + Monday digest (2026-09-11)
+No migration. 215 tests green. Build green.
+- **One definition of "due"**: `src/lib/delivery-signals.ts` (pure) — `statusChase` (due strictly
+  past one cadence; tier 2 strictly past two; never-reported ⇒ due at once, tier from the project
+  start; ad-hoc / non-customer-facing / done ⇒ never), `overduePlanTasks`, `overdueRaidItems`,
+  `highOpenRaidItems`, `overdueActions`, `goLiveReadiness` (UAT window ≤ 30 days or UAT started;
+  cutover due ≤ 14 days or on acceptance; urgent ≤ 3), `isoWeek` / `isoWeekday`. `delivery-home.ts`
+  (My Day + Portfolio) now calls these instead of its inline copies, and so do the alert rules.
+- **Rules** (`alerts/rules.ts`, config + meta + merge in `config.ts`, data via
+  `alerts/delivery-data.ts`): `status_overdue` (keys `<lastReportDate|first>:x1` / `:x2` → PM),
+  `plan_slipping` (key = due date, per task → PM + `ownerUserId`), `issue_overdue` (key = due date →
+  PM + owner; HIGH/CRITICAL also `users:manage`), `golive_readiness` (keys `uat:<uatStatus>` and
+  `cutover:<goLiveDate>` → PM), `delivery_digest` (one per PM per ISO week on the configured weekday,
+  default Monday; sections status due / overdue tasks / issues past due / go-live ≤ 14 days, deep
+  links built from `AUTH_URL`). Completed engagements and closed projects are excluded at load time.
+- Alerts settings tab lists the five new rules (digest weekday select); the dry-run preview covers
+  them because it runs the real runner.
+- **Scheduler**: `.github/workflows/daily-jobs.yml` (added in the Prompt 8 follow-up) already POSTs
+  `/api/internal/alerts` and both nudge modes at 06:00 UTC on weekdays with `NUDGE_SECRET`. It is now
+  documented in **`docs/RUNBOOK.md`** (auth, idempotency, channels, manual dry run, troubleshooting).
+  The repository secret `NUDGE_SECRET` must equal the app setting `TIMESHEET_NUDGE_SECRET`; a 401 in
+  the workflow log is the signal it is not set.
+
