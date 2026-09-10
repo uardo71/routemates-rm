@@ -24,3 +24,22 @@ export const RAID_STATUS_LABEL: Record<RaidStatus, string> = { OPEN: "Open", IN_
 export const RAID_SEVERITY_LABEL: Record<RaidSeverity, string> = { LOW: "Low", MEDIUM: "Medium", HIGH: "High", CRITICAL: "Critical" };
 
 export const CADENCE_LABEL: Record<string, string> = { WEEKLY: "Weekly", MONTHLY: "Monthly", ADHOC: "Ad-hoc" };
+
+// ---------- RAG dimensions ----------
+
+export const RAG_RANK: Record<RagStatus, number> = { GREEN: 0, AMBER: 1, RED: 2 };
+export const RAG_DIMENSIONS = ["scheduleRag", "budgetRag", "scopeRag"] as const;
+export type RagDimension = (typeof RAG_DIMENSIONS)[number];
+export const RAG_DIMENSION_LABEL: Record<RagDimension, string> = { scheduleRag: "Schedule", budgetRag: "Budget", scopeRag: "Scope" };
+
+/** The worst of several RAG values — the health a report really conveys when its dimensions differ. */
+export function worstRag(...rags: (RagStatus | null | undefined)[]): RagStatus {
+  let worst: RagStatus = "GREEN";
+  for (const r of rags) if (r && RAG_RANK[r] > RAG_RANK[worst]) worst = r;
+  return worst;
+}
+
+/** Overall vs. dimensions: true when at least one dimension says something the overall does not. */
+export function ragDimensionsDiffer(r: { overallRag: RagStatus; scheduleRag: RagStatus; budgetRag: RagStatus; scopeRag: RagStatus }): boolean {
+  return RAG_DIMENSIONS.some((d) => r[d] !== r.overallRag);
+}

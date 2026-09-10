@@ -1,7 +1,7 @@
 import { format, differenceInCalendarDays } from "date-fns";
 import type { RagStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { RAG_LABEL } from "@/lib/delivery";
+import { RAG_LABEL, worstRag } from "@/lib/delivery";
 import {
   DAY_HINT, PRIORITY_RANK, cadenceDays,
   type DayItem, type DayPriority, type DayStats, type WorkspaceRow, type UpcomingItem,
@@ -29,7 +29,7 @@ export async function loadDeliveryHome(user: { id: string; companyId: string; ro
       engagements: { orderBy: { sortOrder: "asc" }, select: { id: true, name: true, status: true } },
       statusReports: {
         orderBy: { reportDate: "desc" },
-        select: { engagementId: true, reportDate: true, sentAt: true, overallRag: true, cadence: true, progressPercent: true, summary: true },
+        select: { engagementId: true, reportDate: true, sentAt: true, overallRag: true, scheduleRag: true, budgetRag: true, scopeRag: true, cadence: true, progressPercent: true, summary: true },
       },
       raidItems: {
         where: { status: { not: "CLOSED" }, type: { in: ["RISK", "ISSUE"] } },
@@ -151,7 +151,7 @@ export async function loadDeliveryHome(user: { id: string; companyId: string; ro
       }
 
       // ----- workspace row -----
-      let rag: RagStatus = last?.overallRag ?? (customerFacing && active ? "AMBER" : "GREEN");
+      let rag: RagStatus = last ? worstRag(last.overallRag, last.scheduleRag, last.budgetRag, last.scopeRag) : customerFacing && active ? "AMBER" : "GREEN";
       if (overdueIssues.some((r) => r.severity === "HIGH" || r.severity === "CRITICAL")) rag = "RED";
       if (s.done) rag = "GREEN";
       const doneLabel = p.status === "CANCELLED" ? "Cancelled" : "Completed";

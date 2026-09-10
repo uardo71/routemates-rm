@@ -4,7 +4,7 @@ import { format } from "date-fns";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/session";
 import { can, canManageProject } from "@/lib/permissions";
-import { SEVERITY_LABEL } from "@/lib/delivery";
+import { SEVERITY_LABEL, RAG_DIMENSIONS, RAG_DIMENSION_LABEL, RAG_LABEL } from "@/lib/delivery";
 import type { RagStatus, PlanTaskStatus } from "@prisma/client";
 
 const fmt = (d: Date | null) => (d ? format(d, "dd MMM yyyy") : "—");
@@ -101,6 +101,12 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   s2.addText("SEVERITY / TIMING", { x: 6.5, y: cardY + 0.12, fontSize: 9, bold: true, color: MUTE, charSpacing: 1 });
   s2.addShape("roundRect", { x: 6.5, y: cardY + 0.45, w: 2.7, h: 0.55, rectRadius: 0.06, fill: { color: SEV_HEX[report.overallRag] } });
   s2.addText(SEVERITY_LABEL[report.overallRag], { x: 6.5, y: cardY + 0.45, w: 2.7, h: 0.55, fontSize: 13, bold: true, color: WHITE, align: "center", valign: "middle" });
+  // schedule / budget / scope as three small pills
+  RAG_DIMENSIONS.forEach((d, i) => {
+    const px = 6.5 + i * 0.92;
+    s2.addShape("roundRect", { x: px, y: cardY + 1.02, w: 0.86, h: 0.18, rectRadius: 0.09, fill: { color: SEV_HEX[report[d]] } });
+    s2.addText(`${RAG_DIMENSION_LABEL[d]} · ${RAG_LABEL[report[d]].split(" ")[0]}`, { x: px, y: cardY + 1.02, w: 0.86, h: 0.18, fontSize: 6.5, bold: true, color: WHITE, align: "center", valign: "middle" });
+  });
   // period card
   card(9.6, 3.13);
   s2.addText("REPORTING", { x: 9.8, y: cardY + 0.12, fontSize: 9, bold: true, color: MUTE, charSpacing: 1 });

@@ -13,7 +13,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
-import { SEVERITY_LABEL, RAG_PILL, RAG_DOT, CADENCE_LABEL } from "@/lib/delivery";
+import { SEVERITY_LABEL, RAG_PILL, RAG_DOT, CADENCE_LABEL, RAG_DIMENSIONS, RAG_DIMENSION_LABEL, RAG_LABEL } from "@/lib/delivery";
 import type { RagStatus } from "@prisma/client";
 import { createStatusReportAction, updateStatusReportAction, deleteStatusReportAction, markStatusReportSentAction } from "../actions";
 
@@ -25,6 +25,9 @@ export type ReportRow = {
   periodEnd: string | null;
   cadence: string | null;
   overallRag: RagStatus; // Severity/Timing
+  scheduleRag: RagStatus;
+  budgetRag: RagStatus;
+  scopeRag: RagStatus;
   progressPercent: number | null;
   summary: string | null; // current status
   accomplishments: string | null;
@@ -61,12 +64,15 @@ type Draft = {
   id?: string;
   reportDate: string; cadence: string; periodStart: string; periodEnd: string;
   overallRag: RagStatus; progressPercent: string;
+  /** "" = follow Overall until the PM picks something for that dimension. */
+  scheduleRag: "" | RagStatus; budgetRag: "" | RagStatus; scopeRag: "" | RagStatus;
   summary: string; accomplishments: string; correctiveActions: string; decisionsNeeded: string; milestoneNotes: string;
   actions: DraftAction[];
 };
 const emptyDraft = (): Draft => ({
   reportDate: todayIso(), cadence: "WEEKLY", periodStart: "", periodEnd: "",
-  overallRag: "GREEN", progressPercent: "", summary: "", accomplishments: "", correctiveActions: "", decisionsNeeded: "", milestoneNotes: "",
+  overallRag: "GREEN", progressPercent: "", scheduleRag: "", budgetRag: "", scopeRag: "",
+  summary: "", accomplishments: "", correctiveActions: "", decisionsNeeded: "", milestoneNotes: "",
   actions: [{ description: "", owner: "", dueDate: "", critical: false }],
 });
 
@@ -85,7 +91,8 @@ export function StatusReportsClient({ projectId, engagementId, reports }: { proj
     const payload = {
       projectId, engagementId, reportDate: draft.reportDate, cadence: draft.cadence as "WEEKLY" | "MONTHLY" | "ADHOC",
       periodStart: draft.periodStart || null, periodEnd: draft.periodEnd || null,
-      overallRag: draft.overallRag, scheduleRag: draft.overallRag, budgetRag: draft.overallRag, scopeRag: draft.overallRag,
+      overallRag: draft.overallRag,
+      scheduleRag: draft.scheduleRag || draft.overallRag, budgetRag: draft.budgetRag || draft.overallRag, scopeRag: draft.scopeRag || draft.overallRag,
       progressPercent: draft.progressPercent === "" ? null : Number(draft.progressPercent),
       summary: draft.summary || null, accomplishments: draft.accomplishments || null, correctiveActions: draft.correctiveActions || null,
       decisionsNeeded: draft.decisionsNeeded || null, milestoneNotes: draft.milestoneNotes || null,
@@ -101,6 +108,8 @@ export function StatusReportsClient({ projectId, engagementId, reports }: { proj
     setDraft({
       id: r.id, reportDate: r.reportDate, cadence: r.cadence ?? "WEEKLY", periodStart: r.periodStart ?? "", periodEnd: r.periodEnd ?? "",
       overallRag: r.overallRag, progressPercent: r.progressPercent != null ? String(r.progressPercent) : "",
+      // A dimension equal to the overall is shown as "follows overall" so it keeps following on edit.
+      scheduleRag: r.scheduleRag === r.overallRag ? "" : r.scheduleRag, budgetRag: r.budgetRag === r.overallRag ? "" : r.budgetRag, scopeRag: r.scopeRag === r.overallRag ? "" : r.scopeRag,
       summary: r.summary ?? "", accomplishments: r.accomplishments ?? "", correctiveActions: r.correctiveActions ?? "", decisionsNeeded: r.decisionsNeeded ?? "", milestoneNotes: r.milestoneNotes ?? "",
       actions: r.actions.length ? r.actions.map((a) => ({ description: a.description, owner: a.owner ?? "", dueDate: a.dueDate ?? "", critical: a.critical })) : [{ description: "", owner: "", dueDate: "", critical: false }],
     });
@@ -143,6 +152,11 @@ export function StatusReportsClient({ projectId, engagementId, reports }: { proj
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-2">
                 <span className={cn("inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold", RAG_PILL[r.overallRag])}><span className={cn("size-2 rounded-full", RAG_DOT[r.overallRag])} /> {SEVERITY_LABEL[r.overallRag]}</span>
+                <span className="inline-flex items-center gap-1" title="Schedule · Budget · Scope">
+                  {RAG_DIMENSIONS.map((d) => (
+                    <span key={d} className={cn("inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium", RAG_PILL[r[d]])}><span className={cn("size-1.5 rounded-full", RAG_DOT[r[d]])} />{RAG_DIMENSION_LABEL[d]}</span>
+                  ))}
+                </span>
                 {r.id === reports[0]?.id && <Badge variant="secondary" className="text-[10px]">Latest</Badge>}
                 {r.sentAt ? <Badge variant="outline" className="gap-1 text-[10px]"><SendIcon className="size-2.5" /> Sent {r.sentAt}</Badge> : <Badge variant="secondary" className="text-[10px]">Draft — not sent</Badge>}
               </div>
@@ -249,6 +263,24 @@ export function StatusReportsClient({ projectId, engagementId, reports }: { proj
                   </Select>
                 </div>
                 <div className="flex flex-col gap-1.5"><Label>Progress %</Label><Input type="number" min="0" max="100" value={draft.progressPercent} onChange={(e) => setDraft({ ...draft, progressPercent: e.target.value })} placeholder="e.g. 90" /></div>
+                <div className="col-span-2 grid grid-cols-3 gap-3 border-t pt-3">
+                  {RAG_DIMENSIONS.map((d) => (
+                    <div key={d} className="flex flex-col gap-1.5">
+                      <Label className="text-xs">{RAG_DIMENSION_LABEL[d]}</Label>
+                      <Select
+                        value={draft[d] || "FOLLOW"}
+                        items={[{ value: "FOLLOW", label: `Same as overall (${RAG_LABEL[draft.overallRag]})` }, ...RAGS.map((r) => ({ value: r, label: RAG_LABEL[r] }))]}
+                        onValueChange={(v) => setDraft({ ...draft, [d]: !v || v === "FOLLOW" ? "" : (v as RagStatus) })}
+                      >
+                        <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="FOLLOW">Same as overall</SelectItem>
+                          {RAGS.map((r) => <SelectItem key={r} value={r}><span className="inline-flex items-center gap-2"><span className={cn("size-2 rounded-full", RAG_DOT[r])} />{RAG_LABEL[r]}</span></SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  ))}
+                </div>
               </div>
               <div className="flex flex-col gap-1.5"><Label>Current status</Label><Textarea value={draft.summary} onChange={(e) => setDraft({ ...draft, summary: e.target.value })} rows={4} maxLength={4000} placeholder="Where things stand this period…" /></div>
               <div className="flex flex-col gap-1.5"><Label>Accomplishments (optional)</Label><Textarea value={draft.accomplishments} onChange={(e) => setDraft({ ...draft, accomplishments: e.target.value })} rows={2} maxLength={4000} placeholder="What got done this period" /></div>

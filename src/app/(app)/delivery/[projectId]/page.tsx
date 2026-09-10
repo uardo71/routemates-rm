@@ -9,7 +9,7 @@ import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/session";
 import { canManageProject, STAFF_ONLY } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
-import { RAG_DOT, RAG_LABEL, RAG_PILL } from "@/lib/delivery";
+import { RAG_DOT, RAG_LABEL, RAG_PILL, worstRag } from "@/lib/delivery";
 import { cadenceDays } from "@/lib/delivery-day";
 import type { RagStatus } from "@prisma/client";
 import { StatusReportsClient, type ReportRow } from "./status-reports-client";
@@ -62,7 +62,7 @@ export default async function DeliveryProjectPage({ params, searchParams }: { pa
 
   const reports: ReportRow[] = project.statusReports.filter(inEng).map((r) => ({
     id: r.id, reportDate: iso(r.reportDate)!, periodStart: iso(r.periodStart), periodEnd: iso(r.periodEnd),
-    cadence: r.cadence, overallRag: r.overallRag, progressPercent: r.progressPercent,
+    cadence: r.cadence, overallRag: r.overallRag, scheduleRag: r.scheduleRag, budgetRag: r.budgetRag, scopeRag: r.scopeRag, progressPercent: r.progressPercent,
     summary: r.summary, accomplishments: r.accomplishments, correctiveActions: r.correctiveActions, decisionsNeeded: r.decisionsNeeded, milestoneNotes: r.milestoneNotes,
     actions: r.actions.map((a) => ({ description: a.description, owner: a.owner, dueDate: iso(a.dueDate), critical: a.critical })),
     sentAt: iso(r.sentAt), authorName: r.author.name,
@@ -119,7 +119,9 @@ export default async function DeliveryProjectPage({ params, searchParams }: { pa
   const cad = cadenceDays(latest?.cadence);
   const statusDue = !done && customerFacing && activeProj && (lastDays === null || (cad !== null && lastDays > cad));
 
-  let rag: RagStatus = latest?.overallRag ?? (activeProj && customerFacing ? "AMBER" : "GREEN");
+  // Health = the worst of the report's dimensions when they differ from the overall (a green overall
+  // with a red budget is not green).
+  let rag: RagStatus = latest ? worstRag(latest.overallRag, latest.scheduleRag, latest.budgetRag, latest.scopeRag) : activeProj && customerFacing ? "AMBER" : "GREEN";
   if (overdueIssues.some((r) => r.severity === "HIGH" || r.severity === "CRITICAL")) rag = "RED";
 
   const attention: string[] = [];
