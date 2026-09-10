@@ -124,14 +124,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           },
         ]
       : []),
-    {
-      label: "Support",
-      items: [
-        { href: "/tickets", label: "Clients overview", icon: "tickets" as const },
-        { href: "/tickets/all", label: "All tickets", icon: "tickets" as const },
-        { href: "/tickets/board", label: "Board", icon: "tickets" as const },
-      ],
-    },
+    // One entry: the clients overview is the front door, and it carries All tickets / Board / New
+    // ticket as buttons — no need to duplicate them in the menu.
+    { label: "Support", items: [{ href: "/tickets", label: "Support", icon: "tickets" as const }] },
     { label: "Help", items: [{ href: "/help", label: "Help & docs", icon: "help" as const }] },
   ];
 
