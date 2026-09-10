@@ -1,0 +1,40 @@
+name: Daily jobs
+
+# The scheduler for the machine-to-machine endpoints. Runs once a day and calls:
+#   • /api/internal/alerts            — budget / overdue / approvals / expiry / milestone alerts
+#   • /api/internal/timesheet-nudge   — daily mode, and weekly mode (the route itself only sends on
+#                                       the configured weekday, so calling it daily is correct)
+# Every endpoint is idempotent per day and dedups per alert, so a re-run — or the manual trigger
+# below — can never double-send.
+on:
+  schedule:
+    - cron: "0 6 * * 1-5" # 06:00 UTC, weekdays (08:00 Tirana in summer, 07:00 in winter)
+  workflow_dispatch:
+    inputs:
+      dryRun:
+        description: "Evaluate and report only — send nothing"
+        type: boolean
+        default: false
+
+env:
+  BASE_URL: https://psa.routemates.it
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Alerts
+        run: |
+          curl -sS -f -X POST "$BASE_URL/api/internal/alerts?dryRun=${{ inputs.dryRun && '1' || '0' }}" \
+            -H "x-nudge-secret: ${{ secrets.NUDGE_SECRET }}" | tee alerts.json
+          echo; echo "sent: $(jq '[.reports[].sent] | add' alerts.json)  suppressed: $(jq '[.reports[].suppressed] | add' alerts.json)  noChannel: $(jq '[.reports[].noChannel] | any' alerts.json)"
+
+      - name: Timesheet nudge (daily)
+        run: |
+          curl -sS -f -X POST "$BASE_URL/api/internal/timesheet-nudge?mode=daily&dryRun=${{ inputs.dryRun && '1' || '0' }}" \
+            -H "x-nudge-secret: ${{ secrets.NUDGE_SECRET }}" | jq '{mode, skipped, missingCount, notifications}'
+
+      - name: Timesheet nudge (weekly — sends only on the configured weekday)
+        run: |
+          curl -sS -f -X POST "$BASE_URL/api/internal/timesheet-nudge?mode=weekly&dryRun=${{ inputs.dryRun && '1' || '0' }}" \
+            -H "x-nudge-secret: ${{ secrets.NUDGE_SECRET }}" | jq '{mode, skipped, missingCount, notifications}'
