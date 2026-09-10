@@ -368,6 +368,8 @@ model Project {
   // Document row with kind UAT_ACCEPTANCE + projectId.
   uatStatus       ProjectUatStatus @default(NOT_STARTED)
   uatAccepted     Boolean   @default(false)
+  /// Multi-engagement programmes: also chase status updates for the "Overall" scope (off by default).
+  trackOverallStatus Boolean @default(false)
   uatAcceptedDate DateTime? // the date the customer signed off
   uatSignatory    String? // name (and optionally role) of the client-side signatory
   uatNotes        String? // note captured with the acceptance

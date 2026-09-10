@@ -17,13 +17,13 @@ import {
 import { InitialsAvatar } from "@/components/initials-avatar";
 import { cn } from "@/lib/utils";
 import {
-  createEngagementAction, updateEngagementAction, deleteEngagementAction, reorderEngagementAction, setEngagementMembersAction, setEngagementStatusAction,
+  createEngagementAction, updateEngagementAction, deleteEngagementAction, reorderEngagementAction, setEngagementMembersAction, setEngagementStatusAction, setProjectOverallTrackingAction,
 } from "../actions";
 
 export type Person = { id: string; name: string };
 export type Engagement = { id: string; name: string; members: Person[]; status: "ACTIVE" | "COMPLETED" };
 
-export function EngagementBar({ projectId, engagements, staff, selectedId, keepParams }: { projectId: string; engagements: Engagement[]; staff: Person[]; selectedId: string | null; keepParams?: Record<string, string> }) {
+export function EngagementBar({ projectId, engagements, staff, selectedId, keepParams, trackOverall }: { projectId: string; engagements: Engagement[]; staff: Person[]; selectedId: string | null; keepParams?: Record<string, string>; trackOverall: boolean }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [addOpen, setAddOpen] = useState(false);
@@ -241,7 +241,19 @@ export function EngagementBar({ projectId, engagements, staff, selectedId, keepP
                 </div>
               ))}
             </div>
-            <DialogFooter className="border-t pt-3">
+            <DialogFooter className="flex-col items-stretch gap-3 border-t pt-3 sm:flex-col">
+              {engagements.length > 0 && (
+                <label className="flex cursor-pointer items-start gap-2 rounded-md border px-3 py-2 text-xs">
+                  <input
+                    type="checkbox" className="mt-0.5 accent-primary" checked={trackOverall} disabled={pending}
+                    onChange={(e) => start(async () => { const r = await setProjectOverallTrackingAction(projectId, e.target.checked); if (r.error) toast.error(r.error); else { toast.success(e.target.checked ? "Programme-level status is now tracked." : "Programme-level status is no longer tracked."); router.refresh(); } })}
+                  />
+                  <span>
+                    <span className="font-medium">Track status at programme level</span>
+                    <span className="block text-muted-foreground">Chase status updates for the &quot;Overall&quot; scope too, not just per end customer. Off by default.</span>
+                  </span>
+                </label>
+              )}
               <Button size="sm" variant="outline" className="w-full gap-1.5" onClick={() => { setName(""); setAddMembers([]); setAddOpen(true); }}><PlusIcon className="size-3.5" /> Add end customer</Button>
             </DialogFooter>
           </DialogContent>

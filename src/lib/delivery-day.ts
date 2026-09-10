@@ -48,6 +48,8 @@ export type WorkspaceRow = {
   lastStatusDays: number | null; // days since last status report (null = never)
   lastStatusDraft: boolean;
   statusDue: boolean;
+  /** Why a workspace is (not) chased: ADHOC cadence and programme-level "Overall" are exempt by design. */
+  tracking: "TRACKED" | "ADHOC" | "OFF";
   openIssues: number;
   overdueTasks: number;
   progress: number | null; // latest reported progress %

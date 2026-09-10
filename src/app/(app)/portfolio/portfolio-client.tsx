@@ -357,7 +357,11 @@ function WorkspaceTableRow({ w, showCustomer, onOpen }: { w: WorkspaceRow; showC
               <span className={cn("shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold", type.cls)}>{type.label}</span>
               {w.isEngagement && w.account && <span className="truncate text-xs text-muted-foreground">via {w.account}</span>}
             </div>
-            <div className="truncate text-xs text-muted-foreground">{w.statusLine}</div>
+            <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+              <span className="truncate">{w.statusLine}</span>
+              {!w.completed && w.tracking === "ADHOC" && <span className="shrink-0 rounded-full border border-dashed px-1.5 py-0.5 text-[10px]" title="Cadence is ad-hoc: status updates are never chased">Ad-hoc — not tracked</span>}
+              {!w.completed && w.tracking === "OFF" && <span className="shrink-0 rounded-full border border-dashed px-1.5 py-0.5 text-[10px]" title="Programme level is not tracked — switch it on under Manage end customers">Not tracked</span>}
+            </div>
           </div>
         </div>
       </TableCell>

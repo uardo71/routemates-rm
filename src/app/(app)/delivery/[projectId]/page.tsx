@@ -102,8 +102,10 @@ export default async function DeliveryProjectPage({ params, searchParams }: { pa
   // umbrella project stays open. Done ⇒ no health colour, no nudges, no banners.
   const done = projectDone || selectedEngRow?.status === "COMPLETED";
   const doneLabel = project.status === "CANCELLED" ? "Cancelled" : "Completed";
-  const customerFacing = selectedEng !== null || project.engagements.length === 0;
+  // The "Overall" scope of a programme is only chased when the PM opted in (trackOverallStatus).
+  const customerFacing = selectedEng !== null || project.engagements.length === 0 || project.trackOverallStatus;
   const latest = reports[0] ?? null;
+  const tracking: "TRACKED" | "ADHOC" | "OFF" = !customerFacing ? "OFF" : latest?.cadence === "ADHOC" ? "ADHOC" : "TRACKED";
 
   // A task is "done" if marked COMPLETED or at 100% (progress drives status).
   const planDoneT = (t: (typeof plan)[number]) => t.status === "COMPLETED" || t.progress >= 100;
@@ -197,6 +199,8 @@ export default async function DeliveryProjectPage({ params, searchParams }: { pa
               ? <span className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2.5 py-0.5 text-xs font-semibold text-muted-foreground"><CheckCircle2Icon className="size-3.5" />{doneLabel}</span>
               : <span className={cn("inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold", RAG_PILL[rag])}><span className={cn("size-2 rounded-full", RAG_DOT[rag])} />{RAG_LABEL[rag]}</span>}
             <span className="text-xs text-muted-foreground">{latest ? `${latest.sentAt ? "Last sent" : "Draft"} ${format(new Date(latest.reportDate), "MMM d")}` : "No status update yet"}</span>
+            {!done && tracking === "ADHOC" && <span className="rounded-full border border-dashed px-1.5 py-0.5 text-[10px] text-muted-foreground" title="Cadence is ad-hoc: status updates are never chased">Ad-hoc — not tracked</span>}
+            {!done && tracking === "OFF" && <span className="rounded-full border border-dashed px-1.5 py-0.5 text-[10px] text-muted-foreground" title="Programme level is not tracked — switch it on under Manage end customers">Programme level — not tracked</span>}
             <span className="text-xs text-muted-foreground">· {plan.length > 0 ? `${planDone}/${plan.length} plan tasks done` : "no plan yet"}</span>
           </div>
           <p className="mt-2 line-clamp-2 text-sm text-muted-foreground">{latest?.summary?.trim() || (statusDue ? "This customer is due a status update — send one so everyone can see where things stand." : "—")}</p>
@@ -312,6 +316,7 @@ export default async function DeliveryProjectPage({ params, searchParams }: { pa
         staff={staff}
         selectedId={selectedEng}
         keepParams={fromPortfolio ? { from: "portfolio" } : undefined}
+        trackOverall={project.trackOverallStatus}
       />
 
       {uatScriptDue && (

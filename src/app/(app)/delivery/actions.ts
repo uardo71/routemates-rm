@@ -84,6 +84,18 @@ export async function setEngagementMembersAction(input: { engagementId: string; 
   return {};
 }
 
+/** Programme-level tracking: chase status updates for the "Overall" scope of a multi-engagement
+ *  project too. Off by default — most programmes report per end customer only. */
+export async function setProjectOverallTrackingAction(projectId: string, on: boolean): Promise<{ error?: string }> {
+  const ctx = await assertManage(projectId);
+  if (ctx.error) return { error: ctx.error };
+  await prisma.project.update({ where: { id: projectId }, data: { trackOverallStatus: on } });
+  revalidatePath(`/delivery/${projectId}`);
+  revalidatePath("/delivery");
+  revalidatePath("/portfolio");
+  return {};
+}
+
 /** Marks an end customer completed (or reopens it). The umbrella project's own status is untouched —
  *  that is the point: BEKO can be done while the Tungsten portfolio keeps running. */
 export async function setEngagementStatusAction(input: { id: string; status: "ACTIVE" | "COMPLETED" }): Promise<{ error?: string }> {

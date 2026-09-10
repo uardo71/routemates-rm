@@ -91,7 +91,7 @@ export async function loadDeliveryHome(user: { id: string; companyId: string; ro
         (raidByScope.get(OVERALL)?.length ?? 0) > 0 ||
         (planByScope.get(OVERALL)?.length ?? 0) > 0 ||
         (actionsByScope.get(OVERALL)?.length ?? 0) > 0;
-      if (overallHasItems) scopes.push({ engagementId: null, name: "Overall", isEngagement: false, done: projectDone });
+      if (overallHasItems || p.trackOverallStatus) scopes.push({ engagementId: null, name: "Overall", isEngagement: false, done: projectDone });
       for (const e of p.engagements) scopes.push({ engagementId: e.id, name: e.name, isEngagement: true, done: projectDone || e.status === "COMPLETED" });
     }
 
@@ -101,14 +101,16 @@ export async function loadDeliveryHome(user: { id: string; companyId: string; ro
       const raid = raidByScope.get(k) ?? [];
       const plan = planByScope.get(k) ?? [];
       const actions = actionsByScope.get(k) ?? [];
-      // Only engagement rows and single (no-engagement) projects are "customer-facing" for status nudges.
-      const customerFacing = s.isEngagement || !hasEng;
+      // Engagement rows and single (no-engagement) projects are "customer-facing" for status nudges;
+      // a programme's "Overall" scope only when the PM opted in (trackOverallStatus).
+      const customerFacing = s.isEngagement || !hasEng || p.trackOverallStatus;
 
       const context = s.isEngagement ? `${p.client.name} · ${s.name}` : p.client.name;
       openIssuesTotal += raid.length;
 
       const lastStatusDays = last ? differenceInCalendarDays(today, new Date(last.reportDate)) : null;
       const cad = cadenceDays(last?.cadence);
+      const tracking: WorkspaceRow["tracking"] = !customerFacing ? "OFF" : last?.cadence === "ADHOC" ? "ADHOC" : "TRACKED";
       let statusDue = false;
       if (customerFacing && active && !s.done) {
         if (lastStatusDays === null) statusDue = true; // never reported
@@ -164,6 +166,10 @@ export async function loadDeliveryHome(user: { id: string; companyId: string; ro
         ? doneLabel
         : last?.summary?.trim()
         ? last.summary.trim()
+        : tracking === "ADHOC"
+        ? "Ad-hoc — not tracked"
+        : tracking === "OFF"
+        ? "Programme level — not tracked"
         : lastStatusDays === null && customerFacing && active
           ? "No status update sent yet"
           : statusDue
@@ -184,6 +190,7 @@ export async function loadDeliveryHome(user: { id: string; companyId: string; ro
         lastStatusDays,
         lastStatusDraft: last ? !last.sentAt : false,
         statusDue,
+        tracking,
         openIssues: raid.length,
         overdueTasks: overduePlan.length,
         progress: last?.progressPercent ?? null,
