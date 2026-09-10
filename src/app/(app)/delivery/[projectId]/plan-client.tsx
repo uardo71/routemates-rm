@@ -11,6 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { phaseProgress } from "@/lib/delivery";
 import type { PlanTaskStatus } from "@prisma/client";
 import { createPlanTaskAction, updatePlanTaskAction, deletePlanTaskAction, seedDefaultPlanAction, movePlanTaskAction, clearPlanAction } from "../actions";
 
@@ -110,8 +111,7 @@ export function PlanClient({ projectId, engagementId, tasks }: { projectId: stri
     const group = list.filter((t) => (t.phase ?? "General") === phase);
     const starts = group.map((t) => dnum(t.startDate)).filter((n) => !Number.isNaN(n));
     const ends = group.map((t) => dnum(t.dueDate ?? t.startDate)).filter((n) => !Number.isNaN(n));
-    const real = group.filter((t) => !t.isMilestone);
-    const progress = real.length ? Math.round(real.reduce((s, t) => s + t.progress, 0) / real.length) : 0;
+    const progress = phaseProgress(group);
     flat.push({ kind: "phase", label: phase, wbs: String(pi + 1), s: starts.length ? Math.min(...starts) : NaN, e: ends.length ? Math.max(...ends) : NaN, progress });
     group.forEach((t, ti) => flat.push({ kind: "task", wbs: `${pi + 1}.${ti + 1}`, t }));
   });

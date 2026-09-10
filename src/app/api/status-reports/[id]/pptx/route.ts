@@ -4,7 +4,7 @@ import { format } from "date-fns";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/session";
 import { can, canManageProject } from "@/lib/permissions";
-import { SEVERITY_LABEL, RAG_DIMENSIONS, RAG_DIMENSION_LABEL, RAG_LABEL } from "@/lib/delivery";
+import { SEVERITY_LABEL, RAG_DIMENSIONS, RAG_DIMENSION_LABEL, RAG_LABEL, phaseProgress, paginate } from "@/lib/delivery";
 import type { RagStatus, PlanTaskStatus } from "@prisma/client";
 
 const fmt = (d: Date | null) => (d ? format(d, "dd MMM yyyy") : "—");
@@ -156,15 +156,29 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   }
   footer(s2, 2);
 
-  // ---------------- Slide 3 — Project Plan (Gantt, mirrors the print PDF) ----------------
-  const s3 = pptx.addSlide();
-  sectionTitle(s3, "Project Plan");
+  // ---------------- Slide 3+ — Project Plan (Gantt, mirrors the print PDF; paginated) ----------------
   const DAY = 86_400_000;
+  const ROWS_PER_SLIDE = 30;
   const allT = p.planTasks.flatMap((t) => [t.startDate?.getTime(), t.dueDate?.getTime()]).filter((n): n is number => n != null);
+  let slideNo = 3;
+
+  const legend = (sl: pptxgen.Slide) => {
+    ([["Not started", "NOT_STARTED"], ["In progress", "IN_PROGRESS"], ["Completed", "COMPLETED"], ["Blocked", "BLOCKED"]] as [string, PlanTaskStatus][]).forEach(([label, st], i) => {
+      sl.addShape("rect", { x: 0.6 + i * 1.7, y: 6.9, w: 0.14, h: 0.14, fill: { color: STATUS_HEX[st] } });
+      sl.addText(label, { x: 0.8 + i * 1.7, y: 6.85, w: 1.5, fontSize: 7.5, color: MUTE });
+    });
+    sl.addShape("diamond", { x: 0.6 + 4 * 1.7, y: 6.9, w: 0.13, h: 0.13, fill: { color: BRASS } });
+    sl.addText("Milestone", { x: 0.8 + 4 * 1.7, y: 6.85, w: 1.5, fontSize: 7.5, color: MUTE });
+  };
+
   if (allT.length === 0) {
+    const s3 = pptx.addSlide();
+    sectionTitle(s3, "Project Plan");
     s3.addText("No project plan has been built yet.", { x: 0.6, y: 1.6, fontSize: 13, color: MUTE });
+    legend(s3);
+    footer(s3, slideNo++);
   } else {
-    // flat rows: phase summary (with rollup %) + its tasks
+    // flat rows: phase summary (duration-weighted rollup %) + its tasks
     const phaseList = [...new Set(p.planTasks.map((t) => t.phase ?? "General"))];
     type FR = { kind: "phase"; label: string; wbs: string; s: number; e: number; progress: number } | { kind: "task"; wbs: string; t: (typeof p.planTasks)[number] };
     const flat: FR[] = [];
@@ -172,96 +186,93 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       const g = p.planTasks.filter((t) => (t.phase ?? "General") === ph);
       const ss = g.map((t) => t.startDate?.getTime()).filter((n): n is number => n != null);
       const ee = g.map((t) => (t.dueDate ?? t.startDate)?.getTime()).filter((n): n is number => n != null);
-      const real = g.filter((t) => !t.isMilestone);
-      const progress = real.length ? Math.round(real.reduce((s, t) => s + t.progress, 0) / real.length) : 0;
-      flat.push({ kind: "phase", label: ph, wbs: String(pi + 1), s: ss.length ? Math.min(...ss) : NaN, e: ee.length ? Math.max(...ee) : NaN, progress });
+      flat.push({ kind: "phase", label: ph, wbs: String(pi + 1), s: ss.length ? Math.min(...ss) : NaN, e: ee.length ? Math.max(...ee) : NaN, progress: phaseProgress(g) });
       g.forEach((t, ti) => flat.push({ kind: "task", wbs: `${pi + 1}.${ti + 1}`, t }));
     });
-    const rowsAll = flat.slice(0, 30);
 
-    // month-snapped window
+    // month-snapped window (shared by every page so the timeline reads the same across slides)
     const a = new Date(Math.min(...allT)); a.setUTCDate(1); a.setUTCHours(0, 0, 0, 0);
     const b = new Date(Math.max(...allT)); b.setUTCMonth(b.getUTCMonth() + 1, 1); b.setUTCHours(0, 0, 0, 0);
     const min = a.getTime(), max = b.getTime();
     const totalDays = Math.max(1, Math.round((max - min) / DAY));
+    const months: number[] = [];
+    { const d = new Date(min); let gi = 0; while (d.getTime() <= max && gi++ < 40) { months.push(d.getTime()); d.setUTCMonth(d.getUTCMonth() + 1); } }
 
     // layout
     const TOP = 1.35, HDR = 0.28;
     const WBSX = 0.5, NAMEX = 0.82, STARTX = 3.55, DUEX = 4.17, LEFTW = 4.27;
     const TLX = 4.95, TLW = 7.8;
     const ROWSY = TOP + HDR;
-    const rowH = Math.min(0.2, (6.75 - ROWSY) / Math.max(1, rowsAll.length));
     const xOf = (ms: number) => TLX + (TLW * (ms - min)) / (totalDays * DAY);
 
-    // header band
-    s3.addShape("rect", { x: WBSX, y: TOP, w: LEFTW, h: HDR, fill: { color: INK } });
-    s3.addShape("rect", { x: TLX, y: TOP, w: TLW, h: HDR, fill: { color: INK } });
-    ([["#", WBSX + 0.03], ["Task", NAMEX], ["Start", STARTX], ["Due", DUEX]] as [string, number][]).forEach(([t, x]) => s3.addText(t, { x, y: TOP, w: 1, h: HDR, fontSize: 8, bold: true, color: WHITE, valign: "middle" }));
-    // month labels + gridlines
-    const months: number[] = [];
-    { const d = new Date(min); let gi = 0; while (d.getTime() <= max && gi++ < 40) { months.push(d.getTime()); d.setUTCMonth(d.getUTCMonth() + 1); } }
-    months.forEach((mm) => {
-      const gxp = xOf(mm);
-      s3.addText(format(new Date(mm), "MMM ''yy"), { x: gxp + 0.03, y: TOP, w: 1, h: HDR, fontSize: 7.5, color: "C9D1D9", valign: "middle" });
-    });
+    const pages = paginate(flat, ROWS_PER_SLIDE);
+    pages.forEach((rows, pageIdx) => {
+      const s3 = pptx.addSlide();
+      sectionTitle(s3, pages.length > 1 ? `Project Plan (${pageIdx + 1}/${pages.length})` : "Project Plan");
+      const rowH = Math.min(0.2, (6.75 - ROWSY) / Math.max(1, rows.length));
 
-    // row backgrounds + left text
-    rowsAll.forEach((r, i) => {
-      const y = ROWSY + i * rowH;
-      if (r.kind === "phase") {
-        s3.addShape("rect", { x: WBSX, y, w: LEFTW, h: rowH, fill: { color: "EEF1F3" } });
-        s3.addShape("rect", { x: TLX, y, w: TLW, h: rowH, fill: { color: "EEF1F3" } });
-        s3.addText(r.wbs, { x: WBSX + 0.03, y, w: 0.3, h: rowH, fontSize: 7.5, color: MUTE, valign: "middle" });
-        s3.addText(r.label, { x: NAMEX, y, w: 2.7, h: rowH, fontSize: 8, bold: true, color: INK, valign: "middle" });
-      } else {
-        const t = r.t;
-        s3.addText(r.wbs, { x: WBSX + 0.03, y, w: 0.3, h: rowH, fontSize: 7, color: MUTE, valign: "middle" });
-        s3.addText(`${t.isMilestone ? "◆ " : ""}${t.name}`, { x: NAMEX + 0.12, y, w: 2.55, h: rowH, fontSize: 7.5, bold: t.isMilestone, color: INK, valign: "middle" });
-        s3.addText(fmtShort(t.startDate), { x: STARTX, y, w: 0.6, h: rowH, fontSize: 7, color: MUTE, valign: "middle" });
-        s3.addText(fmtShort(t.dueDate ?? t.startDate), { x: DUEX, y, w: 0.6, h: rowH, fontSize: 7, color: MUTE, valign: "middle" });
-      }
-    });
+      // header band
+      s3.addShape("rect", { x: WBSX, y: TOP, w: LEFTW, h: HDR, fill: { color: INK } });
+      s3.addShape("rect", { x: TLX, y: TOP, w: TLW, h: HDR, fill: { color: INK } });
+      ([["#", WBSX + 0.03], ["Task", NAMEX], ["Start", STARTX], ["Due", DUEX]] as [string, number][]).forEach(([t, x]) => s3.addText(t, { x, y: TOP, w: 1, h: HDR, fontSize: 8, bold: true, color: WHITE, valign: "middle" }));
+      months.forEach((mm) => {
+        const gxp = xOf(mm);
+        s3.addText(format(new Date(mm), "MMM ''yy"), { x: gxp + 0.03, y: TOP, w: 1, h: HDR, fontSize: 7.5, color: "C9D1D9", valign: "middle" });
+      });
 
-    // gridlines over the timeline + left/timeline divider
-    const gridH = rowsAll.length * rowH;
-    months.forEach((mm) => s3.addShape("line", { x: xOf(mm), y: ROWSY, w: 0, h: gridH, line: { color: "E8ECEF", width: 0.5 } }));
-    s3.addShape("line", { x: TLX, y: TOP, w: 0, h: HDR + gridH, line: { color: LINE, width: 0.75 } });
-
-    // bars / diamonds
-    rowsAll.forEach((r, i) => {
-      const cy = ROWSY + i * rowH + rowH / 2;
-      if (r.kind === "phase") {
-        if (!Number.isNaN(r.s) && !Number.isNaN(r.e)) {
-          const bx = xOf(r.s), bw = Math.max(0.06, xOf(r.e) - bx);
-          s3.addShape("roundRect", { x: bx, y: cy - 0.045, w: bw, h: 0.09, rectRadius: 0.02, fill: { color: "DDE2E6" } });
-          if (r.progress > 0) s3.addShape("roundRect", { x: bx, y: cy - 0.045, w: Math.max(0.03, (bw * r.progress) / 100), h: 0.09, rectRadius: 0.02, fill: { color: r.progress >= 100 ? STATUS_HEX.COMPLETED : "3B6EA8" } });
+      // row backgrounds + left text
+      rows.forEach((r, i) => {
+        const y = ROWSY + i * rowH;
+        if (r.kind === "phase") {
+          s3.addShape("rect", { x: WBSX, y, w: LEFTW, h: rowH, fill: { color: "EEF1F3" } });
+          s3.addShape("rect", { x: TLX, y, w: TLW, h: rowH, fill: { color: "EEF1F3" } });
+          s3.addText(r.wbs, { x: WBSX + 0.03, y, w: 0.3, h: rowH, fontSize: 7.5, color: MUTE, valign: "middle" });
+          s3.addText(`${r.label}  ·  ${r.progress}%`, { x: NAMEX, y, w: 2.7, h: rowH, fontSize: 8, bold: true, color: INK, valign: "middle" });
+        } else {
+          const t = r.t;
+          s3.addText(r.wbs, { x: WBSX + 0.03, y, w: 0.3, h: rowH, fontSize: 7, color: MUTE, valign: "middle" });
+          s3.addText(`${t.isMilestone ? "◆ " : ""}${t.name}`, { x: NAMEX + 0.12, y, w: 2.55, h: rowH, fontSize: 7.5, bold: t.isMilestone, color: INK, valign: "middle" });
+          s3.addText(fmtShort(t.startDate), { x: STARTX, y, w: 0.6, h: rowH, fontSize: 7, color: MUTE, valign: "middle" });
+          s3.addText(fmtShort(t.dueDate ?? t.startDate), { x: DUEX, y, w: 0.6, h: rowH, fontSize: 7, color: MUTE, valign: "middle" });
         }
-      } else {
-        const t = r.t;
-        const s = t.startDate?.getTime(); const e = (t.dueDate ?? t.startDate)?.getTime();
-        if (t.isMilestone && e != null) {
-          s3.addShape("diamond", { x: xOf(e) - 0.055, y: cy - 0.055, w: 0.11, h: 0.11, fill: { color: BRASS } });
-          s3.addText(fmtShort(new Date(e)), { x: xOf(e) + 0.08, y: cy - 0.09, w: 0.8, h: 0.18, fontSize: 6.5, bold: true, color: INK, valign: "middle" });
-        } else if (s != null && e != null) {
-          const bx = xOf(s), bw = Math.max(0.06, xOf(e) - bx);
-          s3.addShape("roundRect", { x: bx, y: cy - 0.055, w: bw, h: 0.11, rectRadius: 0.02, fill: { color: "E6EAEE" } });
-          if (t.progress > 0) s3.addShape("roundRect", { x: bx, y: cy - 0.055, w: Math.max(0.03, (bw * t.progress) / 100), h: 0.11, rectRadius: 0.02, fill: { color: STATUS_HEX[deriveStatus(t.progress, t.status)] } });
+      });
+
+      // gridlines over the timeline + left/timeline divider
+      const gridH = rows.length * rowH;
+      months.forEach((mm) => s3.addShape("line", { x: xOf(mm), y: ROWSY, w: 0, h: gridH, line: { color: "E8ECEF", width: 0.5 } }));
+      s3.addShape("line", { x: TLX, y: TOP, w: 0, h: HDR + gridH, line: { color: LINE, width: 0.75 } });
+
+      // bars / diamonds
+      rows.forEach((r, i) => {
+        const cy = ROWSY + i * rowH + rowH / 2;
+        if (r.kind === "phase") {
+          if (!Number.isNaN(r.s) && !Number.isNaN(r.e)) {
+            const bx = xOf(r.s), bw = Math.max(0.06, xOf(r.e) - bx);
+            s3.addShape("roundRect", { x: bx, y: cy - 0.045, w: bw, h: 0.09, rectRadius: 0.02, fill: { color: "DDE2E6" } });
+            if (r.progress > 0) s3.addShape("roundRect", { x: bx, y: cy - 0.045, w: Math.max(0.03, (bw * r.progress) / 100), h: 0.09, rectRadius: 0.02, fill: { color: r.progress >= 100 ? STATUS_HEX.COMPLETED : "3B6EA8" } });
+          }
+        } else {
+          const t = r.t;
+          const s = t.startDate?.getTime(); const e = (t.dueDate ?? t.startDate)?.getTime();
+          if (t.isMilestone && e != null) {
+            s3.addShape("diamond", { x: xOf(e) - 0.055, y: cy - 0.055, w: 0.11, h: 0.11, fill: { color: BRASS } });
+            s3.addText(fmtShort(new Date(e)), { x: xOf(e) + 0.08, y: cy - 0.09, w: 0.8, h: 0.18, fontSize: 6.5, bold: true, color: INK, valign: "middle" });
+          } else if (s != null && e != null) {
+            const bx = xOf(s), bw = Math.max(0.06, xOf(e) - bx);
+            s3.addShape("roundRect", { x: bx, y: cy - 0.055, w: bw, h: 0.11, rectRadius: 0.02, fill: { color: "E6EAEE" } });
+            if (t.progress > 0) s3.addShape("roundRect", { x: bx, y: cy - 0.055, w: Math.max(0.03, (bw * t.progress) / 100), h: 0.11, rectRadius: 0.02, fill: { color: STATUS_HEX[deriveStatus(t.progress, t.status)] } });
+          }
         }
-      }
+      });
+      if (pageIdx < pages.length - 1) s3.addText(`continues on the next slide (${flat.length - (pageIdx + 1) * ROWS_PER_SLIDE} more rows)`, { x: WBSX, y: ROWSY + gridH + 0.05, fontSize: 7.5, italic: true, color: MUTE });
+      legend(s3);
+      footer(s3, slideNo++);
     });
-    if (flat.length > 30) s3.addText(`+ ${flat.length - 30} more rows`, { x: WBSX, y: ROWSY + gridH + 0.05, fontSize: 7.5, italic: true, color: MUTE });
   }
-  // legend
-  ([["Not started", "NOT_STARTED"], ["In progress", "IN_PROGRESS"], ["Completed", "COMPLETED"], ["Blocked", "BLOCKED"]] as [string, PlanTaskStatus][]).forEach(([label, st], i) => {
-    s3.addShape("rect", { x: 0.6 + i * 1.7, y: 6.9, w: 0.14, h: 0.14, fill: { color: STATUS_HEX[st] } });
-    s3.addText(label, { x: 0.8 + i * 1.7, y: 6.85, w: 1.5, fontSize: 7.5, color: MUTE });
-  });
-  s3.addShape("diamond", { x: 0.6 + 4 * 1.7, y: 6.9, w: 0.13, h: 0.13, fill: { color: BRASS } });
-  s3.addText("Milestone", { x: 0.8 + 4 * 1.7, y: 6.85, w: 1.5, fontSize: 7.5, color: MUTE });
-  footer(s3, 3);
 
   // ---------------- Slide 4 — Thank you ----------------
   const s4 = pptx.addSlide();
+  void slideNo; // the closing slide carries no number, as before
   s4.background = { color: INK };
   s4.addShape("rect", { x: 0.9, y: 3.5, w: 1.2, h: 0.08, fill: { color: BRASS } });
   s4.addText("Questions & discussion", { x: 0.85, y: 2.6, w: 11.6, fontSize: 34, bold: true, color: WHITE });

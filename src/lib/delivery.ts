@@ -43,3 +43,38 @@ export function worstRag(...rags: (RagStatus | null | undefined)[]): RagStatus {
 export function ragDimensionsDiffer(r: { overallRag: RagStatus; scheduleRag: RagStatus; budgetRag: RagStatus; scopeRag: RagStatus }): boolean {
   return RAG_DIMENSIONS.some((d) => r[d] !== r.overallRag);
 }
+
+// ---------- plan rollups ----------
+
+export type PlanProgressInput = { progress: number; isMilestone: boolean; startDate: Date | string | null; dueDate: Date | string | null };
+
+const DAY_MS = 86_400_000;
+function spanDays(t: PlanProgressInput): number | null {
+  if (!t.startDate || !t.dueDate) return null;
+  const a = new Date(t.startDate).getTime();
+  const b = new Date(t.dueDate).getTime();
+  if (Number.isNaN(a) || Number.isNaN(b)) return null;
+  return Math.max(1, Math.round((b - a) / DAY_MS) + 1); // inclusive: a one-day task weighs 1
+}
+
+/** A phase's progress, weighted by each task's duration in days so a two-week task counts twice a
+ *  one-week one. Milestones carry no work and are ignored. Falls back to the plain average when any
+ *  task lacks dates (a half-dated plan must not silently over-weight the dated half). */
+export function phaseProgress(tasks: PlanProgressInput[]): number {
+  const real = tasks.filter((t) => !t.isMilestone);
+  if (real.length === 0) return 0;
+  const spans = real.map(spanDays);
+  if (spans.some((d) => d == null)) return Math.round(real.reduce((s, t) => s + t.progress, 0) / real.length);
+  const days = spans as number[];
+  const total = days.reduce((s, d) => s + d, 0);
+  return Math.round(real.reduce((s, t, i) => s + t.progress * days[i], 0) / total);
+}
+
+/** Splits rows into pages of `perPage` (the Gantt slide holds ~30 rows legibly). */
+export function paginate<T>(rows: T[], perPage: number): T[][] {
+  const size = Math.max(1, Math.floor(perPage));
+  const pages: T[][] = [];
+  for (let i = 0; i < rows.length; i += size) pages.push(rows.slice(i, i + size));
+  return pages.length ? pages : [[]];
+}
+
