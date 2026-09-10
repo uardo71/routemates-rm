@@ -4,26 +4,34 @@ import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
-  PencilIcon, Trash2Icon, ClockIcon, SaveIcon, RotateCcwIcon, MessageSquareIcon, HistoryIcon, TimerIcon,
-  TagIcon, Building2Icon, FolderIcon, ServerIcon, BoxIcon, HashIcon, CalendarIcon, UserIcon, CheckCircle2Icon, AlertTriangleIcon,
+  Trash2Icon, ClockIcon, SaveIcon, RotateCcwIcon, MessageSquareIcon, HistoryIcon, TimerIcon,
+  CheckCircle2Icon, AlertTriangleIcon, PencilLineIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { InitialsAvatar } from "@/components/initials-avatar";
 import { cn } from "@/lib/utils";
-import {
-  TICKET_PRIORITIES, TICKET_PRIORITY_LABEL, TICKET_PRIORITY_TONE, TICKET_ACTIVITY_LABEL,
-} from "@/lib/ticket";
+import { TICKET_PRIORITIES, TICKET_PRIORITY_LABEL, TICKET_PRIORITY_DOT, TICKET_ACTIVITY_LABEL } from "@/lib/ticket";
 import { labelFromTimestamps } from "@/lib/sla";
+import { statusColor } from "@/lib/ticket-config";
 import type { TicketPriority, TicketStatusCategory } from "@prisma/client";
 import { slaState } from "../sla";
-import { TypeChip, StatusChip } from "../ticket-visuals";
+import { TypeIcon, StatusDot } from "../ticket-visuals";
 import { FieldControl, type PubField } from "../field-control";
 import { Conversation } from "../conversation";
 import type { CommentNode } from "../conversation";
-import { applyWorkflowAction, updateTicketDetailsAction, updateTicketDescriptionAction, addCommentAction, deleteTicketAttachmentAction, editCommentAction, deleteCommentAction, addWorklogAction, deleteWorklogAction } from "../actions";
+import {
+  applyWorkflowAction, updateTicketDetailsAction, addCommentAction, deleteTicketAttachmentAction,
+  editCommentAction, deleteCommentAction, addWorklogAction, deleteWorklogAction,
+} from "../actions";
+
+// Laid out like an Azure DevOps work item: a sticky header (type eyebrow, title, assignee, state
+// strip, tabs) over a three-column body — description + discussion on the left, classification and
+// SLA in the middle, the type's own fields and resolution on the right. Everything is edited in
+// place; changes collect into one draft and go out on a single Save, exactly like DevOps.
 
 type Opt = { id: string; name: string };
 type Worklog = { id: string; userName: string; minutes: number; workedOn: string; note: string; mine: boolean };
@@ -46,101 +54,249 @@ type Detail = {
   worklogs: Worklog[]; fields: FieldVal[];
 };
 
-const selectCls = "h-8 w-full rounded-md border bg-transparent px-2 text-sm outline-none focus:border-primary/50";
+const selectCls = "h-8 w-full rounded-md border bg-transparent px-2 text-sm outline-none focus:border-primary/50 disabled:border-transparent disabled:px-0 disabled:opacity-100";
+const inputCls = "h-8";
 const fmtDT = (s: string) => (s ? s.slice(0, 16).replace("T", " ") : "—");
 const fmtMin = (m: number) => `${Math.floor(m / 60)}h${m % 60 ? ` ${m % 60}m` : ""}`;
 
-export function TicketDetailClient({ t, config, canManage, users, clients, projects, conversation, history }: {
+type Draft = {
+  title: string; description: string; statusId: string; assigneeId: string; priority: TicketPriority;
+  clientId: string; projectId: string; category: string; systemRef: string; moduleRef: string; dueDate: string; resolution: string;
+  fields: Record<string, unknown>;
+};
+function draftFrom(t: Detail): Draft {
+  return {
+    title: t.title, description: t.description, statusId: t.statusId, assigneeId: t.assigneeId ?? "", priority: t.priority,
+    clientId: t.clientId ?? "", projectId: t.projectId ?? "", category: t.category, systemRef: t.systemRef, moduleRef: t.moduleRef,
+    dueDate: t.dueDate, resolution: t.resolution,
+    fields: Object.fromEntries(t.fields.map((f) => [f.id, f.value])),
+  };
+}
+
+export function TicketDetailClient(props: {
+  t: Detail; config: DetailConfig; canManage: boolean; users: Opt[]; clients: Opt[]; projects: Opt[];
+  conversation: CommentNode[]; history: HistoryEvent[];
+}) {
+  // Re-key on the server's version of the ticket so a refresh after Save resets the draft without
+  // an effect that syncs state to props.
+  return <WorkItem key={JSON.stringify(draftFrom(props.t)) + props.t.typeId} {...props} />;
+}
+
+function WorkItem({ t, config, canManage, users, clients, projects, conversation, history }: {
   t: Detail; config: DetailConfig; canManage: boolean; users: Opt[]; clients: Opt[]; projects: Opt[];
   conversation: CommentNode[]; history: HistoryEvent[];
 }) {
   const router = useRouter();
-  const [tab, setTab] = React.useState<"conversation" | "history" | "worklog">("conversation");
-  const [editing, setEditing] = React.useState(false);
-  const shownFields = t.fields.filter((f) => f.display);
+  const [tab, setTab] = React.useState<"details" | "history" | "worklog">("details");
+  const [typeDialog, setTypeDialog] = React.useState(false);
+  const baseline = React.useMemo(() => draftFrom(t), [t]);
+  const [d, setD] = React.useState<Draft>(baseline);
+  const [saving, setSaving] = React.useState(false);
+  const [err, setErr] = React.useState<string | null>(null);
+  const set = (p: Partial<Draft>) => setD((x) => ({ ...x, ...p }));
+
+  const workflowDirty = d.statusId !== baseline.statusId || d.assigneeId !== baseline.assigneeId || d.priority !== baseline.priority;
+  const detailsDirty = JSON.stringify({ ...d, statusId: 0, assigneeId: 0, priority: 0 }) !== JSON.stringify({ ...baseline, statusId: 0, assigneeId: 0, priority: 0 });
+  const dirty = workflowDirty || detailsDirty;
+
+  async function save() {
+    setSaving(true); setErr(null);
+    try {
+      if (workflowDirty) {
+        const r = await applyWorkflowAction(t.id, { statusId: d.statusId, assigneeId: canManage ? (d.assigneeId || null) : undefined, priority: canManage ? d.priority : undefined });
+        if (r.error) { setErr(r.error); return; }
+      }
+      if (detailsDirty && canManage) {
+        const r = await updateTicketDetailsAction(t.id, {
+          title: d.title, description: d.description, typeId: t.typeId,
+          clientId: d.clientId || null, projectId: d.projectId || null,
+          category: d.category, systemRef: d.systemRef, moduleRef: d.moduleRef,
+          dueDate: d.dueDate || null, resolution: d.resolution, fields: d.fields,
+        });
+        if (r.error) { setErr(r.error); return; }
+      }
+      router.refresh();
+    } finally {
+      setSaving(false);
+    }
+  }
 
   const post = React.useCallback((fd: FormData) => addCommentAction(t.id, fd), [t.id]);
+  const commentCount = countComments(conversation);
+  const loggedMin = t.worklogs.reduce((s, w) => s + w.minutes, 0);
+  const assignee = users.find((u) => u.id === d.assigneeId);
+  const statusOf = config.statuses.find((s) => s.id === d.statusId);
+  const typeTone = statusColor(t.typeColor);
+  const ro = !canManage; // read-only for everything except status (workflow) and comments
 
   return (
-    <div className="mx-auto flex max-w-6xl flex-col gap-5">
-      <Link href="/tickets" className="text-sm text-muted-foreground hover:underline">← Tickets</Link>
+    <div className="flex flex-col gap-5">
+      <Link href={t.clientId ? `/tickets/c/${t.clientId}` : "/tickets"} className="text-sm text-muted-foreground hover:underline">
+        ← {t.clientName ?? "Support"}
+      </Link>
 
-      {/* Header */}
-      <div className="overflow-hidden rounded-xl border bg-card">
-        <div className="h-1.5 bg-gradient-to-r from-primary/40 via-primary/10 to-transparent" />
-        <div className="flex flex-wrap items-start justify-between gap-3 p-4">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-              <span className="font-mono">{t.number}</span>
-              <TypeChip name={t.typeName} color={t.typeColor} icon={t.typeIcon} />
-              <span className={cn("rounded-full px-2 py-0.5 text-xs font-medium", TICKET_PRIORITY_TONE[t.priority])}>{TICKET_PRIORITY_LABEL[t.priority]}</span>
-              <LiveSla t={t} />
+      {/* ---------- Header (sticky, like the DevOps work-item bar) ---------- */}
+      <div className="sticky top-0 z-20 overflow-hidden rounded-lg border bg-card shadow-sm">
+        <div className="flex">
+          <div className={cn("w-1.5 shrink-0", typeTone.dot)} />
+          <div className="flex min-w-0 flex-1 flex-col gap-3 p-4">
+            {/* eyebrow */}
+            <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+              <TypeIcon icon={t.typeIcon} className="size-3.5" /> {t.typeName} <span className="font-mono normal-case tracking-normal">{t.number}</span>
             </div>
-            <h1 className="mt-1.5 text-2xl font-semibold tracking-tight">{t.title}</h1>
-            <p className="mt-0.5 text-sm text-muted-foreground">
-              {t.clientName ? `${t.clientName} · ` : ""}{t.projectName ? `${t.projectName} · ` : ""}raised by {t.requesterName} · {fmtDT(t.createdAt)}
-            </p>
-          </div>
-          <StatusChip name={t.statusName} color={t.statusColor} className="px-3 py-1 text-sm" />
-        </div>
-      </div>
 
-      <div className="grid gap-5 lg:grid-cols-[1fr_340px]">
-        {/* Main */}
-        <div className="flex flex-col gap-5">
-          <DescriptionCard t={t} canManage={canManage} onSaved={() => router.refresh()} />
-
-          {shownFields.length > 0 && (
-            <Card title="Fields">
-              <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm sm:grid-cols-3">
-                {shownFields.map((f) => (
-                  <div key={f.id} className="flex flex-col">
-                    <dt className="text-[0.625rem] font-semibold uppercase tracking-wide text-muted-foreground">{f.name}</dt>
-                    <dd className="mt-0.5">{f.display}</dd>
-                  </div>
-                ))}
-              </dl>
-            </Card>
-          )}
-
-          <div className="rounded-xl border bg-card">
-            <div className="flex items-center gap-1 border-b p-1.5">
-              <Tab active={tab === "conversation"} onClick={() => setTab("conversation")} icon={<MessageSquareIcon className="size-4" />} label="Conversation" count={countComments(conversation)} />
-              <Tab active={tab === "history"} onClick={() => setTab("history")} icon={<HistoryIcon className="size-4" />} label="History" count={history.length} />
-              <Tab active={tab === "worklog"} onClick={() => setTab("worklog")} icon={<TimerIcon className="size-4" />} label="Worklog" />
-            </div>
-            <div className="p-4">
-              {tab === "conversation" && (
-                <Conversation comments={conversation} canInternal={canManage} postAction={post} deleteAttachmentAction={deleteTicketAttachmentAction} editAction={editCommentAction} deleteCommentAction={deleteCommentAction} />
+            {/* title */}
+            <div className="flex items-baseline gap-3">
+              <span className="shrink-0 font-mono text-lg text-muted-foreground">{t.number.replace(/^TKT-0*/, "")}</span>
+              {ro ? (
+                <h1 className="min-w-0 truncate text-xl font-semibold tracking-tight">{d.title}</h1>
+              ) : (
+                <input
+                  value={d.title}
+                  onChange={(e) => set({ title: e.target.value })}
+                  className="min-w-0 flex-1 rounded-md border border-transparent bg-transparent px-1 text-xl font-semibold tracking-tight outline-none hover:border-border focus:border-primary/50"
+                  aria-label="Title"
+                />
               )}
-              {tab === "history" && <History events={history} />}
-              {tab === "worklog" && <WorklogPanel t={t} onChanged={() => router.refresh()} />}
+            </div>
+
+            {/* meta row: assignee · comments · SLA ····· save/undo · change type */}
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+              <div className="flex items-center gap-2">
+                <InitialsAvatar name={assignee?.name ?? "?"} size="sm" className={cn(!assignee && "opacity-40")} />
+                {ro ? (
+                  <span className="text-sm">{t.assigneeName ?? <span className="text-muted-foreground">Unassigned</span>}</span>
+                ) : (
+                  <select value={d.assigneeId} onChange={(e) => set({ assigneeId: e.target.value })} className="h-8 rounded-md border border-transparent bg-transparent pr-6 text-sm hover:border-border focus:border-primary/50" aria-label="Assigned to">
+                    <option value="">Unassigned</option>
+                    {users.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+                  </select>
+                )}
+              </div>
+              <span className="inline-flex items-center gap-1 text-sm text-muted-foreground"><MessageSquareIcon className="size-4" /> {commentCount} Comment{commentCount === 1 ? "" : "s"}</span>
+              <LiveSla t={t} />
+
+              <div className="ml-auto flex items-center gap-2">
+                {err && <span className="text-sm text-destructive">{err}</span>}
+                {dirty && (
+                  <>
+                    <Button size="sm" onClick={save} disabled={saving} className="gap-1.5"><SaveIcon className="size-4" /> {saving ? "Saving…" : "Save"}</Button>
+                    <Button size="sm" variant="outline" onClick={() => { setD(baseline); setErr(null); }} disabled={saving} className="gap-1.5"><RotateCcwIcon className="size-3.5" /> Undo</Button>
+                  </>
+                )}
+                {canManage && !dirty && (
+                  <Button size="sm" variant="ghost" onClick={() => setTypeDialog(true)} className="gap-1.5 text-muted-foreground" title="Change the ticket type (resets status and fields)">
+                    <PencilLineIcon className="size-4" /> Change type
+                  </Button>
+                )}
+              </div>
+            </div>
+
+            {/* state strip: State / Priority  |  Client / Project */}
+            <div className="grid grid-cols-2 gap-x-6 gap-y-2 border-t pt-3 sm:grid-cols-4">
+              <Strip label="State">
+                <div className="flex items-center gap-2">
+                  <StatusDot color={statusOf?.color ?? t.statusColor} />
+                  <select value={d.statusId} onChange={(e) => set({ statusId: e.target.value })} className="h-7 flex-1 rounded-md border border-transparent bg-transparent text-sm hover:border-border focus:border-primary/50" aria-label="State">
+                    {config.statuses.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </select>
+                </div>
+              </Strip>
+              <Strip label="Priority">
+                <div className="flex items-center gap-2">
+                  <span className={cn("size-2 shrink-0 rounded-full", TICKET_PRIORITY_DOT[d.priority])} />
+                  {ro ? <span className="text-sm">{TICKET_PRIORITY_LABEL[d.priority]}</span> : (
+                    <select value={d.priority} onChange={(e) => set({ priority: e.target.value as TicketPriority })} className="h-7 flex-1 rounded-md border border-transparent bg-transparent text-sm hover:border-border focus:border-primary/50" aria-label="Priority">
+                      {TICKET_PRIORITIES.map((p) => <option key={p} value={p}>{TICKET_PRIORITY_LABEL[p]}</option>)}
+                    </select>
+                  )}
+                </div>
+              </Strip>
+              <Strip label="Client">
+                {ro ? <Ro>{t.clientName}</Ro> : (
+                  <select value={d.clientId} onChange={(e) => set({ clientId: e.target.value })} className="h-7 w-full rounded-md border border-transparent bg-transparent text-sm hover:border-border focus:border-primary/50" aria-label="Client">
+                    <option value="">—</option>{clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                )}
+              </Strip>
+              <Strip label="Project">
+                {ro ? <Ro>{t.projectName}</Ro> : (
+                  <select value={d.projectId} onChange={(e) => set({ projectId: e.target.value })} className="h-7 w-full rounded-md border border-transparent bg-transparent text-sm hover:border-border focus:border-primary/50" aria-label="Project">
+                    <option value="">—</option>{projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  </select>
+                )}
+              </Strip>
+            </div>
+
+            {/* tabs, right-aligned like DevOps */}
+            <div className="-mb-4 -mx-4 flex items-center justify-end gap-1 border-t bg-muted/30 px-2 py-1">
+              <Tab active={tab === "details"} onClick={() => setTab("details")} icon={<PencilLineIcon className="size-4" />} label="Details" />
+              <Tab active={tab === "history"} onClick={() => setTab("history")} icon={<HistoryIcon className="size-4" />} label="History" count={history.length} />
+              <Tab active={tab === "worklog"} onClick={() => setTab("worklog")} icon={<TimerIcon className="size-4" />} label={loggedMin > 0 ? `Worklog · ${fmtMin(loggedMin)}` : "Worklog"} />
             </div>
           </div>
         </div>
-
-        {/* Sidebar */}
-        <div className="flex flex-col gap-4">
-          <Properties key={`${t.statusId}:${t.assigneeId ?? ""}:${t.priority}`} t={t} config={config} canManage={canManage} users={users} onSaved={() => router.refresh()} />
-
-          <Card title="Details" action={canManage ? <button onClick={() => setEditing(true)} className="text-muted-foreground hover:text-primary"><PencilIcon className="size-3.5" /></button> : undefined}>
-            <dl className="flex flex-col">
-              <DetailRow icon={<TagIcon className="size-3.5" />} k="Type" v={t.typeName} />
-              <DetailRow icon={<Building2Icon className="size-3.5" />} k="Client" v={t.clientName} />
-              <DetailRow icon={<FolderIcon className="size-3.5" />} k="Project" v={t.projectName} />
-              <DetailRow icon={<ServerIcon className="size-3.5" />} k="System / CI" v={t.systemRef} />
-              <DetailRow icon={<BoxIcon className="size-3.5" />} k="Module" v={t.moduleRef} />
-              <DetailRow icon={<HashIcon className="size-3.5" />} k="Category" v={t.category} />
-              <DetailRow icon={<CalendarIcon className="size-3.5" />} k="Due date" v={t.dueDate} />
-              <DetailRow icon={<UserIcon className="size-3.5" />} k="Requester" v={t.requesterName} />
-            </dl>
-          </Card>
-
-          <SlaPanel t={t} />
-        </div>
       </div>
 
-      {editing && <EditDialog t={t} config={config} users={users} clients={clients} projects={projects} onClose={() => setEditing(false)} onSaved={() => { setEditing(false); router.refresh(); }} />}
+      {/* ---------- Body ---------- */}
+      {tab === "details" && (
+        <div className="grid gap-6 xl:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,1fr)]">
+          {/* Left: Description + Discussion */}
+          <div className="flex min-w-0 flex-col gap-6">
+            <Section title="Description">
+              {ro ? (
+                d.description ? <p className="whitespace-pre-wrap text-sm leading-relaxed">{d.description}</p> : <p className="text-sm text-muted-foreground">No description.</p>
+              ) : (
+                <Textarea value={d.description} onChange={(e) => set({ description: e.target.value })} rows={6} placeholder="Describe the issue or request…" className="border-transparent bg-transparent px-1 hover:border-border focus:border-primary/50" />
+              )}
+            </Section>
+            <Section title="Discussion">
+              <Conversation comments={conversation} canInternal={canManage} postAction={post} deleteAttachmentAction={deleteTicketAttachmentAction} editAction={editCommentAction} deleteCommentAction={deleteCommentAction} />
+            </Section>
+          </div>
+
+          {/* Middle: Classification + SLA */}
+          <div className="flex min-w-0 flex-col gap-6">
+            <Section title="Classification">
+              <Fld label="Category">{ro ? <Ro>{t.category}</Ro> : <Input value={d.category} onChange={(e) => set({ category: e.target.value })} className={inputCls} />}</Fld>
+              <Fld label="System / CI">{ro ? <Ro>{t.systemRef}</Ro> : <Input value={d.systemRef} onChange={(e) => set({ systemRef: e.target.value })} className={inputCls} placeholder="e.g. DA1" />}</Fld>
+              <Fld label="Module">{ro ? <Ro>{t.moduleRef}</Ro> : <Input value={d.moduleRef} onChange={(e) => set({ moduleRef: e.target.value })} className={inputCls} placeholder="e.g. FI, MM, AP" />}</Fld>
+              <Fld label="Due date">{ro ? <Ro>{t.dueDate}</Ro> : <Input type="date" value={d.dueDate} onChange={(e) => set({ dueDate: e.target.value })} className={inputCls} />}</Fld>
+              <Fld label="Requester"><Ro>{t.requesterName}</Ro></Fld>
+              <Fld label="Created"><Ro>{fmtDT(t.createdAt)}</Ro></Fld>
+            </Section>
+            <SlaSection t={t} />
+          </div>
+
+          {/* Right: the type's own fields + resolution */}
+          <div className="flex min-w-0 flex-col gap-6">
+            <Section title={`${t.typeName} fields`}>
+              {t.fields.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No custom fields for this type.</p>
+              ) : ro ? (
+                t.fields.map((f) => <Fld key={f.id} label={f.name}><Ro>{f.display}</Ro></Fld>)
+              ) : (
+                <div className="grid grid-cols-1 gap-3">
+                  {t.fields.map((f) => <FieldControl key={f.id} field={f} users={users} value={d.fields[f.id]} onChange={(v) => set({ fields: { ...d.fields, [f.id]: v } })} />)}
+                </div>
+              )}
+            </Section>
+            <Section title="Resolution">
+              {ro ? (
+                t.resolution ? <p className="whitespace-pre-wrap text-sm">{t.resolution}</p> : <p className="text-sm text-muted-foreground">—</p>
+              ) : (
+                <Textarea value={d.resolution} onChange={(e) => set({ resolution: e.target.value })} rows={4} placeholder="How it was resolved (closing comment)" className="border-transparent bg-transparent px-1 hover:border-border focus:border-primary/50" />
+              )}
+              {t.statusCategory === "DONE" && t.resolvedAt && <p className="mt-2 text-xs text-emerald-700 dark:text-emerald-400">Resolved {fmtDT(t.resolvedAt)}</p>}
+            </Section>
+          </div>
+        </div>
+      )}
+
+      {tab === "history" && <Section title="History"><History events={history} /></Section>}
+      {tab === "worklog" && <Section title="Worklog"><WorklogPanel t={t} onChanged={() => router.refresh()} /></Section>}
+
+      {typeDialog && <EditDialog t={t} config={config} users={users} onClose={() => setTypeDialog(false)} onSaved={() => { setTypeDialog(false); router.refresh(); }} />}
     </div>
   );
 }
@@ -149,84 +305,41 @@ function countComments(nodes: CommentNode[]): number {
   return nodes.reduce((n, c) => n + 1 + countComments(c.replies), 0);
 }
 
-function DescriptionCard({ t, canManage, onSaved }: { t: Detail; canManage: boolean; onSaved: () => void }) {
-  const [editing, setEditing] = React.useState(false);
-  const [draft, setDraft] = React.useState(t.description);
-  const [saving, setSaving] = React.useState(false);
-  const [err, setErr] = React.useState<string | null>(null);
-  async function save() {
-    setSaving(true); setErr(null);
-    const r = await updateTicketDescriptionAction(t.id, draft);
-    setSaving(false);
-    if (r.error) setErr(r.error); else { setEditing(false); onSaved(); }
-  }
+// ---------- layout atoms (DevOps-style section headings and label-over-value fields) ----------
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <Card title="Description" action={canManage && !editing ? <button onClick={() => { setDraft(t.description); setEditing(true); }} className="text-muted-foreground hover:text-primary"><PencilIcon className="size-3.5" /></button> : undefined}>
-      {editing ? (
-        <div className="flex flex-col gap-2">
-          <Textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={5} autoFocus placeholder="Describe the issue or request…" />
-          {err && <p className="text-sm text-destructive">{err}</p>}
-          <div className="flex items-center gap-2">
-            <Button size="sm" onClick={save} disabled={saving}>{saving ? "Saving…" : "Save"}</Button>
-            <Button size="sm" variant="outline" onClick={() => { setEditing(false); setErr(null); }}>Cancel</Button>
-          </div>
-        </div>
-      ) : t.description ? (
-        <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground/90">{t.description}</p>
-      ) : (
-        <p className="text-sm text-muted-foreground">{canManage ? "No description — click the pencil to add one." : "No description."}</p>
-      )}
-      {t.resolution && (
-        <div className="mt-3 rounded-md border border-emerald-500/30 bg-emerald-500/[0.06] p-3">
-          <div className="text-[0.625rem] font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-400">Resolution</div>
-          <p className="mt-0.5 whitespace-pre-wrap text-sm">{t.resolution}</p>
-        </div>
-      )}
-    </Card>
+    <section className="flex flex-col gap-3">
+      <h2 className="border-b pb-1.5 text-sm font-semibold">{title}</h2>
+      {children}
+    </section>
   );
+}
+function Strip({ label, children }: { label: string; children: React.ReactNode }) {
+  return <div className="flex min-w-0 flex-col gap-0.5"><span className="text-[11px] text-muted-foreground">{label}</span>{children}</div>;
+}
+function Fld({ label, children }: { label: string; children: React.ReactNode }) {
+  return <div className="flex flex-col gap-1"><span className="text-[11px] text-muted-foreground">{label}</span>{children}</div>;
+}
+function Ro({ children }: { children: React.ReactNode }) {
+  const empty = children === null || children === undefined || children === "";
+  return <span className={cn("text-sm", empty && "text-muted-foreground/40")}>{empty ? "—" : children}</span>;
 }
 
 function Tab({ active, onClick, icon, label, count }: { active: boolean; onClick: () => void; icon: React.ReactNode; label: string; count?: number }) {
   return (
-    <button onClick={onClick} className={cn("inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm transition-colors", active ? "bg-muted font-medium text-foreground" : "text-muted-foreground hover:bg-muted/50")}>
+    <button onClick={onClick} className={cn("inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm transition-colors", active ? "bg-background font-medium text-foreground shadow-sm" : "text-muted-foreground hover:bg-muted/50")}>
       {icon} {label}{count !== undefined && count > 0 && <span className="rounded-full bg-foreground/10 px-1.5 text-xs tabular-nums">{count}</span>}
     </button>
   );
 }
 
-function Properties({ t, config, canManage, users, onSaved }: { t: Detail; config: DetailConfig; canManage: boolean; users: Opt[]; onSaved: () => void }) {
-  const [statusId, setStatusId] = React.useState(t.statusId);
-  const [assigneeId, setAssigneeId] = React.useState<string>(t.assigneeId ?? "");
-  const [priority, setPriority] = React.useState<TicketPriority>(t.priority);
-  const [saving, setSaving] = React.useState(false);
-  const [err, setErr] = React.useState<string | null>(null);
-  const dirty = statusId !== t.statusId || (assigneeId || "") !== (t.assigneeId ?? "") || priority !== t.priority;
-
-  function reset() { setStatusId(t.statusId); setAssigneeId(t.assigneeId ?? ""); setPriority(t.priority); setErr(null); }
-  async function save() {
-    setSaving(true); setErr(null);
-    const r = await applyWorkflowAction(t.id, { statusId, assigneeId: canManage ? (assigneeId || null) : undefined, priority: canManage ? priority : undefined });
-    setSaving(false);
-    if (r.error) setErr(r.error); else onSaved();
-  }
-
-  return (
-    <div className="rounded-xl border bg-card p-4">
-      <h2 className="mb-2.5 text-sm font-semibold">Properties</h2>
-      <div className="flex flex-col gap-2.5">
-        <Field label="Status"><select value={statusId} onChange={(e) => setStatusId(e.target.value)} className={selectCls}>{config.statuses.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>
-        <Field label="Assignee">{canManage ? <select value={assigneeId} onChange={(e) => setAssigneeId(e.target.value)} className={selectCls}><option value="">Unassigned</option>{users.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}</select> : <span className="text-sm">{t.assigneeName ?? "Unassigned"}</span>}</Field>
-        <Field label="Priority">{canManage ? <select value={priority} onChange={(e) => setPriority(e.target.value as TicketPriority)} className={selectCls}>{TICKET_PRIORITIES.map((p) => <option key={p} value={p}>{TICKET_PRIORITY_LABEL[p]}</option>)}</select> : <span className="text-sm">{TICKET_PRIORITY_LABEL[t.priority]}</span>}</Field>
-      </div>
-      {err && <p className="mt-2 text-sm text-destructive">{err}</p>}
-      {dirty && (
-        <div className="mt-3 flex items-center gap-2 border-t pt-3">
-          <Button size="sm" onClick={save} disabled={saving} className="gap-1.5"><SaveIcon className="size-4" /> {saving ? "Saving…" : "Save changes"}</Button>
-          <Button size="sm" variant="outline" onClick={reset} disabled={saving} className="gap-1.5"><RotateCcwIcon className="size-3.5" /> Discard</Button>
-        </div>
-      )}
-    </div>
-  );
+function LiveSla({ t }: { t: Detail }) {
+  const [, tick] = React.useState(0);
+  React.useEffect(() => { const id = setInterval(() => tick((n) => n + 1), 30_000); return () => clearInterval(id); }, []);
+  const s = slaState(t);
+  if (!s.show) return null;
+  return <span className={cn("inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-xs", s.tone)}>{s.label}</span>;
 }
 
 function History({ events }: { events: HistoryEvent[] }) {
@@ -280,53 +393,23 @@ function WorklogPanel({ t, onChanged }: { t: Detail; onChanged: () => void }) {
   );
 }
 
-function LiveSla({ t }: { t: Detail }) {
-  const [, tick] = React.useState(0);
-  React.useEffect(() => { const id = setInterval(() => tick((n) => n + 1), 30_000); return () => clearInterval(id); }, []);
-  const s = slaState(t);
-  if (!s.show) return null;
-  return <span className={cn("inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-xs", s.tone)}>{s.label}</span>;
-}
+// ---------- SLA (visual respond/resolve tracks with a live countdown) ----------
 
-function Card({ title, action, children }: { title: string; action?: React.ReactNode; children: React.ReactNode }) {
-  return (
-    <div className="rounded-xl border bg-card p-4">
-      <div className="mb-2.5 flex items-center justify-between"><h2 className="text-sm font-semibold">{title}</h2>{action}</div>
-      {children}
-    </div>
-  );
-}
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return <div className="flex flex-col gap-1"><span className="text-[0.625rem] font-semibold uppercase tracking-wide text-muted-foreground">{label}</span>{children}</div>;
-}
-function DetailRow({ icon, k, v }: { icon: React.ReactNode; k: string; v: string | null }) {
-  return (
-    <div className="flex items-center gap-2 border-b border-border/40 py-1.5 text-sm last:border-none">
-      <span className="text-muted-foreground/60">{icon}</span>
-      <span className="text-muted-foreground">{k}</span>
-      <span className={cn("ml-auto min-w-0 truncate text-right", v ? "font-medium" : "text-muted-foreground/40")}>{v || "—"}</span>
-    </div>
-  );
-}
-
-// ---------- SLA panel (visual respond/resolve tracks with a live countdown) ----------
-
-function SlaPanel({ t }: { t: Detail }) {
+function SlaSection({ t }: { t: Detail }) {
   const [now, setNow] = React.useState(() => Date.now());
   React.useEffect(() => { const id = setInterval(() => setNow(Date.now()), 30_000); return () => clearInterval(id); }, []);
   const target = labelFromTimestamps(t.createdAt, t.respondBy, t.resolveBy);
   const closed = t.statusCategory === "DONE" || t.statusCategory === "CANCELLED";
   return (
-    <div className="rounded-xl border bg-card p-4">
-      <div className="mb-3 flex items-center justify-between">
+    <section className="flex flex-col gap-3">
+      <div className="flex items-center justify-between border-b pb-1.5">
         <h2 className="text-sm font-semibold">SLA</h2>
         {target && <span className="font-mono text-xs text-muted-foreground">{target}</span>}
       </div>
-      <div className="flex flex-col gap-3">
-        <SlaTrack label="Respond" start={t.createdAt} target={t.respondBy} doneAt={t.firstResponseAt} now={now} stopped={closed && !t.firstResponseAt} />
-        <SlaTrack label="Resolve" start={t.createdAt} target={t.resolveBy} doneAt={t.resolvedAt} now={now} stopped={closed && !t.resolvedAt} />
-      </div>
-    </div>
+      <SlaTrack label="Respond" start={t.createdAt} target={t.respondBy} doneAt={t.firstResponseAt} now={now} stopped={closed && !t.firstResponseAt} />
+      <SlaTrack label="Resolve" start={t.createdAt} target={t.resolveBy} doneAt={t.resolvedAt} now={now} stopped={closed && !t.resolvedAt} />
+      {!t.respondBy && !t.resolveBy && <p className="text-sm text-muted-foreground">No SLA targets on this ticket.</p>}
+    </section>
   );
 }
 
@@ -377,8 +460,10 @@ function remainText(ms: number): string {
   return `${Math.round(h / 24)}d`;
 }
 
-function EditDialog({ t, config, users, clients, projects, onClose, onSaved }: {
-  t: Detail; config: DetailConfig; users: Opt[]; clients: Opt[]; projects: Opt[]; onClose: () => void; onSaved: () => void;
+// ---------- Change type (kept as a dialog: switching type resets status + fields, so it deserves a confirm step) ----------
+
+function EditDialog({ t, config, users, onClose, onSaved }: {
+  t: Detail; config: DetailConfig; users: Opt[]; onClose: () => void; onSaved: () => void;
 }) {
   const [saving, setSaving] = React.useState(false);
   const [err, setErr] = React.useState<string | null>(null);
@@ -406,32 +491,21 @@ function EditDialog({ t, config, users, clients, projects, onClose, onSaved }: {
   return (
     <Dialog open disablePointerDismissal onOpenChange={(v) => !v && onClose()}>
       <DialogContent className="sm:max-w-lg max-h-[90vh] flex flex-col overflow-hidden">
-        <DialogHeader><DialogTitle>Edit ticket</DialogTitle></DialogHeader>
+        <DialogHeader><DialogTitle>Change ticket type</DialogTitle></DialogHeader>
         <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pr-1">
-          <div className="flex flex-col gap-1"><Label htmlFor="e-title">Title</Label><Input id="e-title" value={f.title} onChange={(e) => set({ title: e.target.value })} /></div>
-          <div className="flex flex-col gap-1"><Label htmlFor="e-desc">Description</Label><Textarea id="e-desc" rows={4} value={f.description} onChange={(e) => set({ description: e.target.value })} /></div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="flex flex-col gap-1"><Label htmlFor="e-type">Type</Label><select id="e-type" value={f.typeId} onChange={(e) => set({ typeId: e.target.value })} className={selectCls}>{config.types.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select></div>
-            <div className="flex flex-col gap-1"><Label htmlFor="e-due">Due date</Label><Input id="e-due" type="date" value={f.dueDate} onChange={(e) => set({ dueDate: e.target.value })} /></div>
-            <div className="flex flex-col gap-1"><Label htmlFor="e-client">Client</Label><select id="e-client" value={f.clientId} onChange={(e) => set({ clientId: e.target.value })} className={selectCls}><option value="">—</option>{clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
-            <div className="flex flex-col gap-1"><Label htmlFor="e-project">Project</Label><select id="e-project" value={f.projectId} onChange={(e) => set({ projectId: e.target.value })} className={selectCls}><option value="">—</option>{projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></div>
-            <div className="flex flex-col gap-1"><Label htmlFor="e-sys">System / CI</Label><Input id="e-sys" value={f.systemRef} onChange={(e) => set({ systemRef: e.target.value })} /></div>
-            <div className="flex flex-col gap-1"><Label htmlFor="e-mod">Module</Label><Input id="e-mod" value={f.moduleRef} onChange={(e) => set({ moduleRef: e.target.value })} /></div>
-          </div>
-          <div className="flex flex-col gap-1"><Label htmlFor="e-cat">Category</Label><Input id="e-cat" value={f.category} onChange={(e) => set({ category: e.target.value })} /></div>
+          <div className="flex flex-col gap-1"><Label htmlFor="e-type">Type</Label><select id="e-type" value={f.typeId} onChange={(e) => set({ typeId: e.target.value })} className={selectCls}>{config.types.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select></div>
           {typeChanged ? (
-            <p className="rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">Changing the type resets the status to that type&apos;s starting status and switches its custom fields. Save, then set the new fields.</p>
+            <p className="rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">Changing the type resets the status to that type&apos;s starting status and switches its custom fields. Save, then fill in the new fields on the ticket.</p>
           ) : config.fields.length > 0 ? (
             <div className="grid grid-cols-2 gap-3 rounded-lg border bg-muted/20 p-3">
               {config.fields.map((fd) => <FieldControl key={fd.id} field={fd} users={users} value={fieldVals[fd.id]} onChange={(v) => setFieldVals((s) => ({ ...s, [fd.id]: v }))} />)}
             </div>
           ) : null}
-          <div className="flex flex-col gap-1"><Label htmlFor="e-res">Resolution</Label><Textarea id="e-res" rows={3} value={f.resolution} onChange={(e) => set({ resolution: e.target.value })} placeholder="How it was resolved (shown when resolved)" /></div>
           {err && <p className="text-sm text-destructive">{err}</p>}
         </div>
         <div className="flex justify-end gap-2 border-t pt-3">
           <Button variant="outline" onClick={onClose}>Cancel</Button>
-          <Button onClick={save} disabled={saving}>{saving ? "Saving…" : "Save"}</Button>
+          <Button onClick={save} disabled={saving || !typeChanged}>{saving ? "Saving…" : "Change type"}</Button>
         </div>
       </DialogContent>
     </Dialog>
