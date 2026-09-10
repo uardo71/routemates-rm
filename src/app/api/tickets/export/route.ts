@@ -23,8 +23,10 @@ export async function POST(req: NextRequest) {
     if (parsed.sort !== undefined) sort = parsed.sort;
   } catch { /* fall back to defaults */ }
 
+  const ticketWhere = await visibleTicketWhere(user);
+
   const [tickets, users] = await Promise.all([
-    prisma.ticket.findMany({ where: visibleTicketWhere(user), select: TICKET_ROW_SELECT, orderBy: { createdAt: "desc" } }),
+    prisma.ticket.findMany({ where: ticketWhere, select: TICKET_ROW_SELECT, orderBy: { createdAt: "desc" } }),
     prisma.user.findMany({ where: { companyId: user.companyId }, select: { id: true, name: true } }),
   ]);
   const nameById = new Map(users.map((u) => [u.id, u.name]));

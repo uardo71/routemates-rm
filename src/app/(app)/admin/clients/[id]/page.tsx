@@ -9,6 +9,7 @@ import {
   MailIcon,
   PhoneIcon,
   SettingsIcon,
+  UsersIcon,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -18,12 +19,13 @@ import { InitialsAvatar } from "@/components/initials-avatar";
 import { StatCard } from "@/components/stat-card";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/session";
-import { can } from "@/lib/permissions";
+import { can, STAFF_ONLY } from "@/lib/permissions";
 import { getCompanySlaDefault, getClientSlaOverride } from "@/lib/sla.server";
 import { EditClientForm } from "./edit-client-form";
 import { AddContactForm } from "./add-contact-form";
 import { PortalUsers } from "./portal-users";
 import { ClientSla } from "./client-sla";
+import { ClientTeamCard } from "@/app/(app)/tickets/client-team-card";
 import { deleteContactAction } from "../actions";
 
 const STATUS_TONE: Record<string, "secondary" | "default" | "outline" | "destructive"> = {
@@ -52,6 +54,20 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
   if (!client) notFound();
 
   const canManage = can(user, "clients:manage");
+  // Staffing the support team grants ticket access, so it's gated like user admin, not client edit.
+  const canEditTeam = can(user, "users:manage");
+  const team = await prisma.clientTeamMember.findMany({
+    where: { clientId: client.id },
+    select: { id: true, userId: true, role: true, user: { select: { name: true } } },
+    orderBy: [{ role: "asc" }, { user: { name: "asc" } }],
+  });
+  const teamCandidates = canEditTeam
+    ? await prisma.user.findMany({
+        where: { companyId: user.companyId, active: true, ...STAFF_ONLY, id: { notIn: team.map((m) => m.userId) } },
+        select: { id: true, name: true },
+        orderBy: { name: "asc" },
+      })
+    : [];
   const canManageTickets = can(user, "tickets:manage");
   const [slaDefault, slaOverride] = canManageTickets
     ? await Promise.all([getCompanySlaDefault(user.companyId), getClientSlaOverride(user.companyId, client.id)])
@@ -221,6 +237,25 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
           </CardContent>
         </Card>
       )}
+
+      {/* Support team (AMS) — who works this account's tickets */}
+      <Card size="sm">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <UsersIcon className="size-4 text-muted-foreground" /> Support team
+            <span className="font-normal text-muted-foreground">({team.length})</span>
+            <Link href={`/tickets/c/${client.id}`} className="ml-auto text-sm font-normal text-primary hover:underline">Open workspace →</Link>
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <ClientTeamCard
+            clientId={client.id}
+            members={team.map((m) => ({ id: m.id, userId: m.userId, name: m.user.name, role: m.role }))}
+            candidates={teamCandidates}
+            canEdit={canEditTeam}
+          />
+        </CardContent>
+      </Card>
 
       {/* Support SLA */}
       {canManageTickets && slaDefault && (

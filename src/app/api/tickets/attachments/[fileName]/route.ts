@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/session";
-import { can } from "@/lib/permissions";
+import { canManageClientTickets } from "@/lib/permissions";
 import { readReceiptFile } from "@/lib/receipt-storage";
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ fileName: string }> }) {
@@ -25,7 +25,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ fil
     allowed = !!me?.clientId && me.clientId === a.ticket.clientId && !a.comment?.internal;
   } else {
     const involved = a.ticket.requesterId === user.id || a.ticket.assigneeId === user.id || a.ticket.createdById === user.id;
-    allowed = can(user, "tickets:view") || involved;
+    allowed = involved || (await canManageClientTickets(user, a.ticket.clientId));
   }
   if (!allowed) return new NextResponse("Forbidden", { status: 403 });
 

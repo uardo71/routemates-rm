@@ -5,7 +5,7 @@ import { z } from "zod";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/session";
-import { can } from "@/lib/permissions";
+import { assignedClientIds } from "@/lib/permissions";
 
 const ViewSchema = z.object({
   id: z.string().optional(),
@@ -18,7 +18,8 @@ const ViewSchema = z.object({
 
 export async function saveTicketViewAction(input: z.infer<typeof ViewSchema>): Promise<{ error?: string; id?: string }> {
   const user = await requireUser();
-  if (!can(user, "tickets:view") && !can(user, "tickets:manage")) return { error: "Forbidden" };
+  const mine = await assignedClientIds(user);
+  if (mine !== "ALL" && mine.length === 0) return { error: "Forbidden" };
   const parsed = ViewSchema.safeParse(input);
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
   const d = parsed.data;

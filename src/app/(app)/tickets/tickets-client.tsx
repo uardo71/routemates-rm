@@ -31,8 +31,13 @@ type SavedView = { id: string; name: string; shared: boolean; mine: boolean; fil
 
 const EMPTY: TicketFilters = { onlyOpen: true };
 
-export function TicketsClient({ rows, config, canManage, currentUserName, views }: {
+export function TicketsClient({ rows, config, canManage, currentUserName, views, lockedClient, embedded = false }: {
   rows: TicketRow[]; config: ClientConfig; canManage: boolean; currentUserName: string; views: SavedView[];
+  /** Set inside a client workspace: rows are already scoped server-side, so the client filter is
+   *  hidden, new tickets pre-select this client, and exports stay within it. */
+  lockedClient?: { id: string; name: string };
+  /** The workspace draws its own heading and actions; skip this component's. */
+  embedded?: boolean;
 }) {
   const router = useRouter();
   const [filters, setFilters] = React.useState<TicketFilters>(EMPTY);
@@ -74,6 +79,7 @@ export function TicketsClient({ rows, config, canManage, currentUserName, views 
 
   return (
     <div className="flex flex-col gap-4">
+      {!embedded && (
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Tickets</h1>
@@ -82,9 +88,10 @@ export function TicketsClient({ rows, config, canManage, currentUserName, views 
         <div className="flex flex-wrap items-center gap-2">
           {canManage && <Link href="/tickets/settings" className="inline-flex h-9 items-center gap-1.5 rounded-md border px-3 text-sm font-medium hover:border-primary/50 hover:text-primary"><SettingsIcon className="size-4" /> Configure</Link>}
           <Link href="/tickets/board" className="inline-flex h-9 items-center gap-1.5 rounded-md border px-3 text-sm font-medium hover:border-primary/50 hover:text-primary"><LayoutGridIcon className="size-4" /> Board</Link>
-          <Link href="/tickets/new" className="inline-flex h-9 items-center gap-1.5 rounded-md bg-foreground px-3 text-sm font-medium text-background hover:bg-foreground/90"><PlusIcon className="size-4" /> New ticket</Link>
+          <Link href={lockedClient ? `/tickets/new?clientId=${lockedClient.id}` : "/tickets/new"} className="inline-flex h-9 items-center gap-1.5 rounded-md bg-foreground px-3 text-sm font-medium text-background hover:bg-foreground/90"><PlusIcon className="size-4" /> New ticket</Link>
         </div>
       </div>
+      )}
 
       {/* Saved views */}
       <div className="flex flex-wrap items-center gap-1.5">
@@ -104,7 +111,7 @@ export function TicketsClient({ rows, config, canManage, currentUserName, views 
           <button onClick={() => setFilters((f) => ({ ...f, mine: f.mine === "requested" ? null : "requested" }))} className={cn("h-9 rounded-md border px-3 text-sm", filters.mine === "requested" ? "border-primary bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted")}>Raised by me</button>
           <button onClick={() => setColsOpen(true)} className="inline-flex h-9 items-center gap-1.5 rounded-md border px-3 text-sm text-muted-foreground hover:bg-muted"><Columns3Icon className="size-4" /> Columns</button>
           <form method="post" action="/api/tickets/export">
-            <input type="hidden" name="payload" value={JSON.stringify({ filters, columns, sort })} />
+            <input type="hidden" name="payload" value={JSON.stringify({ filters: lockedClient ? { ...filters, clientNames: [lockedClient.name] } : filters, columns, sort })} />
             <button type="submit" className="inline-flex h-9 items-center gap-1.5 rounded-md border px-3 text-sm text-muted-foreground hover:bg-muted"><DownloadIcon className="size-4" /> Export</button>
           </form>
         </div>
@@ -119,7 +126,7 @@ export function TicketsClient({ rows, config, canManage, currentUserName, views 
         {more && (
           <div className="flex flex-wrap items-start gap-x-4 gap-y-1.5 border-t pt-2">
             {assignees.length > 0 && <ChipGroup label="Assignee" options={assignees.map((a) => ({ v: a, l: a }))} on={(v) => chipOn("assigneeNames", v)} toggle={(v) => toggle("assigneeNames", v)} />}
-            {clients.length > 0 && <ChipGroup label="Client" options={clients.map((c) => ({ v: c, l: c }))} on={(v) => chipOn("clientNames", v)} toggle={(v) => toggle("clientNames", v)} />}
+            {!lockedClient && clients.length > 0 && <ChipGroup label="Client" options={clients.map((c) => ({ v: c, l: c }))} on={(v) => chipOn("clientNames", v)} toggle={(v) => toggle("clientNames", v)} />}
           </div>
         )}
       </div>
@@ -137,7 +144,29 @@ export function TicketsClient({ rows, config, canManage, currentUserName, views 
           <table className="w-full min-w-[640px] text-sm">
             <thead>
               <tr className="border-b bg-muted/40 text-left text-xs text-muted-foreground">
-                {columns.map((k) => <th key={k} className="whitespace-nowrap px-3 py-2 font-medium">{labelOf(k)}</th>)}
+                {columns.map((k) => {
+                  // "created" is the legacy alias some saved views still carry for createdAt.
+                  const sk = k === "created" ? "createdAt" : k;
+                  const active = sort?.key === sk;
+                  const dir = active ? sort!.dir : null;
+                  return (
+                    <th key={k} className="whitespace-nowrap px-3 py-2 font-medium">
+                      <button
+                        type="button"
+                        onClick={() => setSort((cur) => cur && cur.key === sk
+                          ? { key: sk, dir: cur.dir === "asc" ? "desc" : "asc" }
+                          // Dates read newest-first by default; everything else A→Z.
+                          : { key: sk, dir: sk === "createdAt" || sk === "dueDate" || sk === "resolveBy" ? "desc" : "asc" })}
+                        className={cn("inline-flex items-center gap-1 hover:text-foreground", active && "text-foreground")}
+                        title={`Sort by ${labelOf(k)}`}
+                      >
+                        {labelOf(k)}
+                        {dir === "asc" && <ArrowUpIcon className="size-3" />}
+                        {dir === "desc" && <ArrowDownIcon className="size-3" />}
+                      </button>
+                    </th>
+                  );
+                })}
                 <th className="px-3 py-2 font-medium">SLA</th>
               </tr>
             </thead>
@@ -155,7 +184,7 @@ export function TicketsClient({ rows, config, canManage, currentUserName, views 
           </table>
         </div>
       )}
-      {!canManage && <p className="text-xs text-muted-foreground">You see tickets you raised or are assigned to. PMs and admins see and triage all.</p>}
+      {!canManage && <p className="text-xs text-muted-foreground">You see the tickets of the clients you&apos;re staffed on, plus any you raised or are assigned to.</p>}
 
       {colsOpen && <ColumnsDialog all={allColumns} value={columns} onChange={setColumns} onClose={() => setColsOpen(false)} />}
       {saveOpen && <SaveViewDialog current={activeViewObj} filters={filters} columns={columns} sort={sort} onClose={() => setSaveOpen(false)} onSaved={() => { setSaveOpen(false); router.refresh(); }} />}

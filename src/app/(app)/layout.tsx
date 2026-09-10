@@ -124,7 +124,14 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           },
         ]
       : []),
-    { label: "Support", items: [{ href: "/tickets", label: "Tickets", icon: "tickets" as const }] },
+    {
+      label: "Support",
+      items: [
+        { href: "/tickets", label: "Clients overview", icon: "tickets" as const },
+        { href: "/tickets/all", label: "All tickets", icon: "tickets" as const },
+        { href: "/tickets/board", label: "Board", icon: "tickets" as const },
+      ],
+    },
     { label: "Help", items: [{ href: "/help", label: "Help & docs", icon: "help" as const }] },
   ];
 

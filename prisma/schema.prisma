@@ -217,6 +217,8 @@ model User {
 
   @@index([companyId])
   @@index([clientId])
+  clientTeams        ClientTeamMember[] @relation("ClientTeamMemberUser")
+  clientTeamsCreated ClientTeamMember[] @relation("ClientTeamMemberCreatedBy")
 }
 
 /** Per-user salary history: cost rate is derived from this, never entered directly. Multiple
@@ -294,6 +296,7 @@ model Client {
   slaPolicies SlaPolicy[]
 
   @@index([companyId])
+  teamMembers ClientTeamMember[]
 }
 
 model Contact {
@@ -1951,4 +1954,30 @@ model Engagement {
 
   @@index([projectId])
   @@index([companyId])
+}
+
+/// Which internal staff look after a client's support tickets (the AMS team for that account).
+/// Membership GRANTS access to that client's tickets, and for non-admins it also SCOPES what they
+/// see — an admin sees every client, everyone else sees the clients they're a member of (plus any
+/// ticket they personally raised or are assigned, so nothing can vanish from under them).
+model ClientTeamMember {
+  id          String         @id @default(cuid())
+  clientId    String
+  client      Client         @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User           @relation("ClientTeamMemberUser", fields: [userId], references: [id])
+  role        ClientTeamRole @default(MEMBER)
+  createdAt   DateTime       @default(now())
+  createdById String?
+  createdBy   User?          @relation("ClientTeamMemberCreatedBy", fields: [createdById], references: [id])
+
+  @@unique([clientId, userId])
+  @@index([clientId])
+  @@index([userId])
+}
+
+enum ClientTeamRole {
+  /// Owns the account: first point of escalation. Shown first on the team list.
+  LEAD
+  MEMBER
 }

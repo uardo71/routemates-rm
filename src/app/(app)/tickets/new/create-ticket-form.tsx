@@ -19,8 +19,10 @@ export type FormConfig = {
 type Opt = { id: string; name: string };
 const selectCls = "h-9 w-full rounded-md border bg-transparent px-2 text-sm outline-none focus:border-primary/50";
 
-export function CreateTicketForm({ manage, clients, projects, users, currentUserId, config }: {
+export function CreateTicketForm({ manage, clients, projects, users, currentUserId, config, defaultClientId }: {
   manage: boolean; clients: Opt[]; projects: Opt[]; users: Opt[]; currentUserId: string; config: FormConfig;
+  /** Pre-selects the client when the form is opened from that client's workspace. */
+  defaultClientId?: string;
 }) {
   const [state, formAction, pending] = useActionState(createTicketAction, undefined as { error?: string } | undefined);
   const [typeId, setTypeId] = React.useState(config.types[0]?.id ?? "");
@@ -60,7 +62,7 @@ export function CreateTicketForm({ manage, clients, projects, users, currentUser
         </div>
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="clientId">Client <span className="text-muted-foreground">(optional)</span></Label>
-          <select id="clientId" name="clientId" defaultValue="" className={selectCls}>
+          <select id="clientId" name="clientId" defaultValue={defaultClientId ?? ""} className={selectCls}>
             <option value="">—</option>
             {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>

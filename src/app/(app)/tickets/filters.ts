@@ -1,6 +1,7 @@
 import type { TicketPriority, TicketStatusCategory } from "@prisma/client";
 import { isOpenCategory } from "@/lib/ticket-config";
 import type { TicketRow } from "./serialize";
+import { columnValue } from "./columns";
 
 export type TicketFilters = {
   text?: string;
@@ -52,7 +53,9 @@ export function sortRows(rows: TicketRow[], sort: { key: string; dir: "asc" | "d
       case "assignee": return (r.assigneeName ?? "").toLowerCase();
       case "client": return (r.clientName ?? "").toLowerCase();
       case "dueDate": return r.dueDate || "9999";
-      case "createdAt": default: return r.createdAt;
+      case "createdAt": return r.createdAt;
+      // Anything else (system, module, category, resolveBy, custom "cf:" fields) sorts by its display text.
+      default: return columnValue(r, sort.key).toLowerCase();
     }
   };
   return [...rows].sort((a, b) => {

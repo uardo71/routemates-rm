@@ -142,9 +142,51 @@ export async function canAccessProjectCutover(user: SessionUser, projectId: stri
 /** Prisma `where` for the tickets a user may see: everyone with `tickets:view` sees the whole
  *  company; everyone else (employees/contractors) sees only tickets they raised, were assigned, or
  *  created. */
-export function visibleTicketWhere(user: SessionUser): { companyId: string; OR?: object[] } {
-  if (can(user, "tickets:view")) return { companyId: user.companyId };
-  return { companyId: user.companyId, OR: [{ requesterId: user.id }, { assigneeId: user.id }, { createdById: user.id }] };
+export async function assignedClientIds(user: SessionUser): Promise<string[] | "ALL"> {
+  // Admins own the whole book of business; everyone else works the accounts they're staffed on.
+  if (user.role === "ADMIN") return "ALL";
+  const rows = await prisma.clientTeamMember.findMany({
+    where: { userId: user.id, client: { companyId: user.companyId } },
+    select: { clientId: true },
+  });
+  return rows.map((r) => r.clientId);
+}
+
+/** Prisma `where` for the tickets a user may see.
+ *
+ *  Client team membership is the gate: an admin sees every ticket, everyone else sees the tickets of
+ *  the clients they're a member of. Personal involvement is always added on top — a ticket you
+ *  raised, were assigned, or created never disappears just because you left that account's team.
+ *  Note EMPLOYEE/CONTRACTOR hold no role permissions at all, so membership is the ONLY way they get
+ *  to work an account's queue. */
+export async function visibleTicketWhere(user: SessionUser): Promise<{ companyId: string; OR?: object[] }> {
+  const ids = await assignedClientIds(user);
+  if (ids === "ALL") return { companyId: user.companyId };
+  return {
+    companyId: user.companyId,
+    OR: [
+      ...(ids.length > 0 ? [{ clientId: { in: ids } }] : []),
+      { requesterId: user.id },
+      { assigneeId: user.id },
+      { createdById: user.id },
+    ],
+  };
+}
+
+/** Whether `user` may triage a client's queue (assign, change status, edit). Membership grants it;
+ *  `tickets:manage` alone no longer does, or the account scoping would be cosmetic. */
+export async function canManageClientTickets(user: SessionUser, clientId: string | null): Promise<boolean> {
+  if (user.role === "ADMIN") return true;
+  if (!clientId) return can(user, "tickets:manage"); // unassigned/internal ticket — falls back to role
+  const ids = await assignedClientIds(user);
+  return ids === "ALL" || ids.includes(clientId);
+}
+
+/** The clients a user may open a workspace for, newest activity first is decided by the caller. */
+export async function visibleClientWhere(user: SessionUser): Promise<{ companyId: string; id?: { in: string[] } }> {
+  const ids = await assignedClientIds(user);
+  if (ids === "ALL") return { companyId: user.companyId };
+  return { companyId: user.companyId, id: { in: ids } };
 }
 
 /** Whether `user` may see bill/cost rate figures for the given project (own projects for PMs). */

@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/session";
-import { can } from "@/lib/permissions";
+import { canManageClientTickets } from "@/lib/permissions";
 import { loadTicketConfig, fieldsForType } from "@/lib/ticket-config.server";
 import { buildThread, COMMENT_INCLUDE } from "@/lib/ticket-thread";
 import { TicketDetailClient, type DetailConfig } from "./ticket-detail-client";
@@ -29,9 +29,11 @@ export default async function TicketDetailPage({ params }: { params: Promise<{ i
     },
   });
   if (!t) notFound();
-  const manage = can(user, "tickets:manage");
   const involved = t.requesterId === user.id || t.assigneeId === user.id || t.createdById === user.id;
-  if (!can(user, "tickets:view") && !involved) notFound();
+  // Being on the client's team is what opens the ticket AND what allows triage. 404 (not 403) when
+  // neither applies, so a ticket's existence isn't leaked across accounts.
+  const manage = await canManageClientTickets(user, t.clientId);
+  if (!manage && !involved) notFound();
 
   const cfg = await loadTicketConfig(user.companyId);
   const type = cfg.types.find((x) => x.id === t.typeId);

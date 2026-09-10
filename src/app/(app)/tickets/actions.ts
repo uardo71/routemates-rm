@@ -6,7 +6,7 @@ import { z } from "zod";
 import type { Prisma, TicketPriority } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/session";
-import { can } from "@/lib/permissions";
+import { canManageClientTickets } from "@/lib/permissions";
 import { nextTicketNumber } from "@/lib/numbering";
 import { addHours, TICKET_PRIORITY_LABEL } from "@/lib/ticket";
 import { resolveSlaTargets } from "@/lib/sla.server";
@@ -78,7 +78,8 @@ export async function createTicketAction(_prev: unknown, formData: FormData): Pr
   });
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
   const d = parsed.data;
-  const manage = can(user, "tickets:manage");
+  // Triage rights (set requester/assignee) come from being on that client's team, not the role alone.
+  const manage = await canManageClientTickets(user, d.clientId ?? null);
 
   const cfg = await loadTicketConfig(user.companyId);
   const type = findType(cfg, d.typeId);
@@ -128,7 +129,7 @@ export async function setTicketStatusAction(ticketId: string, statusId: string):
   const user = await requireUser();
   const t = await ticketForAction(ticketId, user.companyId);
   if (!t) return { error: "Not found" };
-  if (!can(user, "tickets:manage") && !involved(t, user.id)) return { error: "Forbidden" };
+  if (!involved(t, user.id) && !(await canManageClientTickets(user, t.clientId))) return { error: "Forbidden" };
   if (t.statusId === statusId) return {};
   const target = await prisma.ticketStatusDef.findFirst({
     where: { id: statusId, typeId: t.typeId, companyId: user.companyId },
@@ -157,9 +158,9 @@ export async function setTicketStatusAction(ticketId: string, statusId: string):
 
 export async function setTicketAssigneeAction(ticketId: string, assigneeId: string | null): Promise<{ error?: string }> {
   const user = await requireUser();
-  if (!can(user, "tickets:manage")) return { error: "Forbidden" };
   const t = await ticketForAction(ticketId, user.companyId);
   if (!t) return { error: "Not found" };
+  if (!(await canManageClientTickets(user, t.clientId))) return { error: "Forbidden" };
   const value = assigneeId || null;
   if ((t.assigneeId ?? null) === value) return {};
   const name = value ? (await prisma.user.findUnique({ where: { id: value }, select: { name: true } }))?.name ?? "someone" : null;
@@ -173,9 +174,9 @@ export async function setTicketAssigneeAction(ticketId: string, assigneeId: stri
 
 export async function setTicketPriorityAction(ticketId: string, priority: TicketPriority): Promise<{ error?: string }> {
   const user = await requireUser();
-  if (!can(user, "tickets:manage")) return { error: "Forbidden" };
   const t = await ticketForAction(ticketId, user.companyId);
   if (!t) return { error: "Not found" };
+  if (!(await canManageClientTickets(user, t.clientId))) return { error: "Forbidden" };
   if (t.priority === priority) return {};
   const sla = (await resolveSlaTargets(user.companyId, t.clientId))[priority];
   await prisma.ticket.update({ where: { id: ticketId }, data: { priority, respondBy: addHours(t.createdAt, sla.respond), resolveBy: addHours(t.createdAt, sla.resolve) } });
@@ -202,9 +203,9 @@ const DetailsSchema = z.object({
 });
 export async function updateTicketDetailsAction(ticketId: string, patch: z.infer<typeof DetailsSchema>): Promise<{ error?: string }> {
   const user = await requireUser();
-  if (!can(user, "tickets:manage")) return { error: "Forbidden" };
   const t = await ticketForAction(ticketId, user.companyId);
   if (!t) return { error: "Not found" };
+  if (!(await canManageClientTickets(user, t.clientId))) return { error: "Forbidden" };
   const parsed = DetailsSchema.safeParse(patch);
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
   const d = parsed.data;
@@ -255,7 +256,7 @@ export async function applyWorkflowAction(
   const user = await requireUser();
   const t = await ticketForAction(ticketId, user.companyId);
   if (!t) return { error: "Not found" };
-  const manage = can(user, "tickets:manage");
+  const manage = await canManageClientTickets(user, t.clientId);
   if (!manage && !involved(t, user.id)) return { error: "Forbidden" };
 
   // Status — allowed for involved users; assignee/priority are manage-only.
@@ -300,7 +301,7 @@ export async function addCommentAction(ticketId: string, formData: FormData): Pr
   const user = await requireUser();
   const t = await ticketForAction(ticketId, user.companyId);
   if (!t) return { error: "Not found" };
-  const manage = can(user, "tickets:manage");
+  const manage = await canManageClientTickets(user, t.clientId);
   if (!manage && !involved(t, user.id)) return { error: "Forbidden" };
 
   const files = extractFiles(formData);
@@ -318,9 +319,9 @@ export async function addCommentAction(ticketId: string, formData: FormData): Pr
 
 export async function updateTicketDescriptionAction(ticketId: string, description: string): Promise<{ error?: string }> {
   const user = await requireUser();
-  if (!can(user, "tickets:manage")) return { error: "Forbidden" };
   const t = await ticketForAction(ticketId, user.companyId);
   if (!t) return { error: "Not found" };
+  if (!(await canManageClientTickets(user, t.clientId))) return { error: "Forbidden" };
   if (description.length > 8000) return { error: "Description is too long." };
   await prisma.ticket.update({ where: { id: ticketId }, data: { description: description.trim() || null } });
   revalidatePath(`/tickets/${ticketId}`);
@@ -328,14 +329,14 @@ export async function updateTicketDescriptionAction(ticketId: string, descriptio
 }
 
 async function commentForAction(commentId: string, companyId: string) {
-  return prisma.ticketComment.findFirst({ where: { id: commentId, ticket: { companyId } }, select: { authorId: true, ticketId: true, deletedAt: true } });
+  return prisma.ticketComment.findFirst({ where: { id: commentId, ticket: { companyId } }, select: { authorId: true, ticketId: true, deletedAt: true, ticket: { select: { clientId: true } } } });
 }
 
 export async function editCommentAction(commentId: string, body: string): Promise<{ error?: string }> {
   const user = await requireUser();
   const c = await commentForAction(commentId, user.companyId);
   if (!c || c.deletedAt) return { error: "Not found" };
-  if (c.authorId !== user.id && !can(user, "tickets:manage")) return { error: "You can only edit your own messages" };
+  if (c.authorId !== user.id && !(await canManageClientTickets(user, c.ticket.clientId))) return { error: "You can only edit your own messages" };
   if (!body.trim()) return { error: "Message can't be empty" };
   await editCommentBody(commentId, body);
   revalidatePath(`/tickets/${c.ticketId}`);
@@ -346,7 +347,7 @@ export async function deleteCommentAction(commentId: string): Promise<{ error?: 
   const user = await requireUser();
   const c = await commentForAction(commentId, user.companyId);
   if (!c || c.deletedAt) return { error: "Not found" };
-  if (c.authorId !== user.id && !can(user, "tickets:manage")) return { error: "You can only delete your own messages" };
+  if (c.authorId !== user.id && !(await canManageClientTickets(user, c.ticket.clientId))) return { error: "You can only delete your own messages" };
   await softDeleteComment(commentId);
   revalidatePath(`/tickets/${c.ticketId}`);
   return {};
@@ -354,9 +355,9 @@ export async function deleteCommentAction(commentId: string): Promise<{ error?: 
 
 export async function deleteTicketAttachmentAction(attachmentId: string): Promise<{ error?: string }> {
   const user = await requireUser();
-  const a = await prisma.ticketAttachment.findFirst({ where: { id: attachmentId, companyId: user.companyId }, select: { fileName: true, uploadedById: true, ticketId: true } });
+  const a = await prisma.ticketAttachment.findFirst({ where: { id: attachmentId, companyId: user.companyId }, select: { fileName: true, uploadedById: true, ticketId: true, ticket: { select: { clientId: true } } } });
   if (!a) return { error: "Not found" };
-  if (a.uploadedById !== user.id && !can(user, "tickets:manage")) return { error: "Forbidden" };
+  if (a.uploadedById !== user.id && !(await canManageClientTickets(user, a.ticket.clientId))) return { error: "Forbidden" };
   await prisma.ticketAttachment.delete({ where: { id: attachmentId } });
   await deleteReceiptFile(a.fileName, "tickets");
   revalidatePath(`/tickets/${a.ticketId}`);
@@ -367,7 +368,7 @@ export async function addWorklogAction(ticketId: string, minutes: number, worked
   const user = await requireUser();
   const t = await ticketForAction(ticketId, user.companyId);
   if (!t) return { error: "Not found" };
-  if (!can(user, "tickets:manage") && !involved(t, user.id)) return { error: "Forbidden" };
+  if (!involved(t, user.id) && !(await canManageClientTickets(user, t.clientId))) return { error: "Forbidden" };
   if (!Number.isFinite(minutes) || minutes <= 0 || minutes > 100000) return { error: "Enter a valid duration" };
   await prisma.ticketWorklog.create({ data: { ticketId, userId: user.id, minutes: Math.round(minutes), workedOn: utcDate(workedOn), note: note.trim() || null } });
   revalidatePath(`/tickets/${ticketId}`);
@@ -376,9 +377,9 @@ export async function addWorklogAction(ticketId: string, minutes: number, worked
 
 export async function deleteWorklogAction(worklogId: string): Promise<{ error?: string }> {
   const user = await requireUser();
-  const w = await prisma.ticketWorklog.findFirst({ where: { id: worklogId, ticket: { companyId: user.companyId } }, select: { userId: true, ticketId: true } });
+  const w = await prisma.ticketWorklog.findFirst({ where: { id: worklogId, ticket: { companyId: user.companyId } }, select: { userId: true, ticketId: true, ticket: { select: { clientId: true } } } });
   if (!w) return { error: "Not found" };
-  if (w.userId !== user.id && !can(user, "tickets:manage")) return { error: "Forbidden" };
+  if (w.userId !== user.id && !(await canManageClientTickets(user, w.ticket.clientId))) return { error: "Forbidden" };
   await prisma.ticketWorklog.delete({ where: { id: worklogId } });
   revalidatePath(`/tickets/${w.ticketId}`);
   return {};

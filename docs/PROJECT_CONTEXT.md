@@ -1136,3 +1136,107 @@ read-only scripts run against the real `erp_dev` data — see the verification n
 - Invoice line editing after DRAFT is still delete + recreate (beyond the commission box).
 - Unchanged from before: rotate the Entra client secret; deploy to Azure; regenerate INV-0001 for
   July; replace the Pirelli test data.
+
+---
+
+## Session update — 2026-09-08…10 (this PC: LIVE on Azure, deploy pipeline, and the per-client Support workspace)
+
+**The app is now in production at https://psa.routemates.it.** One migration this session
+(`20260910120000_client_team_members`, applied to BOTH `erp_dev` and the Azure `erp_prod` via the
+pipeline). Same bootstrap caveat — when this doc conflicts with code, trust the code. tsc + lint +
+build + 127 tests green; visibility rules verified by a read-only script against real data.
+
+### Production topology (all in Azure subscription "Routemates PSA", resource group `rm-ops-rg`, region **Italy North**)
+- **PostgreSQL Flexible Server `rm-ops-db`** (PG 17, Burstable B1ms, 32 GiB, HA off, ~$20/mo). West
+  Europe is blocked for new subscriptions by a Microsoft `sys.blockwesteurope` policy — don't retry it.
+  Database **`erp_prod`**, app role **`erp_app`** (owns schema `public`). Public access + firewall:
+  "allow Azure services" + the office IP (re-add if the office IP changes).
+- **App Service `rm-ops-psa`** (Linux, Node 22 LTS, Basic B1, Always On, ~$13/mo). Runs the Next
+  **standalone** bundle (`output: "standalone"` in next.config.ts) with startup command
+  **`node server.js`** — NOT `npm start`; the standalone package.json still says `next start` and
+  that fails. Real hostname is `rm-ops-psa-dmasfvd5g6afh2c8.italynorth-01.azurewebsites.net`
+  ("secure unique default hostname" appends a token; `<name>.azurewebsites.net` does NOT resolve).
+- **Custom domain `psa.routemates.it`** → CNAME + `asuid.psa` TXT at **Aruba** (routemates.it's DNS),
+  free App Service managed certificate, SNI. `AUTH_URL=https://psa.routemates.it`; the Entra SSO app
+  has the redirect URI `https://psa.routemates.it/api/auth/callback/microsoft-entra-id`.
+- **Files: Azure Blob** (storage account `rmopsfiles`, private container `uploads`), selected by
+  `AZURE_BLOB_SAS_URL` (a **container-scoped SAS URL with `/uploads` before the `?`**). App Service's
+  filesystem is wiped on every restart/deploy, so local `uploads/` is dev-only. All 46 existing files
+  were copied up with `scripts/upload-files-to-blob.ts --apply`.
+- App settings: `DATABASE_URL`, `AUTH_SECRET`, `AUTH_URL`, `AUTH_MICROSOFT_ENTRA_ID_*`,
+  `AZURE_BLOB_SAS_URL`, `WEBSITE_RUN_FROM_PACKAGE=1`. Set via portal or `az webapp config appsettings set`
+  (the portal's Apply silently failed once — verify with `az webapp config appsettings list`).
+
+### Deploy pipeline (`.github/workflows/deploy.yml`)
+- **Push to `main` deploys.** Steps: install → prisma generate → **tsc → lint → tests → build** (a red
+  check never reaches prod) → OIDC login → **`prisma migrate deploy` against prod BEFORE the code goes
+  live** → deploy `.next/standalone` → curl the real hostname until 200.
+- Auth is **OIDC federated credential** on Entra app `github-deploy-psa` (subject
+  `repo:uardo71/routemates-rm:environment:production`), role **Website Contributor** scoped to the one
+  app — no publish password anywhere. GitHub **environment `production`** holds `AZURE_CLIENT_ID`
+  (the app registration's client id, NOT the service principal object id), `AZURE_TENANT_ID`,
+  `AZURE_SUBSCRIPTION_ID`, `PRODUCTION_DATABASE_URL`.
+- **Working loop from now on**: change → test locally against `erp_dev` → push `main` → live in ~5 min.
+  `erp_prod` is the real data from here; copy prod→local when realistic data is needed, never the
+  reverse. `feature/delivery-suite` was merged into `main` (main had been 9 commits behind).
+- Local gotcha that bit twice: **never run `pnpm build` into the same `.next` the dev server uses** —
+  the mixed manifest made `/invoices/new` 404. Stop dev, `rm -rf .next`, build, `rm -rf .next`, restart.
+
+### Storage abstraction
+- `src/lib/storage.ts`: one interface, two backends (local disk default; Blob REST when the SAS URL is
+  set — no SDK, matching `graph-mail.ts`/`document-intelligence.ts`). `receipt-storage.ts` keeps its
+  public API (`saveReceiptFile`/`deleteReceiptFile` unchanged at ~30 call sites); serve routes use
+  `readReceiptFile` (null ⇒ 404). Path traversal is guarded once, for both backends.
+
+### Fixes shipped this week
+- **`LayoutProps<"/">` removed** from `src/app/layout.tsx` — it's generated into `.next/types`, so a clean
+  checkout (CI) failed `tsc`. Props are typed explicitly now.
+- **Per-consultant revenue was 0** for everyone: bill-rate chain ended in `: 0` and nothing had a frozen
+  rate. Pure `effectiveBillRate()` in `revenue.ts` falls back to the milestone — for **FIXED_PRICE that's
+  `salesPrice / budgetHours`**, never the lump sum. Used by realization AND the WIP loader.
+- **Fixed-price work excluded from time-based WIP** (`TIME_BILLED_TYPES` in `wip.ts`): valuing 148.8h
+  against a €9,300 lump sum had produced €1,383,840. FP unbilled value comes from earned − invoiced.
+- **Still-to-bill is measured against the register** for every billing type (`command-center.ts`).
+  Manually-typed invoices never set `invoiceLineId`, so linkage-based counting double-counted (98h on
+  Mindsquare were both invoiced and "unbilled"). `linkTimeEntriesToInvoice` now attaches approved time
+  to manual invoices on create/update (project + service period, whole entries only, oldest first).
+  **`scripts/link-manual-invoice-time.ts` backfills existing invoices — dry-run done (29 entries /
+  92.5h), `--apply` NOT yet run.**
+- **Time grid "Hours without a task"**: an assignment-level line can now be typed by hand (needed to
+  reverse approved hours with a negative line on a task-bearing milestone).
+- **Milestone rows show the deal discount** (Michele's feedback): list value/rate struck through, with
+  the post-discount figure — via shared pure `contractValueScale()` used by both the Revenue report and
+  the project page. Fixed price only; revenue math was already correct, only the display wasn't.
+
+### Support workspace — per-client tickets, DevOps-style (the big feature)
+- **`ClientTeamMember`** (`clientId`, `userId`, `role` LEAD|MEMBER, unique per pair). The AMS team for
+  an account. **Membership is the access gate, and it RESTRICTS non-admins** (owner's explicit choice):
+  - `assignedClientIds(user)` → `"ALL"` for ADMIN, else the clients they're on.
+  - `visibleTicketWhere(user)` is now **async**: admin sees all; everyone else sees their clients'
+    tickets **plus anything they raised/are assigned/created** (safety net — nothing vanishes).
+  - `canManageClientTickets(user, clientId)` gates every triage action; `tickets:manage` alone no
+    longer does (or the scoping would be cosmetic). All 13 role gates in `tickets/actions.ts`, the
+    detail page (404 not 403 when off-team), the attachment route and saved views were converted.
+  - **EMPLOYEE/CONTRACTOR have no role permissions at all**, so membership is the ONLY way they get to
+    work a queue. Staffing is admin-only (`users:manage`) because it grants access.
+  - Migration **seeded** so nobody lost access on day one: Admin/Finance/Sales/PM onto every client that
+    existed, plus anyone already on a client's tickets. New clients start with an empty team.
+- Routes: **`/tickets` = clients overview** (card per client: open / breached / unassigned / critical /
+  resolved-7d / team / last activity, busiest first; company KPI row); **`/tickets/c/[clientId]` =
+  workspace** (stat tiles, the queue locked to that client, Team card, client switcher, New ticket
+  pre-filled via `?clientId=`); **`/tickets/all`** = the old flat cross-client list. Board/settings unchanged.
+  Sidebar "Support" group: Clients overview / All tickets / Board.
+- **Columns are sortable by clicking headers** (arrow indicator); `sortRows` falls back to the column's
+  display text so custom "cf:" fields sort too. `TicketsClient` gained `lockedClient` + `embedded`.
+- Team management UI: `client-team-card.tsx` on the workspace and on `/admin/clients/[id]`.
+- Verified on real data: Iljona (EMPLOYEE, on Pirelli) sees Pirelli's 2 only; Borana sees Tungsten's 1;
+  unstaffed employees see 0; PM Enida (seeded onto all 4) and Admin see all 3.
+
+### Open / next
+- **Run the invoice backfill**: `pnpm exec tsx scripts/link-manual-invoice-time.ts --apply`.
+- **Secrets exposed in chat during setup, still to rotate**: the Blob SAS (valid to 2035),
+  `AUTH_SECRET`, and the old Entra client secret (delete it now that SSO works on the new one).
+- Timesheet nudge still has no scheduler; `Mail.Send` consent still not granted.
+- **Contingency on quotes** (Michele): model estimate + contingency, discount consumes contingency first,
+  estimate-vs-actual accuracy — needs a requirements conversation (and the controller) before building.
+- Vitest config `configLoader` warning; `nextInvoiceNumber` count+1 collision; write-off not a real state.
