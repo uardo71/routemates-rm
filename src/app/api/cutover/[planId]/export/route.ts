@@ -28,19 +28,19 @@ function safeSheetName(name: string, used: Set<string>): string {
   return s;
 }
 
-export async function GET(_req: Request, { params }: { params: Promise<{ projectId: string }> }) {
-  const { projectId } = await params;
+export async function GET(_req: Request, { params }: { params: Promise<{ planId: string }> }) {
+  const { planId } = await params;
   const user = await requireUser();
-  if (!(await canAccessProjectCutover(user, projectId))) return NextResponse.json({ error: "Forbidden." }, { status: 403 });
-
-  const project = await prisma.project.findFirst({
-    where: { id: projectId, companyId: user.companyId },
-    select: { name: true, number: true, client: { select: { name: true } } },
+  const plan = await prisma.cutoverPlan.findFirst({
+    where: { id: planId, companyId: user.companyId },
+    select: { id: true, name: true, projectId: true, engagement: { select: { name: true } }, project: { select: { name: true, number: true, client: { select: { name: true } } } } },
   });
-  if (!project) return NextResponse.json({ error: "Not found." }, { status: 404 });
+  if (!plan) return NextResponse.json({ error: "Not found." }, { status: 404 });
+  if (!(await canAccessProjectCutover(user, plan.projectId))) return NextResponse.json({ error: "Forbidden." }, { status: 403 });
+  const project = plan.project;
   const [tasks, lists] = await Promise.all([
-    prisma.cutoverTask.findMany({ where: { projectId }, orderBy: { sortOrder: "asc" } }),
-    prisma.cutoverList.findMany({ where: { projectId }, orderBy: { sortOrder: "asc" } }),
+    prisma.cutoverTask.findMany({ where: { planId }, orderBy: { sortOrder: "asc" } }),
+    prisma.cutoverList.findMany({ where: { planId }, orderBy: { sortOrder: "asc" } }),
   ]);
 
   type Task = (typeof tasks)[number];
@@ -80,7 +80,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ project
 
   ws.mergeCells(`A${row}:${LAST}${row}`);
   const t = ws.getCell(`A${row}`);
-  t.value = `${project.name} — Cutover Plan`;
+  t.value = `${plan.engagement ? `${plan.engagement.name} · ` : ""}${project.name} — ${plan.name}`;
   t.font = { bold: true, size: 16, color: { argb: "FFFFFFFF" } };
   t.fill = { type: "pattern", pattern: "solid", fgColor: { argb: INK } };
   t.alignment = { vertical: "middle", indent: 1 };
@@ -194,7 +194,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ project
   }
 
   const buffer = await wb.xlsx.writeBuffer();
-  const safe = (project.number ?? project.name).replace(/[^\w-]+/g, "_").slice(0, 40);
+  const safe = `${project.number ?? project.name}_${plan.engagement ? `${plan.engagement.name}_` : ""}${plan.name}`.replace(/[^\w-]+/g, "_").slice(0, 60);
   const fileName = `Cutover-${safe}.xlsx`;
   return new Response(buffer, {
     headers: {

@@ -137,8 +137,10 @@ model Company {
   raidItems         RaidItem[]
   meetings          MeetingMinutes[]
   planTasks         PlanTask[]
+  cutoverPlans      CutoverPlan[]
   cutoverTasks      CutoverTask[]
   cutoverLists      CutoverList[]
+  uatScripts        UatScript[]
   uatAreas          UatArea[]
   uatTestCases      UatTestCase[]
   uatIssues         UatIssue[]
@@ -218,6 +220,7 @@ model User {
   @@index([companyId])
   @@index([clientId])
   clientTeams        ClientTeamMember[] @relation("ClientTeamMemberUser")
+  engagementMemberships EngagementMember[]
   clientTeamsCreated ClientTeamMember[] @relation("ClientTeamMemberCreatedBy")
 }
 
@@ -367,8 +370,6 @@ model Project {
   uatNotes        String? // note captured with the acceptance
   // Test-script preparation (distinct from acceptance): the consultant prepares it and sends it to
   // the customer before UAT; the PM governs that it's actually ready/sent.
-  uatScriptStatus UatScriptStatus @default(DRAFT)
-  uatScriptSentAt DateTime?
   uatRecordedById String? // internal user who recorded the acceptance
   uatRecordedBy   User?     @relation("ProjectUatRecordedBy", fields: [uatRecordedById], references: [id])
   uatRecordedAt   DateTime? // when it was recorded in the app
@@ -386,8 +387,10 @@ model Project {
   raidItems      RaidItem[]
   meetings       MeetingMinutes[]
   planTasks      PlanTask[]
+  cutoverPlans   CutoverPlan[]
   cutoverTasks   CutoverTask[]
   cutoverLists   CutoverList[]
+  uatScripts     UatScript[]
   uatAreas       UatArea[]
   uatTestCases   UatTestCase[]
   uatIssues      UatIssue[]
@@ -1496,8 +1499,8 @@ model CutoverTask {
   company         Company       @relation(fields: [companyId], references: [id])
   projectId       String
   project         Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  engagementId    String?
-  engagement      Engagement?   @relation(fields: [engagementId], references: [id], onDelete: SetNull)
+  planId          String
+  plan            CutoverPlan   @relation(fields: [planId], references: [id], onDelete: Cascade)
   // Parent activity (one level of nesting): a parent step like "Start production configuration" with
   // child steps "Configure T-code X", "Configure table Y". Deleting a parent removes its children.
   parentId        String?
@@ -1518,6 +1521,7 @@ model CutoverTask {
   updatedAt       DateTime      @updatedAt
 
   @@index([projectId])
+  @@index([planId])
   @@index([companyId])
   @@index([parentId])
 }
@@ -1531,6 +1535,8 @@ model CutoverList {
   company   Company  @relation(fields: [companyId], references: [id])
   projectId String
   project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  planId    String
+  plan      CutoverPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
   name      String
   columns   Json // string[]
   rows      Json // string[][]
@@ -1538,8 +1544,31 @@ model CutoverList {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([projectId, name])
+  @@unique([planId, name])
   @@index([projectId])
+  @@index([planId])
+  @@index([companyId])
+}
+
+/// A go-live runbook. A project can hold several (one per end customer, per phase, per wave); each
+/// optionally belongs to an Engagement so it shows under that end customer in the cockpit.
+model CutoverPlan {
+  id           String        @id @default(cuid())
+  companyId    String
+  company      Company       @relation(fields: [companyId], references: [id])
+  projectId    String
+  project      Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  engagementId String?
+  engagement   Engagement?   @relation(fields: [engagementId], references: [id], onDelete: SetNull)
+  name         String
+  sortOrder    Int           @default(0)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  tasks        CutoverTask[]
+  lists        CutoverList[]
+
+  @@index([projectId])
+  @@index([engagementId])
   @@index([companyId])
 }
 
@@ -1563,6 +1592,31 @@ enum UatIssueStatus {
   CLOSED
 }
 
+/// A customer test script. Several per project (per end customer / phase), each with its own
+/// DRAFT -> READY -> SENT governance; areas, cases and issues hang off the script.
+model UatScript {
+  id           String          @id @default(cuid())
+  companyId    String
+  company      Company         @relation(fields: [companyId], references: [id])
+  projectId    String
+  project      Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  engagementId String?
+  engagement   Engagement?     @relation(fields: [engagementId], references: [id], onDelete: SetNull)
+  name         String
+  status       UatScriptStatus @default(DRAFT)
+  sentAt       DateTime?
+  sortOrder    Int             @default(0)
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+  areas        UatArea[]
+  cases        UatTestCase[]
+  issues       UatIssue[]
+
+  @@index([projectId])
+  @@index([engagementId])
+  @@index([companyId])
+}
+
 // A functional area / test group (e.g. "Company Code Determination"), holding its own test cases.
 model UatArea {
   id               String        @id @default(cuid())
@@ -1570,6 +1624,8 @@ model UatArea {
   company          Company       @relation(fields: [companyId], references: [id])
   projectId        String
   project          Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  scriptId         String
+  script           UatScript     @relation(fields: [scriptId], references: [id], onDelete: Cascade)
   name             String
   overview         String?
   dataRequirements String?
@@ -1578,6 +1634,7 @@ model UatArea {
   updatedAt        DateTime      @updatedAt
   cases            UatTestCase[]
 
+  @@index([scriptId])
   @@index([projectId])
   @@index([companyId])
 }
@@ -1589,6 +1646,8 @@ model UatTestCase {
   company          Company   @relation(fields: [companyId], references: [id])
   projectId        String
   project          Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  scriptId         String
+  script           UatScript @relation(fields: [scriptId], references: [id], onDelete: Cascade)
   areaId           String
   area             UatArea   @relation(fields: [areaId], references: [id], onDelete: Cascade)
   description      String?
@@ -1605,6 +1664,7 @@ model UatTestCase {
   updatedAt        DateTime  @updatedAt
 
   @@index([areaId])
+  @@index([scriptId])
   @@index([projectId])
   @@index([companyId])
 }
@@ -1616,6 +1676,8 @@ model UatIssue {
   company          Company        @relation(fields: [companyId], references: [id])
   projectId        String
   project          Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  scriptId         String
+  script           UatScript      @relation(fields: [scriptId], references: [id], onDelete: Cascade)
   areaRef          String? // which area/tab
   testRef          String? // which test #
   type             String? // OK/KO/Redo/etc.
@@ -1629,6 +1691,7 @@ model UatIssue {
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt
 
+  @@index([scriptId])
   @@index([projectId])
   @@index([companyId])
 }
@@ -1949,13 +2012,29 @@ model Engagement {
 
   statusReports StatusReport[]
   planTasks     PlanTask[]
-  cutoverTasks  CutoverTask[]
+  cutoverPlans  CutoverPlan[]
+  uatScripts    UatScript[]
   raidItems     RaidItem[]
   meetings      MeetingMinutes[]
   documents     Document[]
+  members       EngagementMember[]
 
   @@index([projectId])
   @@index([companyId])
+}
+
+/// The people assigned to an end-customer engagement. Membership grants delivery access to the
+/// project's cockpit tools and scopes what a non-manager sees to their own end customers.
+model EngagementMember {
+  id           String     @id @default(cuid())
+  engagementId String
+  engagement   Engagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  userId       String
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt    DateTime   @default(now())
+
+  @@unique([engagementId, userId])
+  @@index([userId])
 }
 
 /// Which internal staff look after a client's support tickets (the AMS team for that account).

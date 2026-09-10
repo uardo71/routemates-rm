@@ -1362,3 +1362,53 @@ saves, document uploads, settings. Add `recordAudit` inside their transactions i
 - Everything from the earlier 2026-09-10 entries still stands (scheduler secret `NUDGE_SECRET` on
   GitHub, channel config, invoice backfill `--apply`, secret rotations, contingency-on-quotes).
 
+---
+
+## Session update — 2026-09-11 (cutover plans + UAT scripts per end customer, people on engagements)
+
+One migration (`20260911100000_cutover_plans_uat_scripts_engagement_members`, applied to erp_dev; the
+pipeline applies it to prod). tsc + lint + build + 166 tests green; access rules proven by a script
+on erp_dev (see below). Owner's report: a cutover plan built for BEKO (an end customer under the
+Tungsten portfolio project) showed at project level, and only ONE cutover plan / UAT script could
+exist per project — no way to have one per phase or per end customer.
+
+### What changed
+- **`CutoverPlan` and `UatScript` are first-class containers.** Many per project; each optionally
+  belongs to an `Engagement` (end customer). `CutoverTask`/`CutoverList` carry `planId`;
+  `UatArea`/`UatTestCase`/`UatIssue` carry `scriptId`. The DRAFT → READY → SENT governance moved
+  from `Project.uatScriptStatus/uatScriptSentAt` (dropped) onto each `UatScript`.
+  `CutoverTask.engagementId` was dropped — the editor never set it, which is why BEKO's plan looked
+  project-level. The migration backfilled one "Cutover plan" / "UAT test script" per project that
+  had any rows and attached everything to it. **BEKO's plan is now a project-level plan named
+  "Cutover plan" — rename it and move it to BEKO from the plan's "Rename / move" button.**
+- **Routes**: `/delivery/[projectId]/cutover` and `/uat` are now LISTS grouped by end customer
+  (`runbook-list-client.tsx`, shared by both kinds: create, rename, move to an end customer, delete);
+  the editors moved to `/delivery/[projectId]/cutover/[planId]` and `/uat/[scriptId]`. Exports are
+  `/api/cutover/[planId]/export` and `/api/uat/[scriptId]/export` (title + filename carry the end
+  customer and the plan/script name). `/cutover` and `/uat` list every plan/script across the user's
+  projects, grouped by project. The cockpit's "UAT scripts" / "Cutover plans" buttons and the two
+  readiness banners carry `?eng=` so the list preselects the end customer for "New".
+- **`EngagementMember`** — people assigned to an end customer, managed from the engagement bar
+  (Add dialog, a "people" chip beside the selector, and the Manage panel). `setEngagementMembersAction`
+  replaces the set; only active staff are accepted. Access rules (`src/lib/permissions.ts`):
+  - `canAccessProjectDelivery` and `visibleProjectIds` now also pass for engagement members, so a
+    consultant assigned only to BEKO can open the project's cutover plans / UAT scripts.
+  - `engagementScope(user, projectId)` → `"ALL"` for whoever manages the project and for people on
+    the whole project through a milestone assignment; otherwise the engagement ids they are members
+    of. Plan/script lists, the editors, the cross-project indexes and the create/update actions all
+    filter by it (project-level items are always in scope). It is a scoping rule, not an access gate.
+  - Cockpit signals (cutover readiness, "UAT script not sent") are computed over the plans/scripts of
+    the selected end customer ("Overall" = all). Delivery overview aggregates across all of them.
+- Deleting an engagement keeps its plans/scripts (they fall back to project level) — same rule as
+  status reports / RAID / minutes.
+
+### Verified on erp_dev (script, cleaned up after)
+Borana (EMPLOYEE, not on the Pirelli project): no delivery access → assigned to an engagement →
+access true, scope = that engagement only, project visible in her lists; a second plan created on the
+same project (2 plans); deleting the engagement left the plan with `engagementId = null`.
+
+### Not done
+- Engagement members are not yet shown on the Delivery overview cards or used for "Responsible"
+  defaults inside the cutover grid.
+- The UI could not be clicked through (SSO-only login).
+

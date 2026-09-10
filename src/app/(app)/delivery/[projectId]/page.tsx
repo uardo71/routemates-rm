@@ -7,7 +7,7 @@ import { InitialsAvatar } from "@/components/initials-avatar";
 import { LinkButton } from "@/components/link-button";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/session";
-import { canManageProject } from "@/lib/permissions";
+import { canManageProject, STAFF_ONLY } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
 import { RAG_DOT, RAG_LABEL, RAG_PILL } from "@/lib/delivery";
 import { cadenceDays } from "@/lib/delivery-day";
@@ -37,17 +37,22 @@ export default async function DeliveryProjectPage({ params, searchParams }: { pa
     include: {
       client: { select: { name: true } },
       manager: { select: { name: true } },
-      engagements: { orderBy: { sortOrder: "asc" }, select: { id: true, name: true } },
+      engagements: { orderBy: { sortOrder: "asc" }, select: { id: true, name: true, members: { select: { user: { select: { id: true, name: true } } } } } },
       statusReports: { orderBy: { reportDate: "desc" }, include: { author: { select: { name: true } }, actions: { orderBy: { sortOrder: "asc" } } } },
       raidItems: { orderBy: [{ status: "asc" }, { createdAt: "desc" }], include: { createdBy: { select: { name: true } } } },
       meetings: { orderBy: { date: "desc" }, include: { createdBy: { select: { name: true } }, actions: { orderBy: { sortOrder: "asc" } }, participants: { orderBy: { sortOrder: "asc" } } } },
       documents: { orderBy: { uploadedAt: "desc" }, include: { uploadedBy: { select: { name: true } } } },
       planTasks: { orderBy: { sortOrder: "asc" } },
-      cutoverTasks: { select: { id: true, parentId: true, status: true } },
-      _count: { select: { uatTestCases: true } },
+      cutoverPlans: { select: { id: true, engagementId: true, tasks: { select: { id: true, parentId: true, status: true } } } },
+      uatScripts: { select: { id: true, engagementId: true, status: true, _count: { select: { cases: true } } } },
     },
   });
   if (!project) notFound();
+  const staff = await prisma.user.findMany({
+    where: { companyId: user.companyId, active: true, ...STAFF_ONLY },
+    select: { id: true, name: true },
+    orderBy: { name: "asc" },
+  });
 
   // Selected engagement (null = "Overall", i.e. project-level governance).
   const selectedEng = project.engagements.some((e) => e.id === eng) ? (eng as string) : null;
@@ -115,7 +120,11 @@ export default async function DeliveryProjectPage({ params, searchParams }: { pa
 
   // ---- Cutover readiness: once UAT is accepted (or go-live is near), the cutover to production must
   // be completed. Surface it here so PM/Admin can push the consultant who owns the go-live. ----
-  const cutover = project.cutoverTasks;
+  // Plans and scripts are per end customer: "Overall" sees every one, an end customer sees its own.
+  const scopedPlans = project.cutoverPlans.filter((p) => selectedEng === null || p.engagementId === selectedEng);
+  const scopedScripts = project.uatScripts.filter((s) => selectedEng === null || s.engagementId === selectedEng);
+  const engQs = selectedEng ? `?eng=${selectedEng}` : "";
+  const cutover = scopedPlans.flatMap((p) => p.tasks);
   const cutoverLeaves = cutover.filter((t) => !cutover.some((c) => c.parentId === t.id));
   const cutoverDoneCount = cutoverLeaves.filter((t) => t.status === "DONE" || t.status === "SKIPPED").length;
   const cutoverComplete = cutoverLeaves.length > 0 && cutoverDoneCount === cutoverLeaves.length;
@@ -136,11 +145,12 @@ export default async function DeliveryProjectPage({ params, searchParams }: { pa
   // ---- UAT test-script readiness: the consultant must prepare & send the test script before UAT.
   // Surface it so the PM can check it actually reached "Sent". ----
   const uatWindow = project.uatStatus !== "NOT_STARTED" || (activeProj && daysToGoLive != null && daysToGoLive >= 0 && daysToGoLive <= 30);
-  const uatScriptDue = activeProj && project.uatScriptStatus !== "SENT" && uatWindow;
+  const uatScriptDue = activeProj && uatWindow && (scopedScripts.length === 0 || scopedScripts.some((s) => s.status !== "SENT"));
   const uatScriptReason = project.uatStatus !== "NOT_STARTED"
     ? "UAT is under way, but the test script isn't marked sent to the customer."
     : "UAT is coming up — the customer test script must be prepared and sent first.";
-  const uatCaseInfo = project._count.uatTestCases > 0 ? `${project._count.uatTestCases} test cases drafted` : "no test cases yet";
+  const uatCaseCount = scopedScripts.reduce((s, x) => s + x._count.cases, 0);
+  const uatCaseInfo = scopedScripts.length === 0 ? "no test script yet" : `${scopedScripts.length} script${scopedScripts.length === 1 ? "" : "s"}, ${uatCaseCount} test case${uatCaseCount === 1 ? "" : "s"}`;
 
   const tHref = (t: string) => {
     const p = new URLSearchParams();
@@ -270,14 +280,19 @@ export default async function DeliveryProjectPage({ params, searchParams }: { pa
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <LinkButton href={`/delivery/${project.id}/uat`} variant="outline" size="sm">UAT scripts</LinkButton>
-            <LinkButton href={`/delivery/${project.id}/cutover`} variant="outline" size="sm">Cutover plan</LinkButton>
+            <LinkButton href={`/delivery/${project.id}/uat${engQs}`} variant="outline" size="sm">UAT scripts</LinkButton>
+            <LinkButton href={`/delivery/${project.id}/cutover${engQs}`} variant="outline" size="sm">Cutover plans</LinkButton>
             <LinkButton href={`/projects/${project.id}`} variant="outline" size="sm">Open project</LinkButton>
           </div>
         </div>
       </div>
 
-      <EngagementBar projectId={project.id} engagements={project.engagements} selectedId={selectedEng} />
+      <EngagementBar
+        projectId={project.id}
+        engagements={project.engagements.map((e) => ({ id: e.id, name: e.name, members: e.members.map((m) => m.user) }))}
+        staff={staff}
+        selectedId={selectedEng}
+      />
 
       {uatScriptDue && (
         <div className="flex flex-wrap items-center gap-3 rounded-lg border border-amber-500/45 bg-amber-500/[0.07] px-4 py-3">
@@ -286,7 +301,7 @@ export default async function DeliveryProjectPage({ params, searchParams }: { pa
             <div className="text-sm font-semibold text-amber-700 dark:text-amber-400">UAT test script not sent yet</div>
             <div className="text-xs text-muted-foreground">{uatScriptReason} Currently {uatCaseInfo}. The consultant prepares it — check it&apos;s ready and sent.</div>
           </div>
-          <LinkButton href={`/delivery/${project.id}/uat`} size="sm">Open UAT scripts</LinkButton>
+          <LinkButton href={`/delivery/${project.id}/uat${engQs}`} size="sm">Open UAT scripts</LinkButton>
         </div>
       )}
 
@@ -299,7 +314,7 @@ export default async function DeliveryProjectPage({ params, searchParams }: { pa
             </div>
             <div className="text-xs text-muted-foreground">{cutoverReason} {cutoverProgress}. The assigned consultant runs the cutover — chase it if needed.</div>
           </div>
-          <LinkButton href={`/delivery/${project.id}/cutover`} size="sm">Open cutover plan</LinkButton>
+          <LinkButton href={`/delivery/${project.id}/cutover${engQs}`} size="sm">Open cutover plans</LinkButton>
         </div>
       )}
 

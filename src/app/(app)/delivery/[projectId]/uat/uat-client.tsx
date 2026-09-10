@@ -19,9 +19,11 @@ const today = () => new Date().toISOString().slice(0, 10);
 const clone = (d: UatData): UatData => ({ ...d, areas: d.areas.map((a) => ({ ...a })), cases: d.cases.map((c) => ({ ...c })), issues: d.issues.map((i) => ({ ...i })) });
 
 export function UatClient({
-  projectId, projectName, projectNumber, clientName, data: initial, userNames, backHref,
+  scriptId, scriptName, engagementName, projectName, projectNumber, clientName, data: initial, userNames, backHref,
 }: {
-  projectId: string;
+  scriptId: string;
+  scriptName: string;
+  engagementName: string | null;
   projectName: string;
   projectNumber: string | null;
   clientName: string;
@@ -68,7 +70,7 @@ export function UatClient({
       cases: orderedCases.map((c) => ({ ...c, dateRun: c.dateRun || null })),
       issues: d.issues.map((i) => ({ ...i, dateRaised: i.dateRaised || null, dateClosed: i.dateClosed || null })),
     };
-    const res = await saveUatAction(projectId, payload);
+    const res = await saveUatAction(scriptId, payload);
     if (res.data) { setD(clone(res.data)); setBase(clone(res.data)); setDirty(false); }
     else setError(res.error ?? "Could not save.");
     setSaving(false);
@@ -81,15 +83,18 @@ export function UatClient({
         <Link href={backHref} className="text-sm text-muted-foreground hover:underline">← Back</Link>
         <div className="mt-2 flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight">UAT test scripts</h1>
-            <p className="mt-0.5 text-sm text-muted-foreground">{projectName}{projectNumber ? ` · ${projectNumber}` : ""} · {clientName}</p>
+            <h1 className="text-2xl font-semibold tracking-tight">{scriptName}</h1>
+            <p className="mt-0.5 text-sm text-muted-foreground">
+              {engagementName && <span className="font-medium text-foreground">{engagementName} · </span>}
+              {projectName}{projectNumber ? ` · ${projectNumber}` : ""} · {clientName}
+            </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {dirty && <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/12 px-2.5 py-1 text-xs font-medium text-amber-700 dark:text-amber-400">Unsaved changes</span>}
             <Button variant="outline" size="sm" onClick={discard} disabled={!dirty || saving} className="gap-1.5"><Undo2Icon className="size-4" /> Discard</Button>
             <Button size="sm" onClick={save} disabled={!dirty || saving} className="gap-1.5"><SaveIcon className="size-4" /> {saving ? "Saving…" : "Save"}</Button>
             <a
-              href={dirty ? undefined : `/api/uat/${projectId}/export`}
+              href={dirty ? undefined : `/api/uat/${scriptId}/export`}
               aria-disabled={dirty}
               title={dirty ? "Save your changes first" : "Export to Excel"}
               className={cn("inline-flex h-8 items-center gap-1.5 rounded-md border px-3 text-sm font-medium transition-colors", dirty ? "pointer-events-none opacity-50" : "hover:border-primary/50 hover:text-primary")}

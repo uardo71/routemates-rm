@@ -21,20 +21,20 @@ function safeSheetName(name: string, used: Set<string>): string {
   return s;
 }
 
-export async function GET(_req: Request, { params }: { params: Promise<{ projectId: string }> }) {
-  const { projectId } = await params;
+export async function GET(_req: Request, { params }: { params: Promise<{ scriptId: string }> }) {
+  const { scriptId } = await params;
   const user = await requireUser();
-  if (!(await canAccessProjectDelivery(user, projectId))) return NextResponse.json({ error: "Forbidden." }, { status: 403 });
-
-  const project = await prisma.project.findFirst({
-    where: { id: projectId, companyId: user.companyId },
-    select: { name: true, number: true, uatScriptStatus: true, uatScriptSentAt: true, client: { select: { name: true } } },
+  const script = await prisma.uatScript.findFirst({
+    where: { id: scriptId, companyId: user.companyId },
+    select: { id: true, name: true, status: true, sentAt: true, projectId: true, engagement: { select: { name: true } }, project: { select: { name: true, number: true, client: { select: { name: true } } } } },
   });
-  if (!project) return NextResponse.json({ error: "Not found." }, { status: 404 });
+  if (!script) return NextResponse.json({ error: "Not found." }, { status: 404 });
+  if (!(await canAccessProjectDelivery(user, script.projectId))) return NextResponse.json({ error: "Forbidden." }, { status: 403 });
+  const project = script.project;
   const [areas, cases, issues] = await Promise.all([
-    prisma.uatArea.findMany({ where: { projectId }, orderBy: { sortOrder: "asc" } }),
-    prisma.uatTestCase.findMany({ where: { projectId }, orderBy: { sortOrder: "asc" } }),
-    prisma.uatIssue.findMany({ where: { projectId }, orderBy: { sortOrder: "asc" } }),
+    prisma.uatArea.findMany({ where: { scriptId }, orderBy: { sortOrder: "asc" } }),
+    prisma.uatTestCase.findMany({ where: { scriptId }, orderBy: { sortOrder: "asc" } }),
+    prisma.uatIssue.findMany({ where: { scriptId }, orderBy: { sortOrder: "asc" } }),
   ]);
   const casesOf = (areaId: string) => cases.filter((c) => c.areaId === areaId);
 
@@ -51,7 +51,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ project
   let r = 1;
   sum.mergeCells(`A${r}:G${r}`);
   const st = sum.getCell(`A${r}`);
-  st.value = `${project.name} — UAT Test Scripts`;
+  st.value = `${script.engagement ? `${script.engagement.name} · ` : ""}${project.name} — ${script.name}`;
   st.font = { bold: true, size: 16, color: { argb: "FFFFFFFF" } };
   st.fill = { type: "pattern", pattern: "solid", fgColor: { argb: INK } };
   st.alignment = { vertical: "middle", indent: 1 };
@@ -60,7 +60,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ project
   const meta: [string, string][] = [
     ["Customer", project.client.name],
     ["Test phase", "UAT"],
-    ["Script status", UAT_SCRIPT_STATUS_LABEL[project.uatScriptStatus] + (project.uatScriptSentAt ? ` (${fmt(project.uatScriptSentAt)})` : "")],
+    ["Script status", UAT_SCRIPT_STATUS_LABEL[script.status] + (script.sentAt ? ` (${fmt(script.sentAt)})` : "")],
     ["Exported", format(new Date(), "yyyy-MM-dd")],
   ];
   for (const [k, v] of meta) {
@@ -151,7 +151,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ project
   });
 
   const buffer = await wb.xlsx.writeBuffer();
-  const safe = (project.number ?? project.name).replace(/[^\w-]+/g, "_").slice(0, 40);
+  const safe = `${project.number ?? project.name}_${script.engagement ? `${script.engagement.name}_` : ""}${script.name}`.replace(/[^\w-]+/g, "_").slice(0, 60);
   return new Response(buffer, {
     headers: {
       "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

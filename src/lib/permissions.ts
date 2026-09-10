@@ -84,10 +84,12 @@ export function can(user: SessionUser | null | undefined, action: Action): boole
 export async function visibleProjectIds(user: SessionUser): Promise<string[] | "ALL"> {
   if (user.role === "ADMIN" || user.role === "FINANCE") return "ALL";
 
+  // Delivery staff see the projects they are staffed on — through a milestone assignment, or by
+  // being assigned to one of the project's end-customer engagements.
   const where =
     user.role === "PM"
       ? { companyId: user.companyId, managerId: user.id }
-      : { companyId: user.companyId, milestones: { some: { assignments: { some: { userId: user.id } } } } };
+      : { companyId: user.companyId, OR: [{ milestones: { some: { assignments: { some: { userId: user.id } } } } }, { engagements: { some: { members: { some: { userId: user.id } } } } }] };
   const projects = await prisma.project.findMany({ where, select: { id: true } });
   return projects.map((p) => p.id);
 }
@@ -129,11 +131,33 @@ export async function canAccessProjectDelivery(user: SessionUser, projectId: str
     where: {
       id: projectId,
       companyId: user.companyId,
-      milestones: { some: { assignments: { some: { userId: user.id } } } },
+      OR: [
+        { milestones: { some: { assignments: { some: { userId: user.id } } } } },
+        { engagements: { some: { members: { some: { userId: user.id } } } } },
+      ],
     },
     select: { id: true },
   });
   return project !== null;
+}
+
+/** Which end-customer engagements of a project a user works: "ALL" for whoever manages the project
+ *  and for staff who reach it through a milestone assignment (they are on the whole project); the
+ *  engagement ids they are members of otherwise. Project-level items (no engagement) are always in
+ *  scope. Use it to filter cutover plans / UAT scripts, never as an access gate on its own. */
+export async function engagementScope(user: SessionUser, projectId: string): Promise<"ALL" | string[]> {
+  if (await canManageProject(user, projectId)) return "ALL";
+  const memberships = await prisma.engagementMember.findMany({
+    where: { userId: user.id, engagement: { projectId } },
+    select: { engagementId: true },
+  });
+  if (memberships.length === 0) return "ALL";
+  return memberships.map((m) => m.engagementId);
+}
+
+/** Prisma `where` fragment restricting engagement-scoped rows to what `scope` allows. */
+export function engagementScopeWhere(scope: "ALL" | string[]): Record<string, unknown> {
+  return scope === "ALL" ? {} : { OR: [{ engagementId: null }, { engagementId: { in: scope } }] };
 }
 
 /** @deprecated alias — cutover uses the shared delivery-member check. */

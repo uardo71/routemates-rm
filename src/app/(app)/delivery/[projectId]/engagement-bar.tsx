@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
   PlusIcon, PencilIcon, Trash2Icon, LayersIcon, ChevronDownIcon, CheckIcon,
-  ArrowUpIcon, ArrowDownIcon, Settings2Icon, XIcon,
+  ArrowUpIcon, ArrowDownIcon, Settings2Icon, XIcon, UsersIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,21 +14,26 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
+import { InitialsAvatar } from "@/components/initials-avatar";
 import { cn } from "@/lib/utils";
 import {
-  createEngagementAction, updateEngagementAction, deleteEngagementAction, reorderEngagementAction,
+  createEngagementAction, updateEngagementAction, deleteEngagementAction, reorderEngagementAction, setEngagementMembersAction,
 } from "../actions";
 
-export type Engagement = { id: string; name: string };
+export type Person = { id: string; name: string };
+export type Engagement = { id: string; name: string; members: Person[] };
 
-export function EngagementBar({ projectId, engagements, selectedId }: { projectId: string; engagements: Engagement[]; selectedId: string | null }) {
+export function EngagementBar({ projectId, engagements, staff, selectedId }: { projectId: string; engagements: Engagement[]; staff: Person[]; selectedId: string | null }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [addOpen, setAddOpen] = useState(false);
   const [name, setName] = useState("");
+  const [addMembers, setAddMembers] = useState<string[]>([]);
   const [manageOpen, setManageOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editVal, setEditVal] = useState("");
+  const [peopleFor, setPeopleFor] = useState<Engagement | null>(null);
+  const [peopleSel, setPeopleSel] = useState<string[]>([]);
 
   const selected = engagements.find((e) => e.id === selectedId) ?? null;
 
@@ -39,10 +44,10 @@ export function EngagementBar({ projectId, engagements, selectedId }: { projectI
   function add() {
     if (!name.trim()) return toast.error("Enter a name.");
     start(async () => {
-      const r = await createEngagementAction({ projectId, name: name.trim() });
+      const r = await createEngagementAction({ projectId, name: name.trim(), memberIds: addMembers });
       if (r.error) { toast.error(r.error); return; }
       toast.success("End customer added.");
-      setName(""); setAddOpen(false);
+      setName(""); setAddMembers([]); setAddOpen(false);
       if (r.id && !manageOpen) go(r.id);
       else router.refresh();
     });
@@ -56,7 +61,7 @@ export function EngagementBar({ projectId, engagements, selectedId }: { projectI
     });
   }
   function remove(e: Engagement) {
-    if (!confirm(`Delete "${e.name}"? Its status reports, plan, RAID, minutes and documents stay but move to project-level.`)) return;
+    if (!confirm(`Delete "${e.name}"? Its status reports, plan, RAID, minutes, documents, cutover plans and UAT scripts stay but move to project-level.`)) return;
     start(async () => {
       const r = await deleteEngagementAction(e.id);
       if (r.error) toast.error(r.error);
@@ -74,6 +79,19 @@ export function EngagementBar({ projectId, engagements, selectedId }: { projectI
       else router.refresh();
     });
   }
+  function openPeople(e: Engagement) {
+    setPeopleFor(e);
+    setPeopleSel(e.members.map((m) => m.id));
+  }
+  function savePeople() {
+    if (!peopleFor) return;
+    start(async () => {
+      const r = await setEngagementMembersAction({ engagementId: peopleFor.id, userIds: peopleSel });
+      if (r.error) toast.error(r.error);
+      else { toast.success("People updated."); setPeopleFor(null); router.refresh(); }
+    });
+  }
+  const toggle = (list: string[], id: string) => (list.includes(id) ? list.filter((x) => x !== id) : [...list, id]);
 
   return (
     <div className="flex items-center gap-2 flex-wrap">
@@ -95,15 +113,39 @@ export function EngagementBar({ projectId, engagements, selectedId }: { projectI
           {engagements.map((e) => (
             <DropdownMenuItem key={e.id} onClick={() => go(e.id)} className="justify-between gap-3">
               <span className="truncate">{e.name}</span>
-              {selectedId === e.id && <CheckIcon className="size-4 shrink-0 text-primary" />}
+              <span className="flex items-center gap-1.5">
+                {e.members.length > 0 && <span className="text-[11px] text-muted-foreground">{e.members.length}<UsersIcon className="ml-0.5 inline size-3" /></span>}
+                {selectedId === e.id && <CheckIcon className="size-4 shrink-0 text-primary" />}
+              </span>
             </DropdownMenuItem>
           ))}
           <DropdownMenuSeparator />
-          <DropdownMenuItem onClick={() => { setName(""); setAddOpen(true); }} className="text-primary">
+          <DropdownMenuItem onClick={() => { setName(""); setAddMembers([]); setAddOpen(true); }} className="text-primary">
             <PlusIcon className="size-4" /> Add end customer
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+
+      {/* Who works this end customer — shown inline so the PM sees the team at a glance. */}
+      {selected && (
+        <button
+          type="button"
+          onClick={() => openPeople(selected)}
+          className="flex items-center gap-1.5 rounded-md border border-dashed px-2 py-1 text-xs text-muted-foreground hover:border-primary/50 hover:text-foreground"
+          title="Assign people to this end customer"
+        >
+          {selected.members.length === 0 ? (
+            <><UsersIcon className="size-3.5" /> Assign people</>
+          ) : (
+            <>
+              <span className="flex -space-x-1.5">
+                {selected.members.slice(0, 5).map((m) => <InitialsAvatar key={m.id} name={m.name} className="size-5 text-[9px] ring-2 ring-background" />)}
+              </span>
+              <span>{selected.members.length === 1 ? selected.members[0].name : `${selected.members.length} people`}</span>
+            </>
+          )}
+        </button>
+      )}
 
       <Button size="sm" variant="ghost" className="text-muted-foreground gap-1.5" onClick={() => setManageOpen(true)}>
         <Settings2Icon className="size-3.5" /> Manage
@@ -112,22 +154,38 @@ export function EngagementBar({ projectId, engagements, selectedId }: { projectI
       {/* Add dialog (shared by the dropdown's "Add" and the manage panel) */}
       {addOpen && (
         <Dialog open onOpenChange={(v) => !v && setAddOpen(false)}>
-          <DialogContent className="sm:max-w-sm">
+          <DialogContent className="sm:max-w-md">
             <DialogHeader><DialogTitle>Add end-customer engagement</DialogTitle></DialogHeader>
-            <div className="flex flex-col gap-1.5">
-              <Label>Name</Label>
-              <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Zambon — AP eDocument" maxLength={200} autoFocus onKeyDown={(e) => { if (e.key === "Enter") add(); }} />
-              <span className="text-[11px] text-muted-foreground">A cockpit-only stream — its own status, plan, RAID, minutes &amp; documents. Never a separate project.</span>
+            <div className="flex flex-col gap-3">
+              <div className="flex flex-col gap-1.5">
+                <Label>Name</Label>
+                <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Zambon — AP eDocument" maxLength={200} autoFocus onKeyDown={(e) => { if (e.key === "Enter") add(); }} />
+                <span className="text-[11px] text-muted-foreground">A cockpit-only stream — its own status, plan, RAID, minutes, documents, cutover plans &amp; UAT scripts. Never a separate project.</span>
+              </div>
+              <PeoplePicker staff={staff} selected={addMembers} onToggle={(id) => setAddMembers((l) => toggle(l, id))} />
             </div>
             <DialogFooter><Button size="sm" onClick={add} disabled={pending}>{pending ? "Adding…" : "Add"}</Button></DialogFooter>
           </DialogContent>
         </Dialog>
       )}
 
-      {/* Manage panel — rename / reorder / delete every end customer in one place */}
+      {/* People dialog — assign staff to one end customer */}
+      {peopleFor && (
+        <Dialog open onOpenChange={(v) => !v && setPeopleFor(null)}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader><DialogTitle>People on {peopleFor.name}</DialogTitle></DialogHeader>
+            <PeoplePicker staff={staff} selected={peopleSel} onToggle={(id) => setPeopleSel((l) => toggle(l, id))} />
+            <DialogFooter>
+              <Button size="sm" onClick={savePeople} disabled={pending}>{pending ? "Saving…" : "Save"}</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
+
+      {/* Manage panel — rename / reorder / people / delete every end customer in one place */}
       {manageOpen && (
         <Dialog open onOpenChange={(v) => !v && (setManageOpen(false), setEditingId(null))}>
-          <DialogContent className="sm:max-w-md">
+          <DialogContent className="sm:max-w-lg">
             <DialogHeader><DialogTitle>Manage end customers</DialogTitle></DialogHeader>
             <div className="flex flex-col gap-1 max-h-[55vh] overflow-y-auto">
               {engagements.length === 0 && (
@@ -147,7 +205,11 @@ export function EngagementBar({ projectId, engagements, selectedId }: { projectI
                     </>
                   ) : (
                     <>
-                      <span className="flex-1 truncate text-sm">{e.name}</span>
+                      <div className="flex min-w-0 flex-1 flex-col">
+                        <span className="truncate text-sm">{e.name}</span>
+                        <span className="truncate text-[11px] text-muted-foreground">{e.members.length === 0 ? "Nobody assigned" : e.members.map((m) => m.name).join(", ")}</span>
+                      </div>
+                      <Button size="sm" variant="ghost" className="gap-1 text-muted-foreground" onClick={() => openPeople(e)} title="Assign people"><UsersIcon className="size-3.5" />{e.members.length > 0 && <span className="text-xs">{e.members.length}</span>}</Button>
                       <Button size="sm" variant="ghost" className="text-muted-foreground" onClick={() => { setEditingId(e.id); setEditVal(e.name); }}><PencilIcon className="size-3.5" /></Button>
                       <Button size="sm" variant="ghost" className="text-muted-foreground hover:text-destructive" onClick={() => remove(e)} disabled={pending}><Trash2Icon className="size-3.5" /></Button>
                     </>
@@ -156,11 +218,40 @@ export function EngagementBar({ projectId, engagements, selectedId }: { projectI
               ))}
             </div>
             <DialogFooter className="border-t pt-3">
-              <Button size="sm" variant="outline" className="w-full gap-1.5" onClick={() => { setName(""); setAddOpen(true); }}><PlusIcon className="size-3.5" /> Add end customer</Button>
+              <Button size="sm" variant="outline" className="w-full gap-1.5" onClick={() => { setName(""); setAddMembers([]); setAddOpen(true); }}><PlusIcon className="size-3.5" /> Add end customer</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
       )}
+    </div>
+  );
+}
+
+function PeoplePicker({ staff, selected, onToggle }: { staff: Person[]; selected: string[]; onToggle: (id: string) => void }) {
+  const [q, setQ] = useState("");
+  const shown = staff.filter((s) => s.name.toLowerCase().includes(q.trim().toLowerCase()));
+  return (
+    <div className="flex flex-col gap-1.5">
+      <Label>People</Label>
+      <span className="text-[11px] text-muted-foreground">
+        Assigned people get access to this end customer&apos;s cutover plans and UAT scripts in the cockpit tools — and, if they are not on the whole project, see only this end customer.
+      </span>
+      <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search staff…" className="h-8" />
+      <div className="flex max-h-48 flex-col gap-0.5 overflow-y-auto rounded-md border p-1">
+        {shown.length === 0 && <span className="px-2 py-3 text-center text-xs text-muted-foreground">No one matches.</span>}
+        {shown.map((s) => {
+          const on = selected.includes(s.id);
+          return (
+            <label key={s.id} className={cn("flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-sm hover:bg-muted", on && "bg-primary/5")}>
+              <input type="checkbox" checked={on} onChange={() => onToggle(s.id)} className="size-3.5 accent-primary" />
+              <InitialsAvatar name={s.name} className="size-5 text-[9px]" />
+              <span className="truncate">{s.name}</span>
+              {on && <CheckIcon className="ml-auto size-3.5 text-primary" />}
+            </label>
+          );
+        })}
+      </div>
+      {selected.length > 0 && <span className="text-[11px] text-muted-foreground">{selected.length} selected</span>}
     </div>
   );
 }

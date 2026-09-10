@@ -74,9 +74,11 @@ function aggregate(kids: Row[]): Agg {
 }
 
 export function CutoverClient({
-  projectId, projectName, projectNumber, clientName, rows: initial, lists: initialLists, userNames, backHref,
+  planId, planName, engagementName, projectName, projectNumber, clientName, rows: initial, lists: initialLists, userNames, backHref,
 }: {
-  projectId: string;
+  planId: string;
+  planName: string;
+  engagementName: string | null;
   projectName: string;
   projectNumber: string | null;
   clientName: string;
@@ -149,7 +151,7 @@ export function CutoverClient({
       durationMinutes: minutesFromHours(r.durationText), status: r.status,
     }));
     const listPayload = lists.map((l) => ({ id: l.id, name: l.name, columns: l.columns, rows: l.rows }));
-    const res = await saveCutoverPlanAction(projectId, { tasks, lists: listPayload });
+    const res = await saveCutoverPlanAction(planId, { tasks, lists: listPayload });
     if (res.rows) {
       const eds = res.rows.map(toEditable);
       setRows(eds); setBaseline(eds);
@@ -187,15 +189,18 @@ export function CutoverClient({
         <Link href={backHref} className="text-sm text-muted-foreground hover:underline">← Back</Link>
         <div className="mt-2 flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h1 className="text-2xl font-semibold tracking-tight">Cutover plan</h1>
-            <p className="mt-0.5 text-sm text-muted-foreground">{projectName}{projectNumber ? ` · ${projectNumber}` : ""} · {clientName}</p>
+            <h1 className="text-2xl font-semibold tracking-tight">{planName}</h1>
+            <p className="mt-0.5 text-sm text-muted-foreground">
+              {engagementName && <span className="font-medium text-foreground">{engagementName} · </span>}
+              {projectName}{projectNumber ? ` · ${projectNumber}` : ""} · {clientName}
+            </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {dirty && <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/12 px-2.5 py-1 text-xs font-medium text-amber-700 dark:text-amber-400">Unsaved changes</span>}
             <Button variant="outline" size="sm" onClick={discard} disabled={!dirty || saving} className="gap-1.5"><Undo2Icon className="size-4" /> Discard</Button>
             <Button size="sm" onClick={save} disabled={!dirty || saving} className="gap-1.5"><SaveIcon className="size-4" /> {saving ? "Saving…" : "Save"}</Button>
             <a
-              href={dirty ? undefined : `/api/cutover/${projectId}/export`}
+              href={dirty ? undefined : `/api/cutover/${planId}/export`}
               aria-disabled={dirty}
               title={dirty ? "Save your changes first" : "Export to Excel"}
               className={cn("inline-flex h-8 items-center gap-1.5 rounded-md border px-3 text-sm font-medium transition-colors", dirty ? "pointer-events-none opacity-50" : "hover:border-primary/50 hover:text-primary")}

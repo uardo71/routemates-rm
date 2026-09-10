@@ -35,8 +35,8 @@ export default async function DeliveryPage() {
       },
       planTasks: { select: { engagementId: true, name: true, dueDate: true, status: true, isMilestone: true, progress: true } },
       meetings: { select: { engagementId: true, actions: { select: { done: true, dueDate: true, description: true } } } },
-      cutoverTasks: { select: { id: true, parentId: true, status: true } },
-      _count: { select: { uatTestCases: true } },
+      cutoverPlans: { select: { tasks: { select: { id: true, parentId: true, status: true } } } },
+      uatScripts: { select: { status: true, _count: { select: { cases: true } } } },
     },
     orderBy: [{ name: "asc" }],
   });
@@ -185,7 +185,8 @@ export default async function DeliveryPage() {
 
     // Project-level cutover readiness (once per project): after UAT is accepted, or as go-live nears,
     // flag that the cutover to production still needs finishing so the PM can push the consultant.
-    const cutoverLeaves = p.cutoverTasks.filter((t) => !p.cutoverTasks.some((c) => c.parentId === t.id));
+    const cutoverTasks = p.cutoverPlans.flatMap((x) => x.tasks);
+    const cutoverLeaves = cutoverTasks.filter((t) => !cutoverTasks.some((c) => c.parentId === t.id));
     const cutoverComplete = cutoverLeaves.length > 0 && cutoverLeaves.every((t) => t.status === "DONE" || t.status === "SKIPPED");
     const goLive = p.endDate ? new Date(p.endDate.toISOString().slice(0, 10)) : null;
     const daysToGoLive = goLive ? differenceInCalendarDays(goLive, today) : null;
@@ -193,13 +194,14 @@ export default async function DeliveryPage() {
 
     // UAT test script must be prepared & sent before UAT (consultant owns it; PM governs).
     const uatWindow = p.uatStatus !== "NOT_STARTED" || (active && daysToGoLive != null && daysToGoLive >= 0 && daysToGoLive <= 30);
-    if (active && p.uatScriptStatus !== "SENT" && uatWindow) {
+    const uatCases = p.uatScripts.reduce((s, x) => s + x._count.cases, 0);
+    if (active && uatWindow && (p.uatScripts.length === 0 || p.uatScripts.some((x) => x.status !== "SENT"))) {
       const h = DAY_HINT.UAT_SCRIPT_DUE;
       dayItems.push({
         id: `${p.id}:uatscript`,
         kind: "UAT_SCRIPT_DUE",
         priority: p.uatStatus !== "NOT_STARTED" ? "CRIT" : "WARN",
-        title: `UAT test script not sent — ${p._count.uatTestCases > 0 ? `${p._count.uatTestCases} cases` : "not started"}`,
+        title: `UAT test script not sent — ${uatCases > 0 ? `${uatCases} cases` : "not started"}`,
         context: p.name,
         projectId: p.id,
         engagementId: null,

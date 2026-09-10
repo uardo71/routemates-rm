@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/session";
-import { canManageProject } from "@/lib/permissions";
+import { canManageProject, STAFF_ONLY } from "@/lib/permissions";
 import { MAX_RECEIPT_SIZE_BYTES, saveReceiptFile, deleteReceiptFile } from "@/lib/receipt-storage";
 
 // The delivery library accepts the everyday deliverable formats (PDF, images, Office, email), matched
@@ -36,15 +36,51 @@ async function resolveEngagement(projectId: string, engagementId: string | null 
 
 // ---------- engagements (end-customer streams — cockpit only, never a Project) ----------
 
-export async function createEngagementAction(input: { projectId: string; name: string }): Promise<{ error?: string; id?: string }> {
+/** Only active staff of the company can be assigned to an engagement; anything else is dropped. */
+async function validStaffIds(companyId: string, userIds: string[] | undefined): Promise<string[]> {
+  const ids = [...new Set((userIds ?? []).filter((x) => typeof x === "string" && x.length > 0))].slice(0, 100);
+  if (ids.length === 0) return [];
+  const rows = await prisma.user.findMany({ where: { id: { in: ids }, companyId, active: true, ...STAFF_ONLY }, select: { id: true } });
+  return rows.map((r) => r.id);
+}
+
+export async function createEngagementAction(input: { projectId: string; name: string; memberIds?: string[] }): Promise<{ error?: string; id?: string }> {
   const name = z.string().trim().min(1, "Enter a name.").max(200).safeParse(input.name);
   if (!name.success) return { error: name.error.issues[0]?.message ?? "Enter a name." };
   const ctx = await assertManage(input.projectId);
   if (ctx.error) return { error: ctx.error };
+  const members = await validStaffIds(ctx.companyId!, input.memberIds);
   const max = await prisma.engagement.aggregate({ where: { projectId: input.projectId }, _max: { sortOrder: true } });
-  const created = await prisma.engagement.create({ data: { companyId: ctx.companyId!, projectId: input.projectId, name: name.data, sortOrder: (max._max.sortOrder ?? 0) + 10 } });
+  const created = await prisma.engagement.create({
+    data: {
+      companyId: ctx.companyId!, projectId: input.projectId, name: name.data, sortOrder: (max._max.sortOrder ?? 0) + 10,
+      members: { create: members.map((userId) => ({ userId })) },
+    },
+  });
   revalidatePath(`/delivery/${input.projectId}`);
   return { id: created.id };
+}
+
+/** Replaces the people assigned to an end customer. Membership grants them delivery access to the
+ *  project's cockpit tools (cutover plans, UAT scripts) and scopes what they see to this customer. */
+export async function setEngagementMembersAction(input: { engagementId: string; userIds: string[] }): Promise<{ error?: string }> {
+  const eng = await prisma.engagement.findUnique({ where: { id: input.engagementId }, select: { projectId: true, companyId: true } });
+  if (!eng) return { error: "Engagement not found." };
+  const ctx = await assertManage(eng.projectId);
+  if (ctx.error) return { error: ctx.error };
+  const members = await validStaffIds(eng.companyId, input.userIds);
+  await prisma.$transaction(async (tx) => {
+    await tx.engagementMember.deleteMany({ where: { engagementId: input.engagementId, userId: { notIn: members } } });
+    for (const userId of members) {
+      await tx.engagementMember.upsert({
+        where: { engagementId_userId: { engagementId: input.engagementId, userId } },
+        create: { engagementId: input.engagementId, userId },
+        update: {},
+      });
+    }
+  });
+  revalidatePath(`/delivery/${eng.projectId}`);
+  return {};
 }
 
 export async function updateEngagementAction(input: { id: string; name: string }): Promise<{ error?: string }> {
