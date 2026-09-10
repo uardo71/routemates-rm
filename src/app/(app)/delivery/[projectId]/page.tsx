@@ -13,7 +13,7 @@ import { RAG_DOT, RAG_LABEL, RAG_PILL } from "@/lib/delivery";
 import { cadenceDays } from "@/lib/delivery-day";
 import type { RagStatus } from "@prisma/client";
 import { StatusReportsClient, type ReportRow } from "./status-reports-client";
-import { type RaidRow } from "./raid-client";
+import { RaidClient, type RaidRow } from "./raid-client";
 import { MinutesClient, type MinutesRow } from "./minutes-client";
 import { DocumentsLibraryClient, type LibraryDoc } from "./documents-client";
 import { PlanClient, type PlanRow } from "./plan-client";
@@ -22,7 +22,7 @@ import { CockpitShell, type CockpitTab } from "./cockpit-shell";
 
 const iso = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : null);
 
-const COCKPIT_TABS = ["overview", "status", "plan", "minutes", "documents"];
+const COCKPIT_TABS = ["overview", "status", "plan", "raid", "minutes", "documents"];
 
 export default async function DeliveryProjectPage({ params, searchParams }: { params: Promise<{ projectId: string }>; searchParams: Promise<{ eng?: string; tab?: string; from?: string }> }) {
   const { projectId } = await params;
@@ -261,13 +261,14 @@ export default async function DeliveryProjectPage({ params, searchParams }: { pa
     </div>
   );
 
-  // Four lean sections built around a junior PM's real jobs — status, plan, meetings/docs — with an
-  // Overview that surfaces the important bits. RAID is intentionally NOT
-  // top-level tabs here (too much ceremony); issues stay lightweight via the My Day / attention nudges.
+  // Lean sections built around a junior PM's real jobs — status, plan, issues, meetings/docs — with
+  // an Overview that surfaces the important bits. "Issues" is the RAID log; My Day's issue nudges
+  // deep-link to it (tab: "raid"), so it must exist as a tab. The count is what is still open.
   const tabs: CockpitTab[] = [
     { value: "overview", label: "Overview", content: overview },
     { value: "status", label: `Status updates (${reports.length})`, content: <StatusReportsClient projectId={project.id} engagementId={selectedEng} reports={reports} /> },
     { value: "plan", label: `Plan (${plan.length})`, content: <PlanClient projectId={project.id} engagementId={selectedEng} tasks={plan} /> },
+    { value: "raid", label: `Issues (${openRaidList.length})`, content: <RaidClient projectId={project.id} engagementId={selectedEng} items={raid} /> },
     { value: "minutes", label: `Minutes (${minutes.length})`, content: <MinutesClient projectId={project.id} engagementId={selectedEng} items={minutes} /> },
     { value: "documents", label: `Documents (${docs.length})`, content: <DocumentsLibraryClient projectId={project.id} engagementId={selectedEng} docs={docs} /> },
   ];

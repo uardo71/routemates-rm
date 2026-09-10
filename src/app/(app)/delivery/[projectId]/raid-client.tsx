@@ -3,7 +3,7 @@
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { PlusIcon, PencilIcon, Trash2Icon } from "lucide-react";
+import { PlusIcon, PencilIcon, Trash2Icon, SearchIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -42,16 +42,28 @@ type Draft = {
   id?: string;
   type: RaidType; title: string; description: string; severity: "" | RaidSeverity; status: RaidStatus; owner: string; dueDate: string; response: string;
 };
-const emptyDraft = (): Draft => ({ type: "RISK", title: "", description: "", severity: "", status: "OPEN", owner: "", dueDate: "", response: "" });
+// New entries default to ISSUE — that is what a PM logs in the moment; the other RAID types stay a click away.
+const emptyDraft = (): Draft => ({ type: "ISSUE", title: "", description: "", severity: "", status: "OPEN", owner: "", dueDate: "", response: "" });
+
+type StatusFilter = "OPEN_ONLY" | "ALL" | RaidStatus;
 
 export function RaidClient({ projectId, engagementId, items }: { projectId: string; engagementId: string | null; items: RaidRow[] }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [typeFilter, setTypeFilter] = useState<"ALL" | RaidType>("ALL");
-  const [statusFilter, setStatusFilter] = useState<"ALL" | RaidStatus>("ALL");
+  // "Open only" by default: the log is for what still needs handling; closed items are one click away.
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("OPEN_ONLY");
+  const [q, setQ] = useState("");
   const [draft, setDraft] = useState<Draft | null>(null);
 
-  const filtered = useMemo(() => items.filter((i) => (typeFilter === "ALL" || i.type === typeFilter) && (statusFilter === "ALL" || i.status === statusFilter)), [items, typeFilter, statusFilter]);
+  const filtered = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    return items.filter((i) =>
+      (typeFilter === "ALL" || i.type === typeFilter) &&
+      (statusFilter === "ALL" || (statusFilter === "OPEN_ONLY" ? i.status !== "CLOSED" : i.status === statusFilter)) &&
+      (!needle || `${i.title} ${i.description ?? ""} ${i.owner ?? ""} ${i.response ?? ""} ${RAID_TYPE_LABEL[i.type]}`.toLowerCase().includes(needle)),
+    );
+  }, [items, typeFilter, statusFilter, q]);
 
   function save() {
     if (!draft) return;
@@ -81,15 +93,19 @@ export function RaidClient({ projectId, engagementId, items }: { projectId: stri
   return (
     <Card>
       <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <CardTitle className="text-base">RAID log <span className="font-normal text-muted-foreground">— risks, assumptions, issues, dependencies, decisions</span></CardTitle>
+        <CardTitle className="text-base">Issues <span className="font-normal text-muted-foreground">— the RAID log: risks, assumptions, issues, dependencies, decisions</span></CardTitle>
         <div className="flex flex-wrap items-center gap-2">
+          <div className="relative">
+            <SearchIcon className="absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search issues…" className="h-8 w-48 pl-8" />
+          </div>
           <Select value={typeFilter} items={[{ value: "ALL", label: "All types" }, ...TYPES.map((t) => ({ value: t, label: RAID_TYPE_LABEL[t] }))]} onValueChange={(v) => setTypeFilter((v as typeof typeFilter) ?? "ALL")}>
             <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
             <SelectContent><SelectItem value="ALL">All types</SelectItem>{TYPES.map((t) => <SelectItem key={t} value={t}>{RAID_TYPE_LABEL[t]}</SelectItem>)}</SelectContent>
           </Select>
-          <Select value={statusFilter} items={[{ value: "ALL", label: "All statuses" }, ...STATUSES.map((s) => ({ value: s, label: RAID_STATUS_LABEL[s] }))]} onValueChange={(v) => setStatusFilter((v as typeof statusFilter) ?? "ALL")}>
+          <Select value={statusFilter} items={[{ value: "OPEN_ONLY", label: "Open only" }, { value: "ALL", label: "All statuses" }, ...STATUSES.map((s) => ({ value: s, label: RAID_STATUS_LABEL[s] }))]} onValueChange={(v) => setStatusFilter((v as StatusFilter) ?? "OPEN_ONLY")}>
             <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
-            <SelectContent><SelectItem value="ALL">All statuses</SelectItem>{STATUSES.map((s) => <SelectItem key={s} value={s}>{RAID_STATUS_LABEL[s]}</SelectItem>)}</SelectContent>
+            <SelectContent><SelectItem value="OPEN_ONLY">Open only</SelectItem><SelectItem value="ALL">All statuses</SelectItem>{STATUSES.map((s) => <SelectItem key={s} value={s}>{RAID_STATUS_LABEL[s]}</SelectItem>)}</SelectContent>
           </Select>
           <Button size="sm" onClick={() => setDraft(emptyDraft())}><PlusIcon className="size-3.5" /> Add</Button>
         </div>
@@ -126,7 +142,7 @@ export function RaidClient({ projectId, engagementId, items }: { projectId: stri
                   </TableCell>
                 </TableRow>
               ))}
-              {filtered.length === 0 && <TableRow><TableCell colSpan={7} className="py-8 text-center text-muted-foreground">{items.length === 0 ? "No RAID items yet — add your first risk or issue." : "Nothing matches these filters."}</TableCell></TableRow>}
+              {filtered.length === 0 && <TableRow><TableCell colSpan={7} className="py-8 text-center text-muted-foreground">{items.length === 0 ? "No issues yet — add the first one." : statusFilter === "OPEN_ONLY" && !q ? "Nothing open. Switch the filter to see closed items." : "Nothing matches these filters."}</TableCell></TableRow>}
             </TableBody>
           </Table>
         </div>
