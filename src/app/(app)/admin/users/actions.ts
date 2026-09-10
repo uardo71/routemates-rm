@@ -7,6 +7,7 @@ import { prisma } from "@/lib/prisma";
 import { hashPassword } from "@/lib/password";
 import { requirePermission } from "@/lib/session";
 import { recomputeEmploymentCostRate } from "@/lib/cost-rate";
+import { recordAudit } from "@/lib/audit";
 
 const CreateUserSchema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -168,7 +169,8 @@ export async function updateUserAction(_prevState: string | undefined, formData:
   });
 
   if (data.trackEmployment) {
-    await prisma.employment.upsert({
+    await prisma.$transaction(async (tx) => {
+      const after = await tx.employment.upsert({
       where: { userId: data.userId },
       create: {
         userId: data.userId,
@@ -188,11 +190,19 @@ export async function updateUserAction(_prevState: string | undefined, formData:
         carriedInVacationYear,
         ...(weeklyCapacityHours !== undefined ? { weeklyCapacityHours } : {}),
       },
+      });
+      await recordAudit(tx, { entityType: "Employment", entityId: after.id, action: target.employment ? "update" : "create", actor: user, before: target.employment, after, label: target.name });
     });
     // Cost rate is never typed in directly — derive it from salary history.
-    await recomputeEmploymentCostRate(data.userId);
+    await recomputeEmploymentCostRate(data.userId, (tx, before, after) =>
+      recordAudit(tx, { entityType: "Employment", entityId: String(after.id), action: "update", actor: user, before, after, fields: ["costRate"], label: target.name, note: "recomputed from salary" }),
+    );
   } else if (target.employment) {
-    await prisma.employment.delete({ where: { userId: data.userId } });
+    const employment = target.employment;
+    await prisma.$transaction(async (tx) => {
+      await tx.employment.delete({ where: { userId: data.userId } });
+      await recordAudit(tx, { entityType: "Employment", entityId: employment.id, action: "delete", actor: user, before: employment, label: target.name });
+    });
   }
 
   revalidatePath("/admin/users");

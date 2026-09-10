@@ -31,6 +31,7 @@ import {
   BookOpenIcon,
   TicketIcon,
   SettingsIcon,
+  HistoryIcon,
 } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
@@ -63,6 +64,7 @@ const ICONS = {
   revenue: TrendingUpIcon,
   budgets: PiggyBankIcon,
   settings: SettingsIcon,
+  audit: HistoryIcon,
 } as const;
 
 export type NavItem = { href: string; label: string; icon: keyof typeof ICONS; badge?: string };

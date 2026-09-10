@@ -6,6 +6,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/session";
 import { invoiceTotals, effectiveDueDate } from "@/lib/invoice";
+import { recordAudit } from "@/lib/audit";
 import { MAX_RECEIPT_SIZE_BYTES, isAllowedReceiptType, saveReceiptFile, deleteReceiptFile } from "@/lib/receipt-storage";
 import type { InvoiceType } from "@prisma/client";
 
@@ -109,7 +110,8 @@ export async function createInvoiceAction(input: CreateInvoiceInput): Promise<{ 
 
   const invoiceNumber = await nextInvoiceNumber(user.companyId, d.type);
 
-  const invoice = await prisma.invoice.create({
+  const invoice = await prisma.$transaction(async (tx) => {
+    const created = await tx.invoice.create({
     data: {
       companyId: user.companyId,
       clientId,
@@ -141,6 +143,13 @@ export async function createInvoiceAction(input: CreateInvoiceInput): Promise<{ 
         })),
       },
     },
+    include: { lines: true },
+    });
+    await recordAudit(tx, { entityType: "Invoice", entityId: created.id, action: "create", actor: user, after: created, label: created.invoiceNumber });
+    for (const line of created.lines) {
+      await recordAudit(tx, { entityType: "InvoiceLine", entityId: line.id, action: "create", actor: user, after: line, label: line.description, parent: { entityType: "Invoice", entityId: created.id } });
+    }
+    return created;
   });
 
   // Reconcile the typed line quantities against approved time so manually-created invoices don't
@@ -381,11 +390,13 @@ export async function createTimeInvoiceAction(input: CreateTimeInvoiceInput): Pr
         vatRate: d.vatRate ?? null,
       },
     });
+    await recordAudit(tx, { entityType: "Invoice", entityId: invoice.id, action: "create", actor: user, after: invoice, label: invoiceNumber, note: "from approved time" });
     for (const g of groups.values()) {
       const rate = g.hours > 0 ? Math.round((g.value / g.hours) * 10000) / 10000 : 0;
       const line = await tx.invoiceLine.create({
         data: { invoiceId: invoice.id, milestoneId: g.milestoneId, description: g.description, quantity: g.hours, rate, amount: Math.round(g.value * 100) / 100 },
       });
+      await recordAudit(tx, { entityType: "InvoiceLine", entityId: line.id, action: "create", actor: user, after: line, label: line.description, parent: { entityType: "Invoice", entityId: invoice.id } });
       const claimed = await tx.timeEntry.updateMany({
         // `invoiceLineId: null` here is the guard: only still-unbilled entries can be claimed.
         where: { id: { in: g.entryIds }, invoiceLineId: null },
@@ -421,7 +432,10 @@ export async function issueInvoiceAction(invoiceId: string): Promise<{ error?: s
   if (!inv) return { error: "Invoice not found." };
   if (inv.status !== "DRAFT") return { error: "Only a draft can be issued." };
   if (inv._count.lines === 0) return { error: "Add at least one line before issuing." };
-  await prisma.invoice.update({ where: { id: inv.id }, data: { status: "ISSUED", issuedAt: new Date(), recognitionDate: inv.recognitionDate ?? inv.issueDate } });
+  await prisma.$transaction(async (tx) => {
+    const after = await tx.invoice.update({ where: { id: inv.id }, data: { status: "ISSUED", issuedAt: new Date(), recognitionDate: inv.recognitionDate ?? inv.issueDate } });
+    await recordAudit(tx, { entityType: "Invoice", entityId: inv.id, action: "update", actor: user, before: inv, after, label: inv.invoiceNumber });
+  });
   revalidatePath("/invoices");
   revalidatePath(`/invoices/${inv.id}`);
   if (inv.projectId) revalidatePath(`/projects/${inv.projectId}`);
@@ -445,16 +459,19 @@ export async function reconcileInvoiceAction(input: ReconcileInput): Promise<{ e
   if (!inv) return { error: "Invoice not found." };
   if (inv.status === "DRAFT") return { error: "Issue the invoice before reconciling it." };
   if (inv.status === "VOID") return { error: "This invoice is void." };
-  await prisma.invoice.update({
-    where: { id: inv.id },
-    data: {
-      fiscalNumber: d.fiscalNumber,
-      fiscalReference: d.fiscalReference ?? null,
-      customerReference: d.customerReference ?? inv.customerReference,
-      reconciledAt: new Date(),
-      // Keep PAID if already paid; otherwise mark RECONCILED.
-      status: inv.status === "PAID" ? "PAID" : "RECONCILED",
-    },
+  await prisma.$transaction(async (tx) => {
+    const after = await tx.invoice.update({
+      where: { id: inv.id },
+      data: {
+        fiscalNumber: d.fiscalNumber,
+        fiscalReference: d.fiscalReference ?? null,
+        customerReference: d.customerReference ?? inv.customerReference,
+        reconciledAt: new Date(),
+        // Keep PAID if already paid; otherwise mark RECONCILED.
+        status: inv.status === "PAID" ? "PAID" : "RECONCILED",
+      },
+    });
+    await recordAudit(tx, { entityType: "Invoice", entityId: inv.id, action: "update", actor: user, before: inv, after, label: inv.invoiceNumber });
   });
   revalidatePath("/invoices");
   revalidatePath(`/invoices/${inv.id}`);
@@ -467,10 +484,11 @@ export async function voidInvoiceAction(invoiceId: string): Promise<{ error?: st
   if (!inv) return { error: "Invoice not found." };
   if (inv.status === "VOID") return { error: "Already void." };
   const lineIds = inv.lines.map((l) => l.id);
-  await prisma.$transaction([
-    prisma.timeEntry.updateMany({ where: { invoiceLineId: { in: lineIds } }, data: { invoiceLineId: null } }),
-    prisma.invoice.update({ where: { id: inv.id }, data: { status: "VOID" } }),
-  ]);
+  await prisma.$transaction(async (tx) => {
+    await tx.timeEntry.updateMany({ where: { invoiceLineId: { in: lineIds } }, data: { invoiceLineId: null } });
+    const after = await tx.invoice.update({ where: { id: inv.id }, data: { status: "VOID" } });
+    await recordAudit(tx, { entityType: "Invoice", entityId: inv.id, action: "update", actor: user, before: inv, after, label: inv.invoiceNumber });
+  });
   revalidatePath("/invoices");
   revalidatePath(`/invoices/${inv.id}`);
   if (inv.projectId) revalidatePath(`/projects/${inv.projectId}`);
@@ -509,10 +527,14 @@ export async function recordPaymentAction(input: PaymentInput): Promise<{ error?
   const settledSoFar =
     inv.payments.reduce((s, p) => s + Number(p.amount) + Number(p.bankFee), 0) + d.amount + bankFee;
 
-  await prisma.$transaction([
-    prisma.invoicePayment.create({ data: { invoiceId: inv.id, amount: d.amount, bankFee, date, method: d.method ?? null, reference: d.reference ?? null } }),
-    ...(settledSoFar >= gross ? [prisma.invoice.update({ where: { id: inv.id }, data: { status: "PAID" } })] : []),
-  ]);
+  await prisma.$transaction(async (tx) => {
+    const payment = await tx.invoicePayment.create({ data: { invoiceId: inv.id, amount: d.amount, bankFee, date, method: d.method ?? null, reference: d.reference ?? null } });
+    await recordAudit(tx, { entityType: "InvoicePayment", entityId: payment.id, action: "create", actor: user, after: payment, label: inv.invoiceNumber, parent: { entityType: "Invoice", entityId: inv.id } });
+    if (settledSoFar >= gross) {
+      const after = await tx.invoice.update({ where: { id: inv.id }, data: { status: "PAID" } });
+      await recordAudit(tx, { entityType: "Invoice", entityId: inv.id, action: "update", actor: user, before: inv, after, fields: ["status"], label: inv.invoiceNumber, note: "fully settled" });
+    }
+  });
   revalidatePath("/invoices");
   revalidatePath(`/invoices/${inv.id}`);
   return {};
@@ -552,17 +574,21 @@ export async function updatePaymentAction(input: UpdatePaymentInput): Promise<{ 
     d.amount +
     (d.bankFee ?? 0);
 
-  const statusUpdate =
+  const nextStatus =
     paidAfter >= gross && (inv.status === "ISSUED" || inv.status === "RECONCILED")
-      ? [prisma.invoice.update({ where: { id: inv.id }, data: { status: "PAID" } })]
+      ? "PAID"
       : paidAfter < gross && inv.status === "PAID"
-        ? [prisma.invoice.update({ where: { id: inv.id }, data: { status: inv.reconciledAt ? "RECONCILED" : "ISSUED" } })]
-        : [];
+        ? inv.reconciledAt ? "RECONCILED" : "ISSUED"
+        : null;
 
-  await prisma.$transaction([
-    prisma.invoicePayment.update({ where: { id: d.paymentId }, data: { amount: d.amount, bankFee: d.bankFee ?? 0, date, method: d.method ?? null, reference: d.reference ?? null } }),
-    ...statusUpdate,
-  ]);
+  await prisma.$transaction(async (tx) => {
+    const after = await tx.invoicePayment.update({ where: { id: d.paymentId }, data: { amount: d.amount, bankFee: d.bankFee ?? 0, date, method: d.method ?? null, reference: d.reference ?? null } });
+    await recordAudit(tx, { entityType: "InvoicePayment", entityId: payment.id, action: "update", actor: user, before: payment, after, label: inv.invoiceNumber, parent: { entityType: "Invoice", entityId: inv.id } });
+    if (nextStatus) {
+      const invAfter = await tx.invoice.update({ where: { id: inv.id }, data: { status: nextStatus } });
+      await recordAudit(tx, { entityType: "Invoice", entityId: inv.id, action: "update", actor: user, before: inv, after: invAfter, fields: ["status"], label: inv.invoiceNumber, note: "payment edited" });
+    }
+  });
   revalidatePath("/invoices");
   revalidatePath(`/invoices/${inv.id}`);
   return {};
@@ -575,13 +601,15 @@ export async function deletePaymentAction(paymentId: string): Promise<{ error?: 
   const inv = payment.invoice;
   const gross = invoiceTotals(inv.lines.map((l) => ({ amount: Number(l.amount) })), inv.vatRate == null ? null : Number(inv.vatRate)).gross;
   const remainingPaid = inv.payments.filter((p) => p.id !== paymentId).reduce((s, p) => s + Number(p.amount), 0);
-  await prisma.$transaction([
-    prisma.invoicePayment.delete({ where: { id: paymentId } }),
+  await prisma.$transaction(async (tx) => {
+    await tx.invoicePayment.delete({ where: { id: paymentId } });
+    await recordAudit(tx, { entityType: "InvoicePayment", entityId: paymentId, action: "delete", actor: user, before: payment, label: inv.invoiceNumber, parent: { entityType: "Invoice", entityId: inv.id } });
     // If it was marked PAID but no longer fully covered, fall back to RECONCILED/ISSUED.
-    ...(inv.status === "PAID" && remainingPaid < gross
-      ? [prisma.invoice.update({ where: { id: inv.id }, data: { status: inv.reconciledAt ? "RECONCILED" : "ISSUED" } })]
-      : []),
-  ]);
+    if (inv.status === "PAID" && remainingPaid < gross) {
+      const after = await tx.invoice.update({ where: { id: inv.id }, data: { status: inv.reconciledAt ? "RECONCILED" : "ISSUED" } });
+      await recordAudit(tx, { entityType: "Invoice", entityId: inv.id, action: "update", actor: user, before: inv, after, fields: ["status"], label: inv.invoiceNumber, note: "payment removed" });
+    }
+  });
   revalidatePath("/invoices");
   revalidatePath(`/invoices/${inv.id}`);
   return {};
@@ -640,23 +668,28 @@ export async function updateInvoiceAction(input: UpdateInvoiceInput): Promise<{ 
         const amount = Math.round(l.quantity * l.rate * 100) / 100;
         if (l.id && existingIds.has(l.id)) {
           keptIds.add(l.id);
-          await tx.invoiceLine.update({
+          const lineAfter = await tx.invoiceLine.update({
             where: { id: l.id },
             data: { milestoneId: l.milestoneId ?? null, description: l.description, quantity: l.quantity, rate: l.rate, amount },
           });
+          await recordAudit(tx, { entityType: "InvoiceLine", entityId: l.id, action: "update", actor: user, before: inv.lines.find((x) => x.id === l.id), after: lineAfter, label: lineAfter.description, parent: { entityType: "Invoice", entityId: inv.id } });
         } else {
-          await tx.invoiceLine.create({
+          const lineAfter = await tx.invoiceLine.create({
             data: { invoiceId: inv.id, milestoneId: l.milestoneId ?? null, description: l.description, quantity: l.quantity, rate: l.rate, amount },
           });
+          await recordAudit(tx, { entityType: "InvoiceLine", entityId: lineAfter.id, action: "create", actor: user, after: lineAfter, label: lineAfter.description, parent: { entityType: "Invoice", entityId: inv.id } });
         }
       }
       const removedIds = inv.lines.filter((l) => !keptIds.has(l.id)).map((l) => l.id);
       if (removedIds.length > 0) {
         await tx.timeEntry.updateMany({ where: { invoiceLineId: { in: removedIds } }, data: { invoiceLineId: null } });
         await tx.invoiceLine.deleteMany({ where: { id: { in: removedIds } } });
+        for (const removed of inv.lines.filter((x) => removedIds.includes(x.id))) {
+          await recordAudit(tx, { entityType: "InvoiceLine", entityId: removed.id, action: "delete", actor: user, before: removed, label: removed.description, parent: { entityType: "Invoice", entityId: inv.id } });
+        }
       }
     }
-    await tx.invoice.update({
+    const after = await tx.invoice.update({
       where: { id: inv.id },
       data: {
         issueDate,
@@ -673,6 +706,7 @@ export async function updateInvoiceAction(input: UpdateInvoiceInput): Promise<{ 
         notes: d.notes ?? null,
       },
     });
+    await recordAudit(tx, { entityType: "Invoice", entityId: inv.id, action: "update", actor: user, before: inv, after, label: inv.invoiceNumber });
   });
   // Line quantities may have changed — re-reconcile against approved time. Entries released by a
   // deleted line are already unlinked above, so they become claimable again here.
@@ -717,17 +751,21 @@ export async function setInvoiceCommissionAction(input: SetCommissionInput): Pro
   await prisma.$transaction(async (tx) => {
     if (amount > 0) {
       if (existing) {
-        await tx.invoiceLine.update({ where: { id: existing.id }, data: { quantity: 1, rate: -amount, amount: -amount } });
+        const lineAfter = await tx.invoiceLine.update({ where: { id: existing.id }, data: { quantity: 1, rate: -amount, amount: -amount } });
+        await recordAudit(tx, { entityType: "InvoiceLine", entityId: existing.id, action: "update", actor: user, before: existing, after: lineAfter, label: COMMISSION_DESC, parent: { entityType: "Invoice", entityId: inv.id } });
       } else {
-        await tx.invoiceLine.create({ data: { invoiceId: inv.id, milestoneId: null, description: COMMISSION_DESC, quantity: 1, rate: -amount, amount: -amount } });
+        const lineAfter = await tx.invoiceLine.create({ data: { invoiceId: inv.id, milestoneId: null, description: COMMISSION_DESC, quantity: 1, rate: -amount, amount: -amount } });
+        await recordAudit(tx, { entityType: "InvoiceLine", entityId: lineAfter.id, action: "create", actor: user, after: lineAfter, label: COMMISSION_DESC, parent: { entityType: "Invoice", entityId: inv.id } });
       }
     } else if (existing) {
       await tx.invoiceLine.delete({ where: { id: existing.id } });
+      await recordAudit(tx, { entityType: "InvoiceLine", entityId: existing.id, action: "delete", actor: user, before: existing, label: COMMISSION_DESC, parent: { entityType: "Invoice", entityId: inv.id } });
     }
-    await tx.invoice.update({
+    const after = await tx.invoice.update({
       where: { id: inv.id },
       data: { commissionPercent: percent > 0 ? percent : null, commissionFixed: fixed > 0 ? fixed : null },
     });
+    await recordAudit(tx, { entityType: "Invoice", entityId: inv.id, action: "update", actor: user, before: inv, after, fields: ["commissionPercent", "commissionFixed"], label: inv.invoiceNumber });
   });
   revalidatePath("/invoices");
   revalidatePath(`/invoices/${inv.id}`);
@@ -741,12 +779,13 @@ export async function deleteInvoiceAction(invoiceId: string): Promise<{ error?: 
   if (!inv) return { error: "Invoice not found." };
   if (inv.status !== "DRAFT") return { error: "Only a draft can be deleted — void it instead." };
   const lineIds = inv.lines.map((l) => l.id);
-  await prisma.$transaction([
-    prisma.timeEntry.updateMany({ where: { invoiceLineId: { in: lineIds } }, data: { invoiceLineId: null } }),
-    prisma.invoicePayment.deleteMany({ where: { invoiceId: inv.id } }),
-    prisma.invoiceLine.deleteMany({ where: { invoiceId: inv.id } }),
-    prisma.invoice.delete({ where: { id: inv.id } }), // Document rows cascade via FK
-  ]);
+  await prisma.$transaction(async (tx) => {
+    await tx.timeEntry.updateMany({ where: { invoiceLineId: { in: lineIds } }, data: { invoiceLineId: null } });
+    await tx.invoicePayment.deleteMany({ where: { invoiceId: inv.id } });
+    await tx.invoiceLine.deleteMany({ where: { invoiceId: inv.id } });
+    await tx.invoice.delete({ where: { id: inv.id } }); // Document rows cascade via FK
+    await recordAudit(tx, { entityType: "Invoice", entityId: inv.id, action: "delete", actor: user, before: inv, label: inv.invoiceNumber, note: `${inv.lines.length} line(s) removed` });
+  });
   // Cascade only removes the DB rows; unlink the orphaned files too (best-effort).
   for (const d of inv.documents) await deleteReceiptFile(d.fileName, "documents");
   revalidatePath("/invoices");

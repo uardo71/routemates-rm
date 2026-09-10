@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { convertCurrency } from "@/lib/fx";
 
@@ -82,15 +83,21 @@ export async function stampCostRatesForCards(cardIds: string[]): Promise<void> {
 /** Recomputes and persists `userId`'s Employment.costRate from their current salary. No-ops if
  *  the user has no Employment row, or has no salary on file yet (costRate stays at whatever it
  *  was — 0 until a salary is added). Call after any salary or exchange-rate change. */
-export async function recomputeEmploymentCostRate(userId: string): Promise<void> {
+export type CostRateChangedHook = (tx: Prisma.TransactionClient, before: Record<string, unknown>, after: Record<string, unknown>) => Promise<void>;
+
+export async function recomputeEmploymentCostRate(userId: string, onChanged?: CostRateChangedHook): Promise<void> {
   const employment = await prisma.employment.findUnique({ where: { userId } });
   if (!employment) return;
 
   const computed = await computeHourlyCostRateEUR(userId);
   if (computed === null) return;
 
-  await prisma.employment.update({
-    where: { userId },
-    data: { costRate: computed },
+  await prisma.$transaction(async (tx) => {
+    const after = await tx.employment.update({
+      where: { userId },
+      data: { costRate: computed },
+    });
+    // The derived rate is the number margin reports run on — record who triggered the change.
+    if (onChanged && Number(employment.costRate) !== Number(after.costRate)) await onChanged(tx, employment, after);
   });
 }

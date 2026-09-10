@@ -8,6 +8,7 @@ import { requireUser, requirePermission } from "@/lib/session";
 import { can } from "@/lib/permissions";
 import { countWorkingDays } from "@/lib/vacation-calc";
 import { provisionLeave, recordLeaveReturn } from "@/lib/vacation";
+import { recordAudit } from "@/lib/audit";
 
 const LEAVE_TYPES = ["VACATION", "SICK", "PATERNITY", "MATERNITY"] as const;
 
@@ -70,7 +71,9 @@ export async function requestVacationAction(input: RequestVacationInput): Promis
   });
 
   if (isAdmin && project) {
-    await provisionLeave(request.id, project.id, caller.id);
+    await provisionLeave(request.id, project.id, caller.id, (tx, before, after) =>
+      recordAudit(tx, { entityType: "LeaveRequest", entityId: request.id, action: "update", actor: caller, before, after, fields: ["status", "decidedById"], label: `${request.type.toLowerCase()} ${request.startDate.toISOString().slice(0, 10)}`, note: "admin direct insert" }),
+    );
   }
 
   revalidatePath("/vacations");
@@ -95,14 +98,19 @@ export async function decideVacationAction(input: DecideVacationInput): Promise<
 
   const request = await prisma.leaveRequest.findFirst({
     where: { id: data.requestId, user: { companyId: caller.companyId } },
+    include: { user: { select: { name: true } } },
   });
   if (!request) return { error: "Request not found." };
   if (request.status !== "PENDING") return { error: "This request has already been decided." };
+  const leaveLabel = `${request.user.name} · ${request.type.toLowerCase()} ${request.startDate.toISOString().slice(0, 10)}`;
 
   if (data.decision === "REJECT") {
-    await prisma.leaveRequest.update({
-      where: { id: request.id },
-      data: { status: "REJECTED", decidedById: caller.id, decidedAt: new Date(), comment: data.comment },
+    await prisma.$transaction(async (tx) => {
+      const after = await tx.leaveRequest.update({
+        where: { id: request.id },
+        data: { status: "REJECTED", decidedById: caller.id, decidedAt: new Date(), comment: data.comment },
+      });
+      await recordAudit(tx, { entityType: "LeaveRequest", entityId: request.id, action: "update", actor: caller, before: request, after, fields: ["status", "decidedById", "comment"], label: leaveLabel });
     });
     revalidatePath("/vacations");
     return {};
@@ -112,7 +120,9 @@ export async function decideVacationAction(input: DecideVacationInput): Promise<
   const project = await prisma.project.findFirst({ where: { id: data.projectId, companyId: caller.companyId, isInternal: true } });
   if (!project) return { error: "Invalid internal project." };
 
-  await provisionLeave(request.id, project.id, caller.id);
+  await provisionLeave(request.id, project.id, caller.id, (tx, before, after) =>
+    recordAudit(tx, { entityType: "LeaveRequest", entityId: request.id, action: "update", actor: caller, before, after, fields: ["status", "decidedById"], label: leaveLabel, note: data.comment ?? null }),
+  );
   if (data.comment) {
     await prisma.leaveRequest.update({ where: { id: request.id }, data: { comment: data.comment } });
   }

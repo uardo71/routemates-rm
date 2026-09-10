@@ -6,6 +6,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireUser, requirePermission } from "@/lib/session";
 import { can } from "@/lib/permissions";
+import { recordAudit } from "@/lib/audit";
 import { MAX_RECEIPT_SIZE_BYTES, isAllowedReceiptType, saveReceiptFile, deleteReceiptFile } from "@/lib/receipt-storage";
 
 const ExpenseFieldsSchema = z.object({
@@ -144,14 +145,17 @@ export async function decideExpenseAction(input: DecideExpenseInput): Promise<{ 
   if (!expense) return { error: "Expense not found." };
   if (expense.status !== "PENDING") return { error: "This expense has already been decided." };
 
-  await prisma.expense.update({
-    where: { id: expense.id },
-    data: {
-      status: data.decision === "APPROVE" ? "APPROVED" : "REJECTED",
-      decidedById: caller.id,
-      decidedAt: new Date(),
-      comment: data.comment,
-    },
+  await prisma.$transaction(async (tx) => {
+    const after = await tx.expense.update({
+      where: { id: expense.id },
+      data: {
+        status: data.decision === "APPROVE" ? "APPROVED" : "REJECTED",
+        decidedById: caller.id,
+        decidedAt: new Date(),
+        comment: data.comment,
+      },
+    });
+    await recordAudit(tx, { entityType: "Expense", entityId: expense.id, action: "update", actor: caller, before: expense, after, fields: ["status", "decidedById", "comment"], label: expense.description });
   });
   revalidatePath("/expenses");
   return {};

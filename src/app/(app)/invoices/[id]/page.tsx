@@ -4,6 +4,8 @@ import { requirePermission } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { invoiceTotals, totalBankFees } from "@/lib/invoice";
 import { InvoiceDetailClient, type InvoiceDetail } from "./invoice-detail-client";
+import { loadAuditFor } from "@/lib/audit";
+import { AuditHistoryCard } from "@/components/audit-history-card";
 
 export default async function InvoiceDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -66,12 +68,16 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
     documents: inv.documents.map((d) => ({ id: d.id, kind: d.kind, fileName: d.fileName, originalName: d.originalName })),
   };
 
+  // Redaction happens inside loadAuditFor (rates:view:any), never in the component.
+  const history = await loadAuditFor(user, "Invoice", inv.id);
+
   return (
     <div className="flex flex-col gap-6">
       <div>
         <Link href="/invoices" className="text-sm text-muted-foreground hover:underline">← Invoice register</Link>
       </div>
       <InvoiceDetailClient detail={detail} />
+      <AuditHistoryCard entries={history} />
     </div>
   );
 }

@@ -6,6 +6,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/session";
 import { canManageProject } from "@/lib/permissions";
+import { recordAudit } from "@/lib/audit";
 import { nextProjectNumber } from "@/lib/numbering";
 import { MAX_RECEIPT_SIZE_BYTES, isAllowedReceiptType, saveReceiptFile, deleteReceiptFile } from "@/lib/receipt-storage";
 
@@ -147,22 +148,27 @@ export async function updateProjectAction(_prevState: string | undefined, formDa
     parentProjectId = parent.id;
   }
 
-  await prisma.project.update({
-    where: { id: projectId },
-    data: {
-      name: data.name,
-      clientId: data.clientId,
-      status: data.status,
-      billingType: data.billingType,
-      budgetAmount: data.budgetAmount ?? null,
-      budgetHours: data.budgetHours ?? null,
-      startDate: data.startDate ? new Date(data.startDate) : null,
-      endDate: data.endDate ? new Date(data.endDate) : null,
-      isInternal: data.isInternal,
-      parentProjectId,
-      endCustomer: data.endCustomer?.trim() || null,
-      ...(managerId ? { managerId } : {}),
-    },
+  const before = await prisma.project.findFirst({ where: { id: projectId, companyId: user.companyId } });
+  if (!before) return "Project not found.";
+  await prisma.$transaction(async (tx) => {
+    const after = await tx.project.update({
+      where: { id: projectId },
+      data: {
+        name: data.name,
+        clientId: data.clientId,
+        status: data.status,
+        billingType: data.billingType,
+        budgetAmount: data.budgetAmount ?? null,
+        budgetHours: data.budgetHours ?? null,
+        startDate: data.startDate ? new Date(data.startDate) : null,
+        endDate: data.endDate ? new Date(data.endDate) : null,
+        isInternal: data.isInternal,
+        parentProjectId,
+        endCustomer: data.endCustomer?.trim() || null,
+        ...(managerId ? { managerId } : {}),
+      },
+    });
+    await recordAudit(tx, { entityType: "Project", entityId: projectId, action: "update", actor: user, before, after, label: before.number ?? before.name });
   });
 
   revalidatePath(`/projects/${projectId}`);

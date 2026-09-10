@@ -1,0 +1,121 @@
+// Pure half of the audit log (no Prisma): field-level diffs, money redaction and the one-line
+// summary. `src/lib/audit.ts` is the server half that writes rows inside a transaction.
+
+export type Scalar = string | number | boolean | null;
+export type FieldChange = { from: Scalar; to: Scalar };
+export type AuditDiff = Record<string, FieldChange>;
+export type AuditAction = "create" | "update" | "delete";
+
+/** What the `diff` Json column holds. `label` names the record for the summary (e.g. "INV-0003");
+ *  `parent` is the record whose History card should list this entry (an invoice line's invoice). */
+export type AuditPayload = {
+  label?: string | null;
+  parent?: { entityType: string; entityId: string } | null;
+  fields: AuditDiff;
+};
+
+export const REDACTED = "•••";
+
+/** Never worth diffing: identity, timestamps Prisma maintains, and anything secret-shaped. */
+const SKIP_FIELDS = new Set(["id", "createdAt", "updatedAt", "companyId", "passwordHash"]);
+
+/** Fields whose values are confidential to readers without `rates:view:any`. Matched by name so a
+ *  new money column on any audited model is redacted by default rather than leaked by omission. */
+const MONEY_RE = /(amount|price|rate|cost|fee|value|salary|commission|margin)/i;
+const NOT_MONEY_RE = /(hours|date|type|currency|id|name|number|reference|note|open)$/i;
+export function isMoneyField(name: string): boolean {
+  return MONEY_RE.test(name) && !NOT_MONEY_RE.test(name);
+}
+
+function isDecimalLike(v: unknown): v is { toNumber(): number } {
+  return typeof v === "object" && v !== null && typeof (v as { toNumber?: unknown }).toNumber === "function";
+}
+
+/** Collapses a Prisma scalar to something JSON-safe and comparable. `undefined` ⇒ not a scalar
+ *  (relation, array, Json blob) — the caller skips those keys. */
+export function normalizeValue(v: unknown): Scalar | undefined {
+  if (v === null || v === undefined) return null;
+  if (typeof v === "string" || typeof v === "boolean") return v;
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+  if (typeof v === "bigint") return Number(v);
+  if (v instanceof Date) return Number.isNaN(v.getTime()) ? null : v.toISOString();
+  if (isDecimalLike(v)) return v.toNumber();
+  return undefined;
+}
+
+function same(a: Scalar, b: Scalar): boolean {
+  if (typeof a === "number" && typeof b === "number") return Math.abs(a - b) < 1e-9;
+  return a === b;
+}
+
+/** Field-level diff of two records. Only keys present on either side are compared; relations and
+ *  Json blobs are ignored; `fields` restricts the comparison to an allow-list. A create is
+ *  `diffFields(null, after)` (only non-null values appear), a delete is `diffFields(before, null)`. */
+export function diffFields(
+  before: Record<string, unknown> | null | undefined,
+  after: Record<string, unknown> | null | undefined,
+  fields?: readonly string[],
+): AuditDiff {
+  const keys = fields ? [...fields] : [...new Set([...Object.keys(before ?? {}), ...Object.keys(after ?? {})])];
+  const out: AuditDiff = {};
+  for (const key of keys) {
+    if (SKIP_FIELDS.has(key)) continue;
+    const from = before ? normalizeValue(before[key]) : null;
+    const to = after ? normalizeValue(after[key]) : null;
+    if (from === undefined && to === undefined) continue;
+    const f = from ?? null;
+    const t = to ?? null;
+    if (!before && t === null) continue; // create: don't list every unset column
+    if (!after && f === null) continue; // delete: same
+    if (before && after && same(f, t)) continue;
+    out[key] = { from: f, to: t };
+  }
+  return out;
+}
+
+/** Hides money values while keeping the fact that the field changed. */
+export function redactDiff(diff: AuditDiff): AuditDiff {
+  const out: AuditDiff = {};
+  for (const [k, v] of Object.entries(diff)) {
+    out[k] = isMoneyField(k) ? { from: v.from === null ? null : REDACTED, to: v.to === null ? null : REDACTED } : v;
+  }
+  return out;
+}
+
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
+export function formatAuditValue(v: Scalar): string {
+  if (v === null) return "—";
+  if (typeof v === "boolean") return v ? "yes" : "no";
+  if (typeof v === "number") return Number.isInteger(v) ? String(v) : String(Math.round(v * 10000) / 10000);
+  if (ISO_DATE_RE.test(v)) return v.slice(0, 10);
+  return v.length > 40 ? `${v.slice(0, 37)}…` : v;
+}
+
+/** camelCase → words: "recognitionDate" → "recognition date". */
+export function fieldLabel(name: string): string {
+  return name.replace(/([a-z0-9])([A-Z])/g, "$1 $2").toLowerCase();
+}
+
+const SUMMARY_MAX_FIELDS = 3;
+
+/** One line a person can read in a list: "Invoice INV-0003: status DRAFT → ISSUED, due date — → 2026-10-01". */
+export function summarize(input: { entityType: string; action: AuditAction | string; label?: string | null; diff: AuditDiff; note?: string | null }): string {
+  const subject = input.label ? `${input.entityType} ${input.label}` : input.entityType;
+  const entries = Object.entries(input.diff);
+  const tail = input.note ? ` — ${input.note}` : "";
+  if (input.action === "create") {
+    const shown = entries.slice(0, SUMMARY_MAX_FIELDS).map(([k, v]) => `${fieldLabel(k)} ${formatAuditValue(v.to)}`);
+    const rest = entries.length - shown.length;
+    return `${subject} created${shown.length ? ` (${shown.join(", ")}${rest > 0 ? `, +${rest} more` : ""})` : ""}${tail}`;
+  }
+  if (input.action === "delete") return `${subject} deleted${tail}`;
+  const shown = entries.slice(0, SUMMARY_MAX_FIELDS).map(([k, v]) => `${fieldLabel(k)} ${formatAuditValue(v.from)} → ${formatAuditValue(v.to)}`);
+  const rest = entries.length - shown.length;
+  const body = shown.length ? `${shown.join(", ")}${rest > 0 ? `, +${rest} more` : ""}` : "no field changes";
+  return `${subject}: ${body}${tail}`;
+}
+
+/** True when a diff touches any confidential field — used to badge redacted entries. */
+export function hasMoneyChange(diff: AuditDiff): boolean {
+  return Object.keys(diff).some(isMoneyField);
+}

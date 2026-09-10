@@ -137,7 +137,9 @@ async function ensureLeaveAssignment(
  *  TimeEntry rows for every working day in range — so the time off shows up as planned AND
  *  logged without the employee doing anything. `approverId` is credited as both the leave
  *  decider and the time cards' approver. */
-export async function provisionLeave(leaveRequestId: string, projectId: string, approverId: string): Promise<void> {
+export type LeaveApprovedHook = (tx: Prisma.TransactionClient, before: Record<string, unknown>, after: Record<string, unknown>) => Promise<void>;
+
+export async function provisionLeave(leaveRequestId: string, projectId: string, approverId: string, onApproved?: LeaveApprovedHook): Promise<void> {
   await prisma.$transaction(
     async (tx) => {
       const request = await tx.leaveRequest.findUniqueOrThrow({ where: { id: leaveRequestId } });
@@ -219,7 +221,7 @@ export async function provisionLeave(leaveRequestId: string, projectId: string, 
         }
       }
 
-      await tx.leaveRequest.update({
+      const approved = await tx.leaveRequest.update({
         where: { id: leaveRequestId },
         data: {
           status: "APPROVED",
@@ -229,6 +231,8 @@ export async function provisionLeave(leaveRequestId: string, projectId: string, 
           assignmentId: assignment.id,
         },
       });
+      // The audit row (if the caller wants one) commits with the approval, not after it.
+      if (onApproved) await onApproved(tx, request, approved);
     },
     { timeout: 20000 }
   );

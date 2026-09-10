@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/session";
 import { canDecideApproval } from "@/lib/permissions";
 import { stampCostRatesForCards } from "@/lib/cost-rate";
+import { recordAudit } from "@/lib/audit";
 
 export async function decideApprovalsAction(
   cardIds: string[],
@@ -14,7 +15,7 @@ export async function decideApprovalsAction(
   const user = await requireUser();
   if (cardIds.length === 0) return { error: "Nothing selected." };
 
-  const cards = await prisma.timeCard.findMany({ where: { id: { in: cardIds } } });
+  const cards = await prisma.timeCard.findMany({ where: { id: { in: cardIds } }, include: { user: { select: { name: true } } } });
   if (cards.length !== cardIds.length) return { error: "One or more lines were not found." };
 
   for (const card of cards) {
@@ -29,9 +30,21 @@ export async function decideApprovalsAction(
   // approverId was only ever a pre-assignment (the project's manager, set at submit time so the
   // right person's queue picks it up) — once someone actually decides it, that field should record
   // who really made the call, which can differ (e.g. an Admin deciding on a PM's behalf).
-  await prisma.timeCard.updateMany({
-    where: { id: { in: cardIds } },
-    data: { status: decision, comment: comment?.trim() || null, decidedAt: new Date(), approverId: user.id },
+  const decidedAt = new Date();
+  const cleanComment = comment?.trim() || null;
+  await prisma.$transaction(async (tx) => {
+    await tx.timeCard.updateMany({
+      where: { id: { in: cardIds } },
+      data: { status: decision, comment: cleanComment, decidedAt, approverId: user.id },
+    });
+    for (const card of cards) {
+      await recordAudit(tx, {
+        entityType: "TimeCard", entityId: card.id, action: "update", actor: user,
+        before: card, after: { ...card, status: decision, comment: cleanComment, decidedAt, approverId: user.id },
+        fields: ["status", "approverId", "comment"],
+        label: `${card.user.name} · week ${card.weekStartDate.toISOString().slice(0, 10)}`,
+      });
+    }
   });
 
   // Freeze the historically-correct cost rate onto the entries now that they're approved.

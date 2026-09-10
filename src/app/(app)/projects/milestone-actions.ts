@@ -6,6 +6,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/session";
 import { can, canManageMilestone, canManageProject } from "@/lib/permissions";
+import { recordAudit } from "@/lib/audit";
 
 const CreateMilestoneSchema = z.object({
   projectId: z.string().min(1),
@@ -44,18 +45,22 @@ export async function createMilestoneAction(_prevState: string | undefined, form
   // it's shown alongside a computed "implied cost from assignments" once people are assigned,
   // rather than being derived automatically (a milestone/role can have several people at
   // different cost rates, so there's no single rate to multiply by hours upfront).
-  const milestone = await prisma.milestone.create({
-    data: {
-      projectId: data.projectId,
-      name: data.name,
-      description: data.description,
-      billable: data.billable,
-      salesPrice: data.salesPrice,
-      cost: data.cost ?? 0,
-      budgetHours: data.budgetHours,
-      startDate: data.startDate ? new Date(data.startDate) : undefined,
-      endDate: data.endDate ? new Date(data.endDate) : undefined,
-    },
+  const milestone = await prisma.$transaction(async (tx) => {
+    const created = await tx.milestone.create({
+      data: {
+        projectId: data.projectId,
+        name: data.name,
+        description: data.description,
+        billable: data.billable,
+        salesPrice: data.salesPrice,
+        cost: data.cost ?? 0,
+        budgetHours: data.budgetHours,
+        startDate: data.startDate ? new Date(data.startDate) : undefined,
+        endDate: data.endDate ? new Date(data.endDate) : undefined,
+      },
+    });
+    await recordAudit(tx, { entityType: "Milestone", entityId: created.id, action: "create", actor: user, after: created, label: created.name, parent: { entityType: "Project", entityId: data.projectId } });
+    return created;
   });
 
   revalidatePath(`/projects/${data.projectId}`);
@@ -96,19 +101,24 @@ export async function updateMilestoneAction(_prevState: string | undefined, form
   if (!parsed.success) return parsed.error.issues[0]?.message ?? "Invalid input";
   const data = parsed.data;
 
-  const milestone = await prisma.milestone.update({
-    where: { id: milestoneId },
-    data: {
-      name: data.name,
-      description: data.description,
-      billable: data.billable,
-      salesPrice: data.salesPrice,
-      cost: data.cost ?? 0,
-      budgetHours: data.budgetHours ?? null,
-      startDate: data.startDate ? new Date(data.startDate) : null,
-      endDate: data.endDate ? new Date(data.endDate) : null,
-    },
-    select: { projectId: true },
+  const before = await prisma.milestone.findUnique({ where: { id: milestoneId } });
+  if (!before) return "Milestone not found.";
+  const milestone = await prisma.$transaction(async (tx) => {
+    const after = await tx.milestone.update({
+      where: { id: milestoneId },
+      data: {
+        name: data.name,
+        description: data.description,
+        billable: data.billable,
+        salesPrice: data.salesPrice,
+        cost: data.cost ?? 0,
+        budgetHours: data.budgetHours ?? null,
+        startDate: data.startDate ? new Date(data.startDate) : null,
+        endDate: data.endDate ? new Date(data.endDate) : null,
+      },
+    });
+    await recordAudit(tx, { entityType: "Milestone", entityId: milestoneId, action: "update", actor: user, before, after, label: after.name, parent: { entityType: "Project", entityId: after.projectId } });
+    return after;
   });
 
   revalidatePath(`/projects/${milestone.projectId}`);
@@ -146,12 +156,17 @@ export async function setMilestoneStatusAction(milestoneId: string, status: "PLA
   // Completing a milestone locks time entry and stamps who/when + a note; its full value is then
   // recognized (see revenue). Reverting reopens time entry and clears the completion.
   const complete = status === "COMPLETE";
-  const milestone = await prisma.milestone.update({
-    where: { id: milestoneId },
-    data: complete
-      ? { status, completedAt: new Date(), completionNote: completionNote?.trim() || null, timeEntryOpen: false }
-      : { status, completedAt: null, completionNote: null, timeEntryOpen: true },
-    select: { projectId: true },
+  const before = await prisma.milestone.findUnique({ where: { id: milestoneId } });
+  if (!before) return { error: "Milestone not found." };
+  const milestone = await prisma.$transaction(async (tx) => {
+    const after = await tx.milestone.update({
+      where: { id: milestoneId },
+      data: complete
+        ? { status, completedAt: new Date(), completionNote: completionNote?.trim() || null, timeEntryOpen: false }
+        : { status, completedAt: null, completionNote: null, timeEntryOpen: true },
+    });
+    await recordAudit(tx, { entityType: "Milestone", entityId: milestoneId, action: "update", actor: user, before, after, label: after.name, parent: { entityType: "Project", entityId: after.projectId } });
+    return after;
   });
   revalidatePath(`/projects/${milestone.projectId}`);
   revalidatePath(`/projects/${milestone.projectId}/milestones/${milestoneId}`);
@@ -176,7 +191,7 @@ export async function createMilestoneAdjustmentAction(input: MilestoneAdjustment
   if (!(await canManageMilestone(user, d.milestoneId))) return { error: "You do not have permission to manage this milestone." };
   const milestone = await prisma.milestone.findFirst({
     where: { id: d.milestoneId },
-    select: { projectId: true, salesPrice: true, budgetHours: true, timeEntryOpen: true, project: { select: { billingType: true } } },
+    select: { projectId: true, name: true, salesPrice: true, budgetHours: true, timeEntryOpen: true, project: { select: { billingType: true } } },
   });
   if (!milestone) return { error: "Milestone not found." };
 
@@ -187,21 +202,25 @@ export async function createMilestoneAdjustmentAction(input: MilestoneAdjustment
     opportunityId = opp.id;
   }
 
-  await prisma.milestoneAdjustment.create({
-    data: { companyId: user.companyId, milestoneId: d.milestoneId, amount: d.amount, reason: d.reason, opportunityId, createdById: user.id },
-  });
+  await prisma.$transaction(async (tx) => {
+    const adj = await tx.milestoneAdjustment.create({
+      data: { companyId: user.companyId, milestoneId: d.milestoneId, amount: d.amount, reason: d.reason, opportunityId, createdById: user.id },
+    });
+    await recordAudit(tx, { entityType: "MilestoneAdjustment", entityId: adj.id, action: "create", actor: user, after: adj, label: milestone.name, parent: { entityType: "Project", entityId: milestone.projectId }, note: d.reason });
 
-  // When the whole value is taken out (effective value collapses to ~0 — it now lives on another
-  // deal), auto-lock time entry, mirroring a manual completion: there's no work left to log here.
-  const agg = await prisma.milestoneAdjustment.aggregate({ where: { milestoneId: d.milestoneId }, _sum: { amount: true } });
-  const base = milestone.project.billingType === "FIXED_PRICE"
-    ? Number(milestone.salesPrice)
-    : Number(milestone.salesPrice) * Number(milestone.budgetHours ?? 0);
-  const totalAdj = Number(agg._sum.amount ?? 0);
-  const effective = base + totalAdj;
-  if (base > 0 && totalAdj < 0 && effective <= 0.005 && milestone.timeEntryOpen) {
-    await prisma.milestone.update({ where: { id: d.milestoneId }, data: { timeEntryOpen: false } });
-  }
+    // When the whole value is taken out (effective value collapses to ~0 — it now lives on another
+    // deal), auto-lock time entry, mirroring a manual completion: there's no work left to log here.
+    const agg = await tx.milestoneAdjustment.aggregate({ where: { milestoneId: d.milestoneId }, _sum: { amount: true } });
+    const base = milestone.project.billingType === "FIXED_PRICE"
+      ? Number(milestone.salesPrice)
+      : Number(milestone.salesPrice) * Number(milestone.budgetHours ?? 0);
+    const totalAdj = Number(agg._sum.amount ?? 0);
+    const effective = base + totalAdj;
+    if (base > 0 && totalAdj < 0 && effective <= 0.005 && milestone.timeEntryOpen) {
+      await tx.milestone.update({ where: { id: d.milestoneId }, data: { timeEntryOpen: false } });
+      await recordAudit(tx, { entityType: "Milestone", entityId: d.milestoneId, action: "update", actor: user, before: { timeEntryOpen: true }, after: { timeEntryOpen: false }, label: milestone.name, parent: { entityType: "Project", entityId: milestone.projectId }, note: "value fully moved out — time entry locked" });
+    }
+  });
 
   revalidatePath(`/projects/${milestone.projectId}`);
   revalidatePath(`/projects/${milestone.projectId}/milestones/${d.milestoneId}`);
@@ -210,10 +229,13 @@ export async function createMilestoneAdjustmentAction(input: MilestoneAdjustment
 
 export async function deleteMilestoneAdjustmentAction(id: string): Promise<{ error?: string }> {
   const user = await requireUser();
-  const adj = await prisma.milestoneAdjustment.findFirst({ where: { id, companyId: user.companyId }, include: { milestone: { select: { id: true, projectId: true } } } });
+  const adj = await prisma.milestoneAdjustment.findFirst({ where: { id, companyId: user.companyId }, include: { milestone: { select: { id: true, projectId: true, name: true } } } });
   if (!adj) return { error: "Adjustment not found." };
   if (!(await canManageMilestone(user, adj.milestone.id))) return { error: "You do not have permission to manage this milestone." };
-  await prisma.milestoneAdjustment.delete({ where: { id } });
+  await prisma.$transaction(async (tx) => {
+    await tx.milestoneAdjustment.delete({ where: { id } });
+    await recordAudit(tx, { entityType: "MilestoneAdjustment", entityId: id, action: "delete", actor: user, before: adj, label: adj.milestone.name, parent: { entityType: "Project", entityId: adj.milestone.projectId } });
+  });
   revalidatePath(`/projects/${adj.milestone.projectId}`);
   revalidatePath(`/projects/${adj.milestone.projectId}/milestones/${adj.milestone.id}`);
   return {};
@@ -224,10 +246,10 @@ export async function toggleMilestoneTimeEntryOpenAction(milestoneId: string, op
   if (!(await canManageMilestone(user, milestoneId))) {
     throw new Error("You do not have permission to manage this milestone.");
   }
-  const milestone = await prisma.milestone.update({
-    where: { id: milestoneId },
-    data: { timeEntryOpen: open },
-    select: { projectId: true },
+  const milestone = await prisma.$transaction(async (tx) => {
+    const after = await tx.milestone.update({ where: { id: milestoneId }, data: { timeEntryOpen: open } });
+    await recordAudit(tx, { entityType: "Milestone", entityId: milestoneId, action: "update", actor: user, before: { timeEntryOpen: !open }, after: { timeEntryOpen: open }, label: after.name, parent: { entityType: "Project", entityId: after.projectId } });
+    return after;
   });
   revalidatePath(`/projects/${milestone.projectId}/milestones/${milestoneId}`);
 }
@@ -299,16 +321,19 @@ export async function createAssignmentAction(_prevState: string | undefined, for
   });
   if (existing) return `${targetUser.name} is already assigned to this milestone.`;
 
-  await prisma.assignment.create({
-    data: {
-      milestoneId: data.milestoneId,
-      userId: data.userId,
-      costRate,
-      billRate,
-      allocatedHours: data.allocatedHours,
-      startDate: new Date(data.startDate),
-      endDate: new Date(data.endDate),
-    },
+  await prisma.$transaction(async (tx) => {
+    const created = await tx.assignment.create({
+      data: {
+        milestoneId: data.milestoneId,
+        userId: data.userId,
+        costRate,
+        billRate,
+        allocatedHours: data.allocatedHours,
+        startDate: new Date(data.startDate),
+        endDate: new Date(data.endDate),
+      },
+    });
+    await recordAudit(tx, { entityType: "Assignment", entityId: created.id, action: "create", actor: user, after: created, label: targetUser.name, parent: { entityType: "Project", entityId: milestone.projectId } });
   });
 
   revalidatePath(`/projects/${milestone.projectId}/milestones/${data.milestoneId}`);
@@ -353,7 +378,7 @@ export async function updateAssignmentAction(_prevState: string | undefined, for
 
   const assignment = await prisma.assignment.findUnique({
     where: { id: assignmentId },
-    select: { milestoneId: true, milestone: { select: { projectId: true, project: { select: { billingType: true } } } } },
+    select: { milestoneId: true, user: { select: { name: true } }, milestone: { select: { projectId: true, project: { select: { billingType: true } } } } },
   });
   if (!assignment) return "Assignment not found.";
   if (!(await canManageMilestone(user, assignment.milestoneId))) {
@@ -393,16 +418,20 @@ export async function updateAssignmentAction(_prevState: string | undefined, for
   // Bill rate is only meaningful on T&M/RETAINER; FIXED_PRICE assignments keep it null.
   const canSetBillRate = assignment.milestone.project.billingType !== "FIXED_PRICE";
 
-  await prisma.assignment.update({
-    where: { id: assignmentId },
-    data: {
-      ...(data.costRate !== undefined ? { costRate: data.costRate } : {}),
-      ...(canSetBillRate && data.billRate !== undefined ? { billRate: data.billRate } : {}),
-      allocatedHours: data.allocatedHours ?? null,
-      startDate: new Date(data.startDate),
-      endDate: new Date(data.endDate),
-      status: data.status,
-    },
+  await prisma.$transaction(async (tx) => {
+    const before = await tx.assignment.findUniqueOrThrow({ where: { id: assignmentId } });
+    const after = await tx.assignment.update({
+      where: { id: assignmentId },
+      data: {
+        ...(data.costRate !== undefined ? { costRate: data.costRate } : {}),
+        ...(canSetBillRate && data.billRate !== undefined ? { billRate: data.billRate } : {}),
+        allocatedHours: data.allocatedHours ?? null,
+        startDate: new Date(data.startDate),
+        endDate: new Date(data.endDate),
+        status: data.status,
+      },
+    });
+    await recordAudit(tx, { entityType: "Assignment", entityId: assignmentId, action: "update", actor: user, before, after, label: assignment.user.name, parent: { entityType: "Project", entityId: assignment.milestone.projectId } });
   });
 
   revalidatePath(`/projects/${assignment.milestone.projectId}/milestones/${assignment.milestoneId}`);

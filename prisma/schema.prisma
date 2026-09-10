@@ -2003,3 +2003,21 @@ model Notification {
   @@index([companyId, kind])
   @@index([sentAt])
 }
+
+/// Append-only change history. No relation to User on purpose: an actor being deleted must never
+/// touch (cascade into, or null out) an audit row — the DB trigger in the migration would reject
+/// it anyway. Actor names are resolved at read time.
+model AuditLog {
+  id         String   @id @default(cuid())
+  companyId  String
+  entityType String
+  entityId   String
+  action     String
+  actorId    String
+  at         DateTime @default(now())
+  summary    String
+  diff       Json
+
+  @@index([entityType, entityId, at])
+  @@index([companyId, at])
+}

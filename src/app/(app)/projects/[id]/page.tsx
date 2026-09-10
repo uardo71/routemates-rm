@@ -33,6 +33,8 @@ import { formatMoney, formatNumber } from "@/lib/format";
 import { contractValueScale } from "@/lib/revenue";
 import { cn } from "@/lib/utils";
 import { DocumentsCard, type DocRow } from "@/components/documents-card";
+import { loadAuditFor } from "@/lib/audit";
+import { AuditHistoryCard } from "@/components/audit-history-card";
 import { TimeEntriesTable } from "./time-entries-table";
 import { UatCard, PhasePill, type UatState, type UatEventItem } from "./uat-card";
 import { uploadProjectDocumentAction, deleteProjectDocumentAction } from "../actions";
@@ -342,6 +344,10 @@ export default async function ProjectDetailPage({
     .slice(-8)
     .map(([week, hours]) => ({ label: format(parseISO(week), "MMM d"), value: Math.round(hours * 10) / 10 }));
 
+  // Milestone / assignment / adjustment entries are parented to the project, so one query covers
+  // the whole delivery record. Money redaction is applied inside loadAuditFor.
+  const history = await loadAuditFor(user, "Project", project.id);
+
   return (
     <div className="flex flex-col gap-6">
       <div className="flex items-start justify-between flex-wrap gap-3">
@@ -580,6 +586,8 @@ export default async function ProjectDetailPage({
               </CardContent>
             </Card>
           )}
+
+          <AuditHistoryCard entries={history} />
         </TabsContent>
 
         <TabsContent value="milestones" className="pt-4">

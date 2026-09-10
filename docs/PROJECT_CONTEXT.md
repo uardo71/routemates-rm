@@ -1295,3 +1295,70 @@ click-through verified (SSO-only); the rules are covered by unit tests, the runn
   `TEAMS_WEBHOOK_URL`. Until one is set the runner reports `noChannel` and records nothing.
 - Everything from the earlier 2026-09-08…10 entry still stands (invoice backfill `--apply`, secret
   rotations, contingency-on-quotes conversation).
+
+---
+
+## Session update — 2026-09-10 (later: audit log)
+
+One migration (`20260910140000_audit_log`, applied to erp_dev; the pipeline applies it to prod on
+deploy). tsc + lint + build + **166 tests** green. The trigger was proven on erp_dev (UPDATE and
+DELETE on `AuditLog` both raise); the UI could NOT be click-through verified (SSO-only).
+
+### Model (`AuditLog`) — append-only by construction
+- `{ id, companyId, entityType, entityId, action, actorId, at, summary, diff Json }`, indexes
+  `(entityType, entityId, at)` and `(companyId, at)`. **No FK to User on purpose**: deleting an actor
+  must never cascade into or null out an audit row. Actor names are resolved at read time
+  ("Deleted user" when gone).
+- **A DB trigger rejects UPDATE, DELETE and TRUNCATE** on the table (`audit_log_immutable()`), so no
+  application path — including Prisma — can rewrite history. There is deliberately no admin action
+  that touches rows. Don't add one.
+- `diff` holds `{ label, parent?, fields }`: `fields` is the `{ field: { from, to } }` map, `label`
+  the human handle used in the summary (invoice number, milestone name, person), `parent` the record
+  whose History card should list the entry (an invoice line → its invoice, a milestone → its
+  project). `loadAuditFor` queries by entity OR by `parent` (Json path filter), so removed lines and
+  payments still show on the invoice they belonged to.
+
+### Code
+- **`src/lib/audit-diff.ts` (pure, tested)**: `diffFields(before, after, fields?)` normalises
+  Decimal (duck-typed `toNumber`, no Prisma import) and Date, skips `id/createdAt/updatedAt/
+  companyId/passwordHash`, ignores relations/Json blobs, and lists only set values on create /
+  existing values on delete. `isMoneyField(name)` matches money by name
+  (`amount|price|rate|cost|fee|value|salary|commission|margin`, minus `…Hours/Date/Type/Id/…`), so a
+  new money column on an audited model is **redacted by default rather than leaked by omission**.
+  `redactDiff` keeps "changed" but hides values (`•••`); `summarize` builds the one-liner.
+- **`src/lib/audit.ts` (server)**: `recordAudit(tx, { entityType, entityId, action, actor, before,
+  after, fields?, label?, parent?, note? })` — takes the caller's **transaction client**, so the row
+  commits or rolls back with the change. An update with no field change writes nothing.
+  `presentAudit` / `loadAuditFor` / `loadAuditLog` apply **rates:view:any redaction at the query
+  layer**; the stored summary carries real amounts, so a redacted reader gets a summary rebuilt from
+  the redacted diff. `parseAuditFilter` is shared by the page and the export.
+- **Wired inside existing transactions** (array `$transaction`s were converted to interactive ones;
+  writes that had no transaction were wrapped in one): every invoice lifecycle/edit/commission/
+  delete action, invoice lines (per-line create/update/delete in the edit dialog), payments
+  (create/edit/delete + the PAID flips they cause), milestone create/update/status/time-entry
+  toggle/adjustments, assignment create/update (cost + bill rate), salary add/delete, employment
+  upsert/delete, timecard approve/reject (`decideApprovalsAction`), leave decisions (both branches —
+  `provisionLeave` gained an `onApproved(tx, before, after)` hook so the admin direct-insert path
+  audits too), expense decisions, every opportunity stage change (incl. proposal issue, submit,
+  recall, lost, reject, WON + the Project/Milestone rows created on conversion), amendments
+  (milestones grown/created + the project's contract fields), and `updateProjectAction`.
+- **Derived cost rate is audited too**: `recomputeEmploymentCostRate(userId, onChanged?)` runs its
+  update in a transaction and calls the hook when the rate actually moved — the callers record an
+  `Employment.costRate` entry. `cost-rate.ts` itself does NOT import `audit.ts` (it is imported by
+  unit tests and scripts, which cannot load `server-only`); the hook pattern keeps it that way.
+  Same reason `vacation.ts` uses a hook instead of importing `recordAudit`.
+- **UI**: `src/components/audit-history-card.tsx` (server component) — "History" card on the
+  invoice, project (Overview tab, after External costs) and opportunity pages. **`/admin/audit`**
+  (new permission **`audit:view`**, ADMIN only; "Audit log" under Admin in the sidebar): entity /
+  actor / date-range / summary-search filters as plain GET params, latest 500 rows, and
+  **Export XLSX** at `/api/admin/audit/export` (same query string, one row per changed field,
+  same redaction).
+
+### Not audited (on purpose, out of scope)
+Planner hours, assignment status/end-date drags, ticket workflow, delivery cockpit CRUD, time-entry
+saves, document uploads, settings. Add `recordAudit` inside their transactions if they ever need it.
+
+### Open / next
+- Everything from the earlier 2026-09-10 entries still stands (scheduler secret `NUDGE_SECRET` on
+  GitHub, channel config, invoice backfill `--apply`, secret rotations, contingency-on-quotes).
+

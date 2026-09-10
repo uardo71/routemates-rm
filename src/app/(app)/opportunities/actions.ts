@@ -9,6 +9,7 @@ import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/session";
 import { computeQuoteTotals, isOpenStage } from "@/lib/opportunity";
 import { nextOpportunityNumber, nextProjectNumber } from "@/lib/numbering";
+import { recordAudit } from "@/lib/audit";
 import { MAX_RECEIPT_SIZE_BYTES, isAllowedReceiptType, saveReceiptFile, deleteReceiptFile } from "@/lib/receipt-storage";
 
 // ---------- helpers ----------
@@ -300,7 +301,10 @@ export async function setStageAction(input: z.infer<typeof SetStageSchema>): Pro
   if (stage !== "CANCELLED" && !isOpenStage(opp.stage)) {
     return { error: "This opportunity is closed." };
   }
-  await prisma.opportunity.update({ where: { id: opp.id }, data: { stage } });
+  await prisma.$transaction(async (tx) => {
+    const after = await tx.opportunity.update({ where: { id: opp.id }, data: { stage } });
+    await recordAudit(tx, { entityType: "Opportunity", entityId: opp.id, action: "update", actor: caller, before: opp, after, fields: ["stage"], label: opp.number ?? opp.name });
+  });
   revalidatePath(`/opportunities/${opp.id}`);
   revalidatePath("/opportunities");
   return {};
@@ -342,8 +346,8 @@ export async function issueProposalAction(input: z.infer<typeof IssueSchema>): P
 
   const nextStage = opp.stage === "QUALIFYING" ? "PROPOSAL_SENT" : opp.stage === "PROPOSAL_SENT" ? "NEGOTIATION" : opp.stage;
 
-  await prisma.$transaction([
-    prisma.opportunityRevision.create({
+  await prisma.$transaction(async (tx) => {
+    await tx.opportunityRevision.create({
       data: {
         opportunityId: opp.id,
         version: opp._count.revisions + 1,
@@ -357,9 +361,10 @@ export async function issueProposalAction(input: z.infer<typeof IssueSchema>): P
         note: note ?? null,
         issuedById: caller.id,
       },
-    }),
-    prisma.opportunity.update({ where: { id: opp.id }, data: { stage: nextStage } }),
-  ]);
+    });
+    const after = await tx.opportunity.update({ where: { id: opp.id }, data: { stage: nextStage } });
+    await recordAudit(tx, { entityType: "Opportunity", entityId: opp.id, action: "update", actor: caller, before: opp, after, fields: ["stage"], label: opp.number ?? opp.name, note: `proposal v${opp._count.revisions + 1} issued` });
+  });
 
   revalidatePath(`/opportunities/${opp.id}`);
   revalidatePath("/opportunities");
@@ -377,9 +382,12 @@ export async function submitForApprovalAction(opportunityId: string): Promise<{ 
   if (!isOpenStage(opp.stage)) return { error: "Only an open opportunity can be submitted for approval." };
   if (opp._count.lines === 0) return { error: "Add at least one quote line before submitting for approval." };
 
-  await prisma.opportunity.update({
-    where: { id: opp.id },
-    data: { stage: "PENDING_APPROVAL", submittedById: caller.id, submittedAt: new Date() },
+  await prisma.$transaction(async (tx) => {
+    const after = await tx.opportunity.update({
+      where: { id: opp.id },
+      data: { stage: "PENDING_APPROVAL", submittedById: caller.id, submittedAt: new Date() },
+    });
+    await recordAudit(tx, { entityType: "Opportunity", entityId: opp.id, action: "update", actor: caller, before: opp, after, fields: ["stage", "submittedById"], label: opp.number ?? opp.name });
   });
   revalidatePath(`/opportunities/${opp.id}`);
   revalidatePath("/opportunities");
@@ -392,9 +400,12 @@ export async function recallSubmissionAction(opportunityId: string): Promise<{ e
   const opp = await prisma.opportunity.findFirst({ where: { id: opportunityId, companyId: caller.companyId } });
   if (!opp) return { error: "Opportunity not found." };
   if (opp.stage !== "PENDING_APPROVAL") return { error: "Only a pending opportunity can be recalled." };
-  await prisma.opportunity.update({
-    where: { id: opp.id },
-    data: { stage: "NEGOTIATION", submittedById: null, submittedAt: null },
+  await prisma.$transaction(async (tx) => {
+    const after = await tx.opportunity.update({
+      where: { id: opp.id },
+      data: { stage: "NEGOTIATION", submittedById: null, submittedAt: null },
+    });
+    await recordAudit(tx, { entityType: "Opportunity", entityId: opp.id, action: "update", actor: caller, before: opp, after, fields: ["stage", "submittedById"], label: opp.number ?? opp.name, note: "recalled from approval" });
   });
   revalidatePath(`/opportunities/${opp.id}`);
   revalidatePath("/opportunities");
@@ -410,7 +421,10 @@ export async function markLostAction(input: z.infer<typeof LostSchema>): Promise
   const opp = await prisma.opportunity.findFirst({ where: { id: opportunityId, companyId: caller.companyId } });
   if (!opp) return { error: "Opportunity not found." };
   if (opp.stage === "WON") return { error: "A won opportunity can't be marked lost." };
-  await prisma.opportunity.update({ where: { id: opp.id }, data: { stage: "LOST", lostReason: lostReason ?? null } });
+  await prisma.$transaction(async (tx) => {
+    const after = await tx.opportunity.update({ where: { id: opp.id }, data: { stage: "LOST", lostReason: lostReason ?? null } });
+    await recordAudit(tx, { entityType: "Opportunity", entityId: opp.id, action: "update", actor: caller, before: opp, after, fields: ["stage", "lostReason"], label: opp.number ?? opp.name });
+  });
   revalidatePath(`/opportunities/${opp.id}`);
   revalidatePath("/opportunities");
   return {};
@@ -446,9 +460,12 @@ export async function decideOpportunityAction(
   if (opp.stage !== "PENDING_APPROVAL") return { error: "This opportunity isn't awaiting approval." };
 
   if (decision === "REJECT") {
-    await prisma.opportunity.update({
-      where: { id: opp.id },
-      data: { stage: "NEGOTIATION", decidedById: caller.id, decidedAt: new Date(), decisionComment: comment ?? null },
+    await prisma.$transaction(async (tx) => {
+      const after = await tx.opportunity.update({
+        where: { id: opp.id },
+        data: { stage: "NEGOTIATION", decidedById: caller.id, decidedAt: new Date(), decisionComment: comment ?? null },
+      });
+      await recordAudit(tx, { entityType: "Opportunity", entityId: opp.id, action: "update", actor: caller, before: opp, after, fields: ["stage", "decidedById", "decisionComment"], label: opp.number ?? opp.name, note: "rejected" });
     });
     revalidatePath(`/opportunities/${opp.id}`);
     revalidatePath("/opportunities");
@@ -485,6 +502,7 @@ export async function decideOpportunityAction(
         poNumber: opp.poNumber,
       },
     });
+    await recordAudit(tx, { entityType: "Project", entityId: created.id, action: "create", actor: caller, after: created, label: created.number ?? created.name, note: `converted from ${opp.number ?? opp.name}` });
 
     for (const line of opp.lines) {
       // Milestone salesPrice semantics differ by billing type (see schema): a per-hour LIST rate for
@@ -492,7 +510,7 @@ export async function decideOpportunityAction(
       // so for fixed price the milestone's lump sum is the line TOTAL, not the unit rate.
       const salesPrice =
         opp.billingType === "FIXED_PRICE" ? Number(line.quantityHours) * Number(line.unitPrice) : line.unitPrice;
-      await tx.milestone.create({
+      const ms = await tx.milestone.create({
         data: {
           projectId: created.id,
           name: line.name,
@@ -504,9 +522,10 @@ export async function decideOpportunityAction(
           status: "PLANNED",
         },
       });
+      await recordAudit(tx, { entityType: "Milestone", entityId: ms.id, action: "create", actor: caller, after: ms, label: ms.name, parent: { entityType: "Project", entityId: created.id } });
     }
 
-    await tx.opportunity.update({
+    const won = await tx.opportunity.update({
       where: { id: opp.id },
       data: {
         stage: "WON",
@@ -516,6 +535,7 @@ export async function decideOpportunityAction(
         decisionComment: comment ?? null,
       },
     });
+    await recordAudit(tx, { entityType: "Opportunity", entityId: opp.id, action: "update", actor: caller, before: opp, after: won, fields: ["stage", "projectId", "decidedById", "decisionComment"], label: opp.number ?? opp.name });
 
     return created;
   });
@@ -616,6 +636,7 @@ export async function createAmendmentAction(input: CreateAmendmentInput): Promis
           },
         });
         createdMilestoneId = created.id;
+        await recordAudit(tx, { entityType: "Milestone", entityId: created.id, action: "create", actor: caller, after: created, label: created.name, parent: { entityType: "Project", entityId: project.id }, note: `amendment v${version}` });
       } else {
         const existing = await tx.milestone.findUniqueOrThrow({ where: { id: line.target } });
         const updateData: Prisma.MilestoneUpdateInput = {
@@ -624,7 +645,8 @@ export async function createAmendmentAction(input: CreateAmendmentInput): Promis
         // For fixed price the milestone salesPrice is a lump sum, so grow it; for T&M/RETAINER it's
         // a per-hour rate that stays as-is (the added hours simply bill at the existing rate).
         if (isFixedPrice) updateData.salesPrice = Number(existing.salesPrice) + lineTotal;
-        await tx.milestone.update({ where: { id: line.target }, data: updateData });
+        const grown = await tx.milestone.update({ where: { id: line.target }, data: updateData });
+        await recordAudit(tx, { entityType: "Milestone", entityId: existing.id, action: "update", actor: caller, before: existing, after: grown, label: existing.name, parent: { entityType: "Project", entityId: project.id }, note: `amendment v${version}` });
       }
 
       (snapshot as Prisma.JsonArray).push({
@@ -637,7 +659,7 @@ export async function createAmendmentAction(input: CreateAmendmentInput): Promis
       });
     }
 
-    await tx.project.update({
+    const projectAfter = await tx.project.update({
       where: { id: project.id },
       data: {
         contractValue: Number(project.contractValue ?? 0) + netAmount,
@@ -645,6 +667,7 @@ export async function createAmendmentAction(input: CreateAmendmentInput): Promis
         budgetHours: Number(project.budgetHours ?? 0) + addedHours,
       },
     });
+    await recordAudit(tx, { entityType: "Project", entityId: project.id, action: "update", actor: caller, before: project, after: projectAfter, fields: ["contractValue", "budgetAmount", "budgetHours"], label: project.number ?? project.name, note: `amendment v${version}` });
 
     await tx.opportunityAmendment.create({
       data: {

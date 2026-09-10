@@ -5,6 +5,8 @@ import { prisma } from "@/lib/prisma";
 import { can } from "@/lib/permissions";
 import { computeQuoteTotals } from "@/lib/opportunity";
 import { OpportunityDetailClient, type OpportunityDetail } from "./opportunity-detail-client";
+import { loadAuditFor } from "@/lib/audit";
+import { AuditHistoryCard } from "@/components/audit-history-card";
 
 export default async function OpportunityDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -141,6 +143,8 @@ export default async function OpportunityDetailPage({ params }: { params: Promis
     })),
   };
 
+  const history = await loadAuditFor(user, "Opportunity", opp.id);
+
   return (
     <div className="flex flex-col gap-6">
       <div>
@@ -156,6 +160,7 @@ export default async function OpportunityDetailPage({ params }: { params: Promis
         contacts={contacts}
         owners={owners}
       />
+      <AuditHistoryCard entries={history} />
     </div>
   );
 }

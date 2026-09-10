@@ -103,7 +103,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           },
         ]
       : []),
-    ...(can(user, "users:manage") || can(user, "clients:view")
+    ...(can(user, "users:manage") || can(user, "clients:view") || can(user, "audit:view")
       ? [
           {
             label: "Admin",
@@ -119,6 +119,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
                 : []),
               ...(can(user, "users:manage")
                 ? [{ href: "/admin/settings", label: "Settings", icon: "settings" as const }]
+                : []),
+              ...(can(user, "audit:view")
+                ? [{ href: "/admin/audit", label: "Audit log", icon: "audit" as const }]
                 : []),
             ],
           },
