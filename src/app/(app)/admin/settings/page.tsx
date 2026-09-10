@@ -6,18 +6,21 @@ import {
   getPasswordLoginSetting,
   microsoftConfigured,
   getTimesheetNudgeConfig,
+  getAlertsConfig,
 } from "@/lib/settings";
 import { graphMailConfigured } from "@/lib/graph-mail";
 import { teamsWebhookConfigured } from "@/lib/teams-webhook";
 import { SettingsClient } from "./settings-client";
 import { NudgeSettingsClient } from "./nudge-settings-client";
+import { AlertsSettingsClient } from "./alerts-settings-client";
 
 export default async function SettingsPage() {
   const admin = await requirePermission("users:manage");
 
-  const [passwordLogin, nudgeConfig, users, company] = await Promise.all([
+  const [passwordLogin, nudgeConfig, alertsConfig, users, company] = await Promise.all([
     getPasswordLoginSetting(),
     getTimesheetNudgeConfig(),
+    getAlertsConfig(),
     prisma.user.findMany({
       // Timesheet-nudge exclusions only make sense for people who file timesheets.
       where: { companyId: admin.companyId, active: true, ...STAFF_ONLY },
@@ -47,6 +50,7 @@ export default async function SettingsPage() {
         <TabsList>
           <TabsTrigger value="signin">Sign-in &amp; security</TabsTrigger>
           <TabsTrigger value="nudge">Timesheet nudge</TabsTrigger>
+          <TabsTrigger value="alerts">Alerts</TabsTrigger>
         </TabsList>
 
         <TabsContent value="signin">
@@ -57,6 +61,15 @@ export default async function SettingsPage() {
           <NudgeSettingsClient
             config={nudgeConfig}
             users={users}
+            emailConfigured={graphMailConfigured()}
+            teamsConfigured={teamsWebhookConfigured()}
+            secretConfigured={Boolean(process.env.TIMESHEET_NUDGE_SECRET)}
+          />
+        </TabsContent>
+
+        <TabsContent value="alerts">
+          <AlertsSettingsClient
+            config={alertsConfig}
             emailConfigured={graphMailConfigured()}
             teamsConfigured={teamsWebhookConfigured()}
             secretConfigured={Boolean(process.env.TIMESHEET_NUDGE_SECRET)}

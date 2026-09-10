@@ -1240,3 +1240,58 @@ build + 127 tests green; visibility rules verified by a read-only script against
 - **Contingency on quotes** (Michele): model estimate + contingency, discount consumes contingency first,
   estimate-vs-actual accuracy — needs a requirements conversation (and the controller) before building.
 - Vitest config `configLoader` warning; `nextInvoiceNumber` count+1 collision; write-off not a real state.
+
+---
+
+## Session update — 2026-09-10 (later: notification service + operational alerts)
+
+One migration (`20260910130000_notifications`, applied to erp_dev; the pipeline applies it to prod on
+deploy). tsc + lint + build + **151 tests** green. The UI tab and the endpoint could NOT be
+click-through verified (SSO-only); the rules are covered by unit tests, the runner by a dry-run path.
+
+### Notification channel (`src/lib/notify.ts`)
+- `notify({ subject, html, recipients, teamsTitle?, teamsText?, channels? })` is THE fan-out: Graph
+  mail per recipient (a recipient may carry its own subject/html — the nudge personalises per
+  person) + one Teams post. **Channels are isolated**: every send is wrapped, so one address bouncing
+  or the webhook being down never stops the other channel. `*Configured()` guards live here.
+- The timesheet nudge route now calls it. **No behaviour change** — same gates, same dedup, same JSON
+  response shape (`notifications.email.{configured,sent,errors}` / `teams.{configured,status}`).
+- `src/lib/internal-auth.ts` — the shared-secret gate (`x-nudge-secret` = `TIMESHEET_NUDGE_SECRET`),
+  extracted from the nudge route and reused by `/api/internal/alerts`. One secret for all internal
+  routes, on purpose.
+
+### Sent-alert ledger (`Notification` model)
+- `(kind, targetId, payloadHash)` is UNIQUE — that constraint IS the "never send the same alert
+  twice" guarantee. The runner **claims the row before sending** (insert; P2002 ⇒ someone else has
+  it) so two overlapping runs can't both send, and **deletes the claim if nothing was delivered** so
+  tomorrow retries. `channel`/`recipient` are a comma-joined summary of the fan-out, for audit.
+- `Opportunity.poValidUntil` added (same migration) — the PO *expiry*; `poDate` is the issue date.
+  Editable on the opportunity's SoW/PO card.
+
+### Rules (`src/lib/alerts/rules.ts`, pure; config in `alerts/config.ts`, runner in `alerts/run.ts`)
+- **Predicates are Prisma-free** and take `(data, ruleCfg, isSent)`; `isSent` makes suppression
+  testable in the predicate, the DB unique is the hard layer beneath. The `payloadKey` defines "the
+  same alert": a threshold in the key ⇒ once per threshold; a date in the key ⇒ re-fires if moved.
+- `project_budget` — approved hours vs `budgetHours` AND internal cost (historical rate, EUR) vs
+  `budgetAmount`, each crossing 80/100% (configurable). Once per (metric, threshold) → PM.
+- `invoice_overdue` — ISSUED/RECONCILED with outstanding > 0, ≥1/14/30 days past `dueDate` (≥, so a
+  missed day still fires once) → `invoices:manage` holders.
+- `approval_stale` — SUBMITTED timecards (→ approver, else `timesheet:approve:any`) and PENDING
+  expenses (→ `expenses:manage`) waiting > 3 days. Once per item.
+- `expiry` — ACTIVE assignment `endDate`, and WON opportunity `poValidUntil`, within 30 days
+  (inclusive both ends) → PM + the person / owner, de-duplicated.
+- `milestone_overdue` — `endDate` < today and not COMPLETE/INVOICED (due *today* is not overdue) → PM.
+- **`/api/internal/alerts`** (`POST ?dryRun&force`) runs every company; **idempotent per day** via
+  AppSetting `alertsLastRun` (set only when something was sent, so an empty day can re-run); `force`
+  bypasses the day marker but never the ledger.
+- **Admin UI**: `/admin/settings` → **Alerts** tab — master/email/Teams toggles, per-rule enable +
+  thresholds, and **"Preview today's alerts"** (dry run through the real runner, sends nothing).
+  Config key `alerts` in AppSetting, deep-merged onto defaults (`mergeAlertsConfig`).
+
+### Open / next
+- **Wire a scheduler**: one daily `POST https://psa.routemates.it/api/internal/alerts` (and the two
+  nudge modes) with the secret header — GitHub Actions cron is the zero-cost option.
+- Email still needs `Mail.Send` app permission + consent and `GRAPH_MAIL_SENDER`; Teams needs
+  `TEAMS_WEBHOOK_URL`. Until one is set the runner reports `noChannel` and records nothing.
+- Everything from the earlier 2026-09-08…10 entry still stands (invoice backfill `--apply`, secret
+  rotations, contingency-on-quotes conversation).

@@ -984,6 +984,8 @@ model Opportunity {
   poNumber          String?
   poAmount          Decimal?           @db.Decimal(12, 2)
   poDate            DateTime?
+  // When the customer PO stops being valid — drives the "PO expiring" alert. poDate is the issue date.
+  poValidUntil      DateTime?
 
   lostReason        String?
 
@@ -1980,4 +1982,24 @@ enum ClientTeamRole {
   /// Owns the account: first point of escalation. Shown first on the team list.
   LEAD
   MEMBER
+}
+
+/// Ledger of operational alerts that were actually sent (see src/lib/alerts). The unique key is the
+/// dedup guarantee: a rule that runs every day can only ever send a given (kind, target, payload)
+/// once — "80% of budget" for project X fires exactly one time. channel/recipient are a summary of
+/// the fan-out for that one alert (e.g. "email,teams" / the addresses), kept for audit.
+model Notification {
+  id          String   @id @default(cuid())
+  companyId   String
+  kind        String
+  targetType  String
+  targetId    String
+  sentAt      DateTime @default(now())
+  channel     String
+  recipient   String
+  payloadHash String
+
+  @@unique([kind, targetId, payloadHash])
+  @@index([companyId, kind])
+  @@index([sentAt])
 }

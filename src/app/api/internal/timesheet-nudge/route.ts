@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { timingSafeEqual } from "crypto";
 import { detectMissingTimecards, type NudgeMode } from "@/lib/timesheet-nudge";
-import { graphMailConfigured, sendGraphMail } from "@/lib/graph-mail";
-import { teamsWebhookConfigured, postTeamsMessage } from "@/lib/teams-webhook";
+import { notify, type EmailRecipient } from "@/lib/notify";
 import { getTimesheetNudgeConfig, getNudgeLastRun, setNudgeLastRun } from "@/lib/settings";
+import { authorizedInternal, flag } from "@/lib/internal-auth";
 import { toDateParam } from "@/lib/week";
 
 // Deployment-agnostic entry point: whatever scheduler you wire up later just POSTs this URL with the
@@ -16,16 +15,6 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const WEEKDAY_NAMES = ["", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
-
-function authorized(req: NextRequest): boolean {
-  const secret = process.env.TIMESHEET_NUDGE_SECRET;
-  if (!secret) return false; // not configured → route is closed
-  const provided = req.headers.get("x-nudge-secret") ?? "";
-  const a = Buffer.from(provided);
-  const b = Buffer.from(secret);
-  if (a.length !== b.length) return false; // timingSafeEqual requires equal lengths
-  return timingSafeEqual(a, b);
-}
 
 const HTML_ESCAPES: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
 function escapeHtml(s: string): string {
@@ -42,14 +31,14 @@ function firstName(name: string): string {
 }
 
 export async function POST(req: NextRequest) {
-  if (!authorized(req)) {
+  if (!authorizedInternal(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const { searchParams } = new URL(req.url);
   const mode: NudgeMode = searchParams.get("mode") === "weekly" ? "weekly" : "daily";
-  const dryRun = ["1", "true"].includes(searchParams.get("dryRun") ?? "");
-  const force = ["1", "true"].includes(searchParams.get("force") ?? "");
+  const dryRun = flag(searchParams.get("dryRun"));
+  const force = flag(searchParams.get("force"));
 
   const cfg = await getTimesheetNudgeConfig();
   const now = new Date();
@@ -90,51 +79,43 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true, mode, skipped: skip, missingCount: result.missing.length });
   }
 
-  const notifications = {
-    email: { configured: graphMailConfigured() && cfg.emailEnabled, sent: [] as string[], errors: [] as string[] },
-    teams: { configured: teamsWebhookConfigured() && cfg.teamsEnabled, status: "skipped" as string },
+  // Same response shape as before the shared notify() existed: per-channel configured/sent/errors.
+  let notifications = {
+    email: { configured: false, sent: [] as string[], errors: [] as string[] },
+    teams: { configured: false, status: "skipped" as string },
   };
 
   if (result.missing.length > 0) {
-    if (notifications.email.configured) {
-      for (const p of result.missing) {
-        try {
-          const vars = {
-            firstName: firstName(p.name),
-            name: p.name,
-            dates: p.missingDates.join(", "),
-            count: String(p.missingDates.length),
-            mode,
-          };
-          const subject = renderTemplate(cfg.emailSubject, vars);
-          const html = escapeHtml(renderTemplate(cfg.emailBody, vars)).replace(/\n/g, "<br>");
-          await sendGraphMail({ to: p.email, subject, html });
-          notifications.email.sent.push(p.email);
-        } catch (e) {
-          notifications.email.errors.push(`${p.email}: ${(e as Error).message}`);
-        }
-      }
-    }
-
-    if (notifications.teams.configured) {
-      const range =
-        result.checkedDates.length === 1
-          ? result.checkedDates[0]
-          : `${result.checkedDates[0]} … ${result.checkedDates[result.checkedDates.length - 1]}`;
-      const list = result.missing.map((p) => `- **${p.name}** — ${p.missingDates.join(", ")}`).join("\n");
-      const markdown = renderTemplate(cfg.teamsMessage, {
-        count: String(result.missing.length),
-        list,
+    // One personalised email per missing person; one Teams post listing everyone.
+    const recipients: EmailRecipient[] = result.missing.map((p) => {
+      const vars = {
+        firstName: firstName(p.name),
+        name: p.name,
+        dates: p.missingDates.join(", "),
+        count: String(p.missingDates.length),
         mode,
-        range,
-      });
-      try {
-        await postTeamsMessage({ title: `⏰ Timesheet nudge — ${mode} (${range})`, markdown });
-        notifications.teams.status = "sent";
-      } catch (e) {
-        notifications.teams.status = `error: ${(e as Error).message}`;
-      }
-    }
+      };
+      return {
+        to: p.email,
+        subject: renderTemplate(cfg.emailSubject, vars),
+        html: escapeHtml(renderTemplate(cfg.emailBody, vars)).replace(/\n/g, "<br>"),
+      };
+    });
+    const range =
+      result.checkedDates.length === 1
+        ? result.checkedDates[0]
+        : `${result.checkedDates[0]} … ${result.checkedDates[result.checkedDates.length - 1]}`;
+    const list = result.missing.map((p) => `- **${p.name}** — ${p.missingDates.join(", ")}`).join("\n");
+    const teamsText = renderTemplate(cfg.teamsMessage, { count: String(result.missing.length), list, mode, range });
+
+    notifications = await notify({
+      subject: cfg.emailSubject,
+      html: "",
+      recipients,
+      teamsTitle: `⏰ Timesheet nudge — ${mode} (${range})`,
+      teamsText,
+      channels: { email: cfg.emailEnabled, teams: cfg.teamsEnabled },
+    });
   }
 
   // Mark this mode as run today so a frequent trigger doesn't re-send (skipped when nobody's missing —

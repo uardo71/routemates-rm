@@ -1,4 +1,6 @@
 import { prisma } from "@/lib/prisma";
+import { mergeAlertsConfig, type AlertsConfig } from "@/lib/alerts/config";
+export type { AlertsConfig } from "@/lib/alerts/config";
 
 // Global app settings (see model AppSetting). Kept tiny and dependency-light so it can be read from
 // the login page and the Credentials authorize() — i.e. BEFORE there is a session.
@@ -114,4 +116,34 @@ export async function setNudgeLastRun(mode: "daily" | "weekly", dateStr: string)
     create: { key, value: dateStr },
     update: { value: dateStr },
   });
+}
+
+// ---------- operational alerts (src/lib/alerts) ----------
+
+const ALERTS_KEY = "alerts";
+const ALERTS_LAST_RUN_KEY = "alertsLastRun";
+
+/** Reads the alert rules config, deep-merged onto defaults so a new rule always has a value. */
+export async function getAlertsConfig(): Promise<AlertsConfig> {
+  const row = await prisma.appSetting.findUnique({ where: { key: ALERTS_KEY } });
+  if (!row) return mergeAlertsConfig(null);
+  try {
+    return mergeAlertsConfig(JSON.parse(row.value));
+  } catch {
+    return mergeAlertsConfig(null);
+  }
+}
+
+export async function setAlertsConfig(config: AlertsConfig): Promise<void> {
+  const value = JSON.stringify(mergeAlertsConfig(config));
+  await prisma.appSetting.upsert({ where: { key: ALERTS_KEY }, create: { key: ALERTS_KEY, value }, update: { value } });
+}
+
+/** yyyy-MM-dd of the last run that actually sent something — the once-a-day guard for /api/internal/alerts. */
+export async function getAlertsLastRun(): Promise<string | null> {
+  const row = await prisma.appSetting.findUnique({ where: { key: ALERTS_LAST_RUN_KEY } });
+  return row?.value ?? null;
+}
+export async function setAlertsLastRun(dateStr: string): Promise<void> {
+  await prisma.appSetting.upsert({ where: { key: ALERTS_LAST_RUN_KEY }, create: { key: ALERTS_LAST_RUN_KEY, value: dateStr }, update: { value: dateStr } });
 }

@@ -74,6 +74,7 @@ export default async function OpportunityDetailPage({ params }: { params: Promis
     poNumber: opp.poNumber,
     poAmount: opp.poAmount == null ? null : Number(opp.poAmount),
     poDate: opp.poDate ? opp.poDate.toISOString().slice(0, 10) : null,
+    poValidUntil: opp.poValidUntil ? opp.poValidUntil.toISOString().slice(0, 10) : null,
     lostReason: opp.lostReason,
     decisionComment: opp.decisionComment,
     submittedByName: opp.submittedBy?.name ?? null,

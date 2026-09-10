@@ -116,6 +116,7 @@ export type OpportunityDetail = {
   poNumber: string | null;
   poAmount: number | null;
   poDate: string | null;
+  poValidUntil: string | null;
   lostReason: string | null;
   decisionComment: string | null;
   submittedByName: string | null;
@@ -449,6 +450,7 @@ export function OpportunityDetailClient({
             <InfoField icon={FileTextIcon} label="PO number" value={detail.poNumber ?? "—"} />
             <InfoField icon={FileTextIcon} label="PO amount" value={detail.poAmount != null ? formatMoney(detail.poAmount, c) : "—"} />
             <InfoField icon={FileTextIcon} label="PO date" value={detail.poDate ?? "—"} />
+            <InfoField icon={FileTextIcon} label="PO valid until" value={detail.poValidUntil ?? "—"} />
           </CardContent>
         </Card>
         <Card>
@@ -1123,6 +1125,7 @@ function EditDetailsDialog({
   const [poNumber, setPoNumber] = useState(detail.poNumber ?? "");
   const [poAmount, setPoAmount] = useState(detail.poAmount != null ? String(detail.poAmount) : "");
   const [poDate, setPoDate] = useState(detail.poDate ?? "");
+  const [poValidUntil, setPoValidUntil] = useState(detail.poValidUntil ?? "");
 
   const clientContacts = useMemo(() => contacts.filter((ct) => ct.clientId === clientId), [contacts, clientId]);
 
@@ -1147,6 +1150,7 @@ function EditDetailsDialog({
         poNumber: poNumber.trim() || null,
         poAmount: poAmount === "" ? null : Number(poAmount),
         poDate: poDate || null,
+        poValidUntil: poValidUntil || null,
       });
       if (res.error) toast.error(res.error);
       else {
@@ -1321,6 +1325,10 @@ function EditDetailsDialog({
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="ed-podate">PO date</Label>
               <Input id="ed-podate" type="date" value={poDate} onChange={(e) => setPoDate(e.target.value)} />
+            </div>
+            <div className="flex flex-col gap-1">
+              <Label htmlFor="ed-povalid">PO valid until</Label>
+              <Input id="ed-povalid" type="date" value={poValidUntil} onChange={(e) => setPoValidUntil(e.target.value)} />
             </div>
           </div>
         </div>

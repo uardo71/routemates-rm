@@ -120,6 +120,7 @@ const UpdateSchema = z.object({
   poNumber: z.string().max(100).optional().nullable(),
   poAmount: z.coerce.number().min(0).optional().nullable(),
   poDate: z.string().optional().nullable(),
+  poValidUntil: z.string().optional().nullable(),
 });
 export type UpdateOpportunityInput = z.infer<typeof UpdateSchema>;
 
@@ -151,6 +152,8 @@ export async function updateOpportunityAction(input: UpdateOpportunityInput): Pr
   if (sowDate === "invalid") return { error: "Invalid SoW signed date." };
   const poDate = parseOptionalDate(data.poDate ?? undefined);
   if (poDate === "invalid") return { error: "Invalid PO date." };
+  const poValidUntil = parseOptionalDate(data.poValidUntil ?? undefined);
+  if (poValidUntil === "invalid") return { error: "Invalid PO valid-until date." };
 
   // A discount type without a value (or vice-versa) is meaningless — require both or neither.
   const hasDiscountType = !!data.discountType;
@@ -181,6 +184,7 @@ export async function updateOpportunityAction(input: UpdateOpportunityInput): Pr
       poNumber: data.poNumber ?? null,
       poAmount: data.poAmount ?? null,
       poDate: poDate,
+      poValidUntil: poValidUntil,
     },
   });
   revalidatePath(`/opportunities/${opp.id}`);

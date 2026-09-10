@@ -3,7 +3,9 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { requirePermission } from "@/lib/session";
-import { setPasswordLoginSetting, setTimesheetNudgeConfig } from "@/lib/settings";
+import { setPasswordLoginSetting, setTimesheetNudgeConfig, setAlertsConfig } from "@/lib/settings";
+import { mergeAlertsConfig } from "@/lib/alerts/config";
+import { runAlerts, type AlertsRunReport } from "@/lib/alerts/run";
 
 export async function setPasswordLoginAction(enabled: boolean): Promise<{ error?: string }> {
   await requirePermission("users:manage");
@@ -34,4 +36,36 @@ export async function saveTimesheetNudgeConfigAction(input: unknown): Promise<{ 
   await setTimesheetNudgeConfig(parsed.data);
   revalidatePath("/admin/settings");
   return {};
+}
+
+const AlertsConfigSchema = z.object({
+  enabled: z.boolean(),
+  emailEnabled: z.boolean(),
+  teamsEnabled: z.boolean(),
+  rules: z.object({
+    project_budget: z.object({ enabled: z.boolean(), thresholds: z.array(z.number().min(0).max(1000)).min(1) }),
+    invoice_overdue: z.object({ enabled: z.boolean(), days: z.array(z.number().int().min(0).max(3650)).min(1) }),
+    approval_stale: z.object({ enabled: z.boolean(), staleDays: z.number().int().min(0).max(365) }),
+    expiry: z.object({ enabled: z.boolean(), days: z.number().int().min(0).max(3650) }),
+    milestone_overdue: z.object({ enabled: z.boolean() }),
+  }),
+});
+
+export async function saveAlertsConfigAction(input: unknown): Promise<{ error?: string }> {
+  await requirePermission("users:manage");
+  const parsed = AlertsConfigSchema.safeParse(input);
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Invalid settings" };
+  await setAlertsConfig(mergeAlertsConfig(parsed.data));
+  revalidatePath("/admin/settings");
+  return {};
+}
+
+/** Evaluates today's alerts for the admin's company without sending or recording anything. */
+export async function previewAlertsAction(): Promise<AlertsRunReport | { error: string }> {
+  const admin = await requirePermission("users:manage");
+  try {
+    return await runAlerts(admin.companyId, { dryRun: true, force: true });
+  } catch (e) {
+    return { error: (e as Error).message };
+  }
 }
