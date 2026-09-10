@@ -128,6 +128,18 @@ function WorkItem({ t, config, canManage, users, clients, projects, conversation
   const statusOf = config.statuses.find((s) => s.id === d.statusId);
   const typeTone = statusColor(t.typeColor);
   const ro = !canManage; // read-only for everything except status (workflow) and comments
+  const hasFields = t.fields.length > 0;
+
+  const resolutionSection = (
+    <Section title="Resolution">
+      {ro ? (
+        t.resolution ? <p className="whitespace-pre-wrap text-sm">{t.resolution}</p> : <p className="text-sm text-muted-foreground">—</p>
+      ) : (
+        <Textarea value={d.resolution} onChange={(e) => set({ resolution: e.target.value })} rows={4} placeholder="How it was resolved (closing comment)" className="border-border/60 bg-background focus:border-primary/50" />
+      )}
+      {t.statusCategory === "DONE" && t.resolvedAt && <p className="mt-2 text-xs text-emerald-700 dark:text-emerald-400">Resolved {fmtDT(t.resolvedAt)}</p>}
+    </Section>
+  );
 
   return (
     <div className="flex flex-col gap-5">
@@ -136,7 +148,7 @@ function WorkItem({ t, config, canManage, users, clients, projects, conversation
       </Link>
 
       {/* ---------- Header (sticky, like the DevOps work-item bar) ---------- */}
-      <div className="sticky top-0 z-20 overflow-hidden rounded-lg border bg-card shadow-sm">
+      <div className="overflow-hidden rounded-lg border bg-card">
         <div className="flex">
           <div className={cn("w-1.5 shrink-0", typeTone.dot)} />
           <div className="flex min-w-0 flex-1 flex-col gap-3 p-4">
@@ -147,14 +159,13 @@ function WorkItem({ t, config, canManage, users, clients, projects, conversation
 
             {/* title */}
             <div className="flex items-baseline gap-3">
-              <span className="shrink-0 font-mono text-lg text-muted-foreground">{t.number.replace(/^TKT-0*/, "")}</span>
               {ro ? (
                 <h1 className="min-w-0 truncate text-xl font-semibold tracking-tight">{d.title}</h1>
               ) : (
                 <input
                   value={d.title}
                   onChange={(e) => set({ title: e.target.value })}
-                  className="min-w-0 flex-1 rounded-md border border-transparent bg-transparent px-1 text-xl font-semibold tracking-tight outline-none hover:border-border focus:border-primary/50"
+                  className="min-w-0 flex-1 rounded-md border border-border/60 bg-background px-2 py-1 text-xl font-semibold tracking-tight outline-none focus:border-primary/50"
                   aria-label="Title"
                 />
               )}
@@ -167,7 +178,7 @@ function WorkItem({ t, config, canManage, users, clients, projects, conversation
                 {ro ? (
                   <span className="text-sm">{t.assigneeName ?? <span className="text-muted-foreground">Unassigned</span>}</span>
                 ) : (
-                  <select value={d.assigneeId} onChange={(e) => set({ assigneeId: e.target.value })} className="h-8 rounded-md border border-transparent bg-transparent pr-6 text-sm hover:border-border focus:border-primary/50" aria-label="Assigned to">
+                  <select value={d.assigneeId} onChange={(e) => set({ assigneeId: e.target.value })} className="h-8 rounded-md border border-border/60 bg-background px-2 pr-6 text-sm focus:border-primary/50" aria-label="Assigned to">
                     <option value="">Unassigned</option>
                     {users.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
                   </select>
@@ -193,11 +204,12 @@ function WorkItem({ t, config, canManage, users, clients, projects, conversation
             </div>
 
             {/* state strip: State / Priority  |  Client / Project */}
-            <div className="grid grid-cols-2 gap-x-6 gap-y-2 border-t pt-3 sm:grid-cols-4">
+            <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3 border-t pt-3">
+            <div className="grid min-w-[320px] flex-1 grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-4">
               <Strip label="State">
                 <div className="flex items-center gap-2">
                   <StatusDot color={statusOf?.color ?? t.statusColor} />
-                  <select value={d.statusId} onChange={(e) => set({ statusId: e.target.value })} className="h-7 flex-1 rounded-md border border-transparent bg-transparent text-sm hover:border-border focus:border-primary/50" aria-label="State">
+                  <select value={d.statusId} onChange={(e) => set({ statusId: e.target.value })} className="h-8 flex-1 rounded-md border border-border/60 bg-background px-2 text-sm focus:border-primary/50" aria-label="State">
                     {config.statuses.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
                   </select>
                 </div>
@@ -206,7 +218,7 @@ function WorkItem({ t, config, canManage, users, clients, projects, conversation
                 <div className="flex items-center gap-2">
                   <span className={cn("size-2 shrink-0 rounded-full", TICKET_PRIORITY_DOT[d.priority])} />
                   {ro ? <span className="text-sm">{TICKET_PRIORITY_LABEL[d.priority]}</span> : (
-                    <select value={d.priority} onChange={(e) => set({ priority: e.target.value as TicketPriority })} className="h-7 flex-1 rounded-md border border-transparent bg-transparent text-sm hover:border-border focus:border-primary/50" aria-label="Priority">
+                    <select value={d.priority} onChange={(e) => set({ priority: e.target.value as TicketPriority })} className="h-8 flex-1 rounded-md border border-border/60 bg-background px-2 text-sm focus:border-primary/50" aria-label="Priority">
                       {TICKET_PRIORITIES.map((p) => <option key={p} value={p}>{TICKET_PRIORITY_LABEL[p]}</option>)}
                     </select>
                   )}
@@ -214,25 +226,24 @@ function WorkItem({ t, config, canManage, users, clients, projects, conversation
               </Strip>
               <Strip label="Client">
                 {ro ? <Ro>{t.clientName}</Ro> : (
-                  <select value={d.clientId} onChange={(e) => set({ clientId: e.target.value })} className="h-7 w-full rounded-md border border-transparent bg-transparent text-sm hover:border-border focus:border-primary/50" aria-label="Client">
+                  <select value={d.clientId} onChange={(e) => set({ clientId: e.target.value })} className="h-8 w-full rounded-md border border-border/60 bg-background px-2 text-sm focus:border-primary/50" aria-label="Client">
                     <option value="">—</option>{clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                   </select>
                 )}
               </Strip>
               <Strip label="Project">
                 {ro ? <Ro>{t.projectName}</Ro> : (
-                  <select value={d.projectId} onChange={(e) => set({ projectId: e.target.value })} className="h-7 w-full rounded-md border border-transparent bg-transparent text-sm hover:border-border focus:border-primary/50" aria-label="Project">
+                  <select value={d.projectId} onChange={(e) => set({ projectId: e.target.value })} className="h-8 w-full rounded-md border border-border/60 bg-background px-2 text-sm focus:border-primary/50" aria-label="Project">
                     <option value="">—</option>{projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                   </select>
                 )}
               </Strip>
             </div>
-
-            {/* tabs, right-aligned like DevOps */}
-            <div className="-mb-4 -mx-4 flex items-center justify-end gap-1 border-t bg-muted/30 px-2 py-1">
+            <div className="flex items-center gap-1 rounded-md border bg-muted/30 p-1">
               <Tab active={tab === "details"} onClick={() => setTab("details")} icon={<PencilLineIcon className="size-4" />} label="Details" />
               <Tab active={tab === "history"} onClick={() => setTab("history")} icon={<HistoryIcon className="size-4" />} label="History" count={history.length} />
               <Tab active={tab === "worklog"} onClick={() => setTab("worklog")} icon={<TimerIcon className="size-4" />} label={loggedMin > 0 ? `Worklog · ${fmtMin(loggedMin)}` : "Worklog"} />
+            </div>
             </div>
           </div>
         </div>
@@ -240,14 +251,14 @@ function WorkItem({ t, config, canManage, users, clients, projects, conversation
 
       {/* ---------- Body ---------- */}
       {tab === "details" && (
-        <div className="grid gap-6 xl:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,1fr)]">
+        <div className={cn("grid gap-6", hasFields ? "xl:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)]" : "lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]")}>
           {/* Left: Description + Discussion */}
           <div className="flex min-w-0 flex-col gap-6">
             <Section title="Description">
               {ro ? (
                 d.description ? <p className="whitespace-pre-wrap text-sm leading-relaxed">{d.description}</p> : <p className="text-sm text-muted-foreground">No description.</p>
               ) : (
-                <Textarea value={d.description} onChange={(e) => set({ description: e.target.value })} rows={6} placeholder="Describe the issue or request…" className="border-transparent bg-transparent px-1 hover:border-border focus:border-primary/50" />
+                <Textarea value={d.description} onChange={(e) => set({ description: e.target.value })} rows={8} placeholder="Describe the issue or request…" className="border-border/60 bg-background focus:border-primary/50" />
               )}
             </Section>
             <Section title="Discussion">
@@ -266,14 +277,13 @@ function WorkItem({ t, config, canManage, users, clients, projects, conversation
               <Fld label="Created"><Ro>{fmtDT(t.createdAt)}</Ro></Fld>
             </Section>
             <SlaSection t={t} />
+            {!hasFields && resolutionSection}
           </div>
 
-          {/* Right: the type's own fields + resolution */}
-          <div className="flex min-w-0 flex-col gap-6">
+          {/* Right: the type's own fields + resolution (only when the type has fields) */}
+          {hasFields && <div className="flex min-w-0 flex-col gap-6">
             <Section title={`${t.typeName} fields`}>
-              {t.fields.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No custom fields for this type.</p>
-              ) : ro ? (
+              {ro ? (
                 t.fields.map((f) => <Fld key={f.id} label={f.name}><Ro>{f.display}</Ro></Fld>)
               ) : (
                 <div className="grid grid-cols-1 gap-3">
@@ -281,15 +291,8 @@ function WorkItem({ t, config, canManage, users, clients, projects, conversation
                 </div>
               )}
             </Section>
-            <Section title="Resolution">
-              {ro ? (
-                t.resolution ? <p className="whitespace-pre-wrap text-sm">{t.resolution}</p> : <p className="text-sm text-muted-foreground">—</p>
-              ) : (
-                <Textarea value={d.resolution} onChange={(e) => set({ resolution: e.target.value })} rows={4} placeholder="How it was resolved (closing comment)" className="border-transparent bg-transparent px-1 hover:border-border focus:border-primary/50" />
-              )}
-              {t.statusCategory === "DONE" && t.resolvedAt && <p className="mt-2 text-xs text-emerald-700 dark:text-emerald-400">Resolved {fmtDT(t.resolvedAt)}</p>}
-            </Section>
-          </div>
+            {resolutionSection}
+          </div>}
         </div>
       )}
 
