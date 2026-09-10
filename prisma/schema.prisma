@@ -1315,7 +1315,6 @@ model StatusReport {
   progressPercent Int? // 0-100 progress, shown as "Progress (90%)" on the status slide
   summary            String? // "Current status" narrative
   accomplishments    String? // done this period (optional extra)
-  nextSteps          String? // free-text plan (optional; structured actions live in `actions`)
   correctiveActions  String? // "Corrective Actions" section
   decisionsNeeded    String?
   milestoneNotes     String?

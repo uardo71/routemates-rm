@@ -63,7 +63,7 @@ export default async function DeliveryProjectPage({ params, searchParams }: { pa
   const reports: ReportRow[] = project.statusReports.filter(inEng).map((r) => ({
     id: r.id, reportDate: iso(r.reportDate)!, periodStart: iso(r.periodStart), periodEnd: iso(r.periodEnd),
     cadence: r.cadence, overallRag: r.overallRag, progressPercent: r.progressPercent,
-    summary: r.summary, correctiveActions: r.correctiveActions, milestoneNotes: r.milestoneNotes,
+    summary: r.summary, accomplishments: r.accomplishments, correctiveActions: r.correctiveActions, decisionsNeeded: r.decisionsNeeded, milestoneNotes: r.milestoneNotes,
     actions: r.actions.map((a) => ({ description: a.description, owner: a.owner, dueDate: iso(a.dueDate), critical: a.critical })),
     sentAt: iso(r.sentAt), authorName: r.author.name,
     documents: r.documents.map((d) => ({ id: d.id, fileName: d.fileName, originalName: d.originalName })),

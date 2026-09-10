@@ -169,7 +169,6 @@ const ReportSchema = z.object({
   progressPercent: z.coerce.number().int().min(0).max(100).optional().nullable(),
   summary: z.string().max(4000).optional().nullable(), // current status
   accomplishments: z.string().max(4000).optional().nullable(),
-  nextSteps: z.string().max(4000).optional().nullable(),
   correctiveActions: z.string().max(4000).optional().nullable(),
   decisionsNeeded: z.string().max(4000).optional().nullable(),
   milestoneNotes: z.string().max(4000).optional().nullable(),
@@ -190,7 +189,6 @@ function reportData(d: StatusReportInput) {
     progressPercent: d.progressPercent ?? null,
     summary: d.summary?.trim() || null,
     accomplishments: d.accomplishments?.trim() || null,
-    nextSteps: d.nextSteps?.trim() || null,
     correctiveActions: d.correctiveActions?.trim() || null,
     decisionsNeeded: d.decisionsNeeded?.trim() || null,
     milestoneNotes: d.milestoneNotes?.trim() || null,

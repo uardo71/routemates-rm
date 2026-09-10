@@ -109,9 +109,18 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 
   // current status (left) + next actions (right)
   const bodyY = 2.95;
+  // Left column: current status, then accomplishments when there are any (the status box shrinks).
+  const hasAcc = !!report.accomplishments;
+  const statusH = hasAcc ? 2.05 : 3.4;
   s2.addText("CURRENT STATUS", { x: 0.6, y: bodyY, fontSize: 11, bold: true, color: BRASS, charSpacing: 1 });
-  s2.addShape("rect", { x: 0.6, y: bodyY + 0.35, w: 5.7, h: 3.4, fill: { color: WHITE }, line: { color: LINE, width: 1 } });
-  s2.addText(report.summary || "—", { x: 0.8, y: bodyY + 0.5, w: 5.3, h: 3.1, fontSize: 12, color: INK, valign: "top", lineSpacingMultiple: 1.15 });
+  s2.addShape("rect", { x: 0.6, y: bodyY + 0.35, w: 5.7, h: statusH, fill: { color: WHITE }, line: { color: LINE, width: 1 } });
+  s2.addText(report.summary || "—", { x: 0.8, y: bodyY + 0.5, w: 5.3, h: statusH - 0.3, fontSize: hasAcc ? 11 : 12, color: INK, valign: "top", lineSpacingMultiple: 1.15 });
+  if (hasAcc) {
+    const accY = bodyY + 0.35 + statusH + 0.25;
+    s2.addText("ACCOMPLISHMENTS", { x: 0.6, y: accY - 0.32, fontSize: 11, bold: true, color: BRASS, charSpacing: 1 });
+    s2.addShape("rect", { x: 0.6, y: accY, w: 5.7, h: 6.75 - accY, fill: { color: WHITE }, line: { color: LINE, width: 1 } });
+    s2.addText(report.accomplishments ?? "", { x: 0.8, y: accY + 0.1, w: 5.3, h: 6.75 - accY - 0.2, fontSize: 10.5, color: INK, valign: "top", lineSpacingMultiple: 1.1 });
+  }
 
   s2.addText("NEXT ACTIONS", { x: 6.6, y: bodyY, fontSize: 11, bold: true, color: BRASS, charSpacing: 1 });
   if (report.actions.length) {
@@ -128,10 +137,17 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     s2.addText("Nothing outstanding.", { x: 6.8, y: bodyY + 0.35, w: 5.8, h: 0.6, fontSize: 10, color: MUTE, valign: "middle" });
   }
 
-  // corrective actions strip
+  // corrective actions strip — shares the row with "decisions needed" when the customer owes one
+  const hasDec = !!report.decisionsNeeded;
+  const stripW = hasDec ? 2.95 : 6.13;
   s2.addText("CORRECTIVE ACTIONS", { x: 6.6, y: 5.35, fontSize: 11, bold: true, color: BRASS, charSpacing: 1 });
-  s2.addShape("rect", { x: 6.6, y: 5.7, w: 6.13, h: 1.05, fill: { color: WHITE }, line: { color: LINE, width: 1 } });
-  s2.addText(report.correctiveActions || "None required.", { x: 6.8, y: 5.78, w: 5.8, h: 0.9, fontSize: 10.5, color: INK, valign: "top" });
+  s2.addShape("rect", { x: 6.6, y: 5.7, w: stripW, h: 1.05, fill: { color: WHITE }, line: { color: LINE, width: 1 } });
+  s2.addText(report.correctiveActions || "None required.", { x: 6.8, y: 5.78, w: stripW - 0.35, h: 0.9, fontSize: 10.5, color: INK, valign: "top" });
+  if (hasDec) {
+    s2.addText("DECISIONS NEEDED", { x: 9.78, y: 5.35, fontSize: 11, bold: true, color: BRASS, charSpacing: 1 });
+    s2.addShape("rect", { x: 9.78, y: 5.7, w: 2.95, h: 1.05, fill: { color: "FFF7E6" }, line: { color: "E4C989", width: 1 } });
+    s2.addText(report.decisionsNeeded ?? "", { x: 9.95, y: 5.78, w: 2.6, h: 0.9, fontSize: 10.5, color: INK, valign: "top" });
+  }
   footer(s2, 2);
 
   // ---------------- Slide 3 — Project Plan (Gantt, mirrors the print PDF) ----------------

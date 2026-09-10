@@ -27,7 +27,9 @@ export type ReportRow = {
   overallRag: RagStatus; // Severity/Timing
   progressPercent: number | null;
   summary: string | null; // current status
+  accomplishments: string | null;
   correctiveActions: string | null;
+  decisionsNeeded: string | null;
   milestoneNotes: string | null;
   actions: ReportAction[];
   sentAt: string | null;
@@ -59,12 +61,12 @@ type Draft = {
   id?: string;
   reportDate: string; cadence: string; periodStart: string; periodEnd: string;
   overallRag: RagStatus; progressPercent: string;
-  summary: string; correctiveActions: string; milestoneNotes: string;
+  summary: string; accomplishments: string; correctiveActions: string; decisionsNeeded: string; milestoneNotes: string;
   actions: DraftAction[];
 };
 const emptyDraft = (): Draft => ({
   reportDate: todayIso(), cadence: "WEEKLY", periodStart: "", periodEnd: "",
-  overallRag: "GREEN", progressPercent: "", summary: "", correctiveActions: "", milestoneNotes: "",
+  overallRag: "GREEN", progressPercent: "", summary: "", accomplishments: "", correctiveActions: "", decisionsNeeded: "", milestoneNotes: "",
   actions: [{ description: "", owner: "", dueDate: "", critical: false }],
 });
 
@@ -85,7 +87,8 @@ export function StatusReportsClient({ projectId, engagementId, reports }: { proj
       periodStart: draft.periodStart || null, periodEnd: draft.periodEnd || null,
       overallRag: draft.overallRag, scheduleRag: draft.overallRag, budgetRag: draft.overallRag, scopeRag: draft.overallRag,
       progressPercent: draft.progressPercent === "" ? null : Number(draft.progressPercent),
-      summary: draft.summary || null, correctiveActions: draft.correctiveActions || null, milestoneNotes: draft.milestoneNotes || null,
+      summary: draft.summary || null, accomplishments: draft.accomplishments || null, correctiveActions: draft.correctiveActions || null,
+      decisionsNeeded: draft.decisionsNeeded || null, milestoneNotes: draft.milestoneNotes || null,
       actions,
     };
     start(async () => {
@@ -98,7 +101,7 @@ export function StatusReportsClient({ projectId, engagementId, reports }: { proj
     setDraft({
       id: r.id, reportDate: r.reportDate, cadence: r.cadence ?? "WEEKLY", periodStart: r.periodStart ?? "", periodEnd: r.periodEnd ?? "",
       overallRag: r.overallRag, progressPercent: r.progressPercent != null ? String(r.progressPercent) : "",
-      summary: r.summary ?? "", correctiveActions: r.correctiveActions ?? "", milestoneNotes: r.milestoneNotes ?? "",
+      summary: r.summary ?? "", accomplishments: r.accomplishments ?? "", correctiveActions: r.correctiveActions ?? "", decisionsNeeded: r.decisionsNeeded ?? "", milestoneNotes: r.milestoneNotes ?? "",
       actions: r.actions.length ? r.actions.map((a) => ({ description: a.description, owner: a.owner ?? "", dueDate: a.dueDate ?? "", critical: a.critical })) : [{ description: "", owner: "", dueDate: "", critical: false }],
     });
   }
@@ -172,6 +175,12 @@ export function StatusReportsClient({ projectId, engagementId, reports }: { proj
             <section className="flex flex-col gap-2 p-5">
               <h4 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Current status</h4>
               {r.summary ? <p className="text-sm leading-relaxed whitespace-pre-wrap">{r.summary}</p> : <p className="text-sm text-muted-foreground/60">—</p>}
+              {r.accomplishments && (
+                <div className="flex flex-col gap-2 border-t pt-3">
+                  <h4 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Accomplishments</h4>
+                  <p className="text-sm leading-relaxed whitespace-pre-wrap">{r.accomplishments}</p>
+                </div>
+              )}
             </section>
 
             <section className="flex flex-col gap-2 p-5">
@@ -197,6 +206,12 @@ export function StatusReportsClient({ projectId, engagementId, reports }: { proj
                 <h4 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Corrective actions</h4>
                 {r.correctiveActions ? <p className="text-sm leading-relaxed whitespace-pre-wrap">{r.correctiveActions}</p> : <p className="text-sm text-muted-foreground/60">—</p>}
               </div>
+              {r.decisionsNeeded && (
+                <div className="flex flex-col gap-2 border-t pt-3">
+                  <h4 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Decisions needed</h4>
+                  <p className="text-sm leading-relaxed whitespace-pre-wrap">{r.decisionsNeeded}</p>
+                </div>
+              )}
               {r.milestoneNotes && (
                 <div className="flex flex-col gap-2 border-t pt-3">
                   <h4 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Plan / milestones</h4>
@@ -235,7 +250,8 @@ export function StatusReportsClient({ projectId, engagementId, reports }: { proj
                 </div>
                 <div className="flex flex-col gap-1.5"><Label>Progress %</Label><Input type="number" min="0" max="100" value={draft.progressPercent} onChange={(e) => setDraft({ ...draft, progressPercent: e.target.value })} placeholder="e.g. 90" /></div>
               </div>
-              <div className="flex flex-col gap-1.5"><Label>Current status</Label><Textarea value={draft.summary} onChange={(e) => setDraft({ ...draft, summary: e.target.value })} rows={4} maxLength={4000} placeholder="What's done, what happened this period…" /></div>
+              <div className="flex flex-col gap-1.5"><Label>Current status</Label><Textarea value={draft.summary} onChange={(e) => setDraft({ ...draft, summary: e.target.value })} rows={4} maxLength={4000} placeholder="Where things stand this period…" /></div>
+              <div className="flex flex-col gap-1.5"><Label>Accomplishments (optional)</Label><Textarea value={draft.accomplishments} onChange={(e) => setDraft({ ...draft, accomplishments: e.target.value })} rows={2} maxLength={4000} placeholder="What got done this period" /></div>
 
               <div className="flex flex-col gap-2">
                 <div className="flex items-center justify-between"><Label>Next actions</Label><Button type="button" size="sm" variant="outline" onClick={addAction}><PlusIcon className="size-3.5" /> Add</Button></div>
@@ -251,6 +267,7 @@ export function StatusReportsClient({ projectId, engagementId, reports }: { proj
               </div>
 
               <div className="flex flex-col gap-1.5"><Label>Corrective actions</Label><Textarea value={draft.correctiveActions} onChange={(e) => setDraft({ ...draft, correctiveActions: e.target.value })} rows={2} maxLength={4000} placeholder="Nothing to report" /></div>
+              <div className="flex flex-col gap-1.5"><Label>Decisions needed from the customer (optional)</Label><Textarea value={draft.decisionsNeeded} onChange={(e) => setDraft({ ...draft, decisionsNeeded: e.target.value })} rows={2} maxLength={4000} placeholder="What you need them to decide, and by when" /></div>
               <div className="flex flex-col gap-1.5"><Label>Plan / milestone notes (optional)</Label><Textarea value={draft.milestoneNotes} onChange={(e) => setDraft({ ...draft, milestoneNotes: e.target.value })} rows={2} maxLength={4000} /></div>
             </div>
             <DialogFooter><Button size="sm" onClick={save} disabled={pending}>{pending ? "Saving…" : draft.id ? "Save" : "Create"}</Button></DialogFooter>

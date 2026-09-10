@@ -98,6 +98,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   };
 
   section("Current status", report.summary);
+  section("Accomplishments", report.accomplishments);
 
   // Next actions table
   if (report.actions.length > 0) {
@@ -126,6 +127,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   }
 
   section("Corrective actions", report.correctiveActions);
+  section("Decisions needed", report.decisionsNeeded);
   section("Plan / milestones", report.milestoneNotes);
 
   const raid = p.raidItems;
