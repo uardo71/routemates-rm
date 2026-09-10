@@ -1444,3 +1444,16 @@ inside the delivery cockpit was hidden behind a view toggle and unusable at 100+
   due". The cockpit's back link reads `?from=portfolio` (legacy `from=overview` still accepted).
 - Built in a separate chat/worktree, reviewed and merged here; the UI was not clicked through.
 
+### Follow-up — legacy local-midnight dates repaired; audit values expandable
+Migration `20260911120000_normalize_date_only_columns_utc` (applied to erp_dev; prod via the pipeline).
+- **Root cause of the "dates changed by themselves" audit rows**: date-only columns written while
+  the app ran on the UTC+2 office PC were stored at LOCAL midnight (22:00 UTC of the previous day),
+  read back one day early, and re-saved as UTC midnight — so an unrelated edit logged
+  `issue date 2026-08-09 → 2026-08-09`. The migration shifts every date-only column whose value is
+  exactly 22:00:00 or 23:00:00 to UTC midnight of the intended day (56 columns; `AssignmentPlan` and
+  `TimeEntry` guard their unique keys with NOT EXISTS). Real timestamps are untouched.
+  `invoices/actions.ts#parseDate` now parses `YYYY-MM-DD` at UTC midnight, so it cannot recur.
+  Production runs in UTC, so new writes there were already correct.
+- **Audit UI**: long text values (notes, descriptions) show a 40-char preview with "show full" that
+  expands to the complete before/after in place — History card and `/admin/audit` share `FieldLine`.
+

@@ -2,7 +2,7 @@ import { HistoryIcon, LockIcon } from "lucide-react";
 import { format } from "date-fns";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { fieldLabel, formatAuditValue } from "@/lib/audit-diff";
+import { fieldLabel, formatAuditValue, isTruncatedValue } from "@/lib/audit-diff";
 import type { AuditEntry } from "@/lib/audit";
 
 // The "History" card on a record's detail page: who changed what, when, and from what. Entries
@@ -85,22 +85,38 @@ function HistoryRow({ entry }: { entry: AuditEntry }) {
   );
 }
 
-function FieldLine({ name, from, to, action }: { name: string; from: AuditEntry["fields"][string]["from"]; to: AuditEntry["fields"][string]["to"]; action: string }) {
+/** One changed field. Long text is previewed and expands in place (click) to the full before/after. */
+export function FieldLine({ name, from, to, action }: { name: string; from: AuditEntry["fields"][string]["from"]; to: AuditEntry["fields"][string]["to"]; action: string }) {
+  const long = isTruncatedValue(from) || isTruncatedValue(to);
+  const preview =
+    action === "create" ? (
+      formatAuditValue(to)
+    ) : action === "delete" ? (
+      <span className="line-through opacity-70">{formatAuditValue(from)}</span>
+    ) : (
+      <>
+        <span className="text-muted-foreground line-through">{formatAuditValue(from)}</span>
+        <span className="mx-1.5 text-muted-foreground">→</span>
+        <span>{formatAuditValue(to)}</span>
+      </>
+    );
   return (
     <>
       <dt className="text-muted-foreground">{fieldLabel(name)}</dt>
-      <dd className="font-mono tabular-nums">
-        {action === "create" ? (
-          formatAuditValue(to)
-        ) : action === "delete" ? (
-          <span className="line-through opacity-70">{formatAuditValue(from)}</span>
-        ) : (
-          <>
-            <span className="text-muted-foreground line-through">{formatAuditValue(from)}</span>
-            <span className="mx-1.5 text-muted-foreground">→</span>
-            <span>{formatAuditValue(to)}</span>
-          </>
-        )}
+      <dd className="min-w-0 font-mono tabular-nums">
+        {long ? (
+          <details className="group">
+            <summary className="cursor-pointer list-none [&::-webkit-details-marker]:hidden" title="Click to show the full text">
+              {preview}
+              <span className="ml-1.5 font-sans text-[11px] text-primary group-open:hidden">show full</span>
+              <span className="ml-1.5 hidden font-sans text-[11px] text-primary group-open:inline">hide</span>
+            </summary>
+            <div className="mt-1 grid gap-1 rounded-md border bg-muted/40 p-2 font-sans text-xs whitespace-pre-wrap break-words">
+              {action !== "create" && <div><span className="font-medium text-muted-foreground">Before: </span>{formatAuditValue(from, Infinity)}</div>}
+              {action !== "delete" && <div><span className="font-medium text-muted-foreground">After: </span>{formatAuditValue(to, Infinity)}</div>}
+            </div>
+          </details>
+        ) : preview}
       </dd>
     </>
   );

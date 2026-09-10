@@ -86,12 +86,18 @@ export function redactDiff(diff: AuditDiff): AuditDiff {
 }
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
-export function formatAuditValue(v: Scalar): string {
+export const AUDIT_VALUE_PREVIEW = 40;
+/** Human form of a value; long text is cut at `max` chars (pass Infinity for the full text). */
+export function formatAuditValue(v: Scalar, max = AUDIT_VALUE_PREVIEW): string {
   if (v === null) return "—";
   if (typeof v === "boolean") return v ? "yes" : "no";
   if (typeof v === "number") return Number.isInteger(v) ? String(v) : String(Math.round(v * 10000) / 10000);
   if (ISO_DATE_RE.test(v)) return v.slice(0, 10);
-  return v.length > 40 ? `${v.slice(0, 37)}…` : v;
+  return v.length > max ? `${v.slice(0, max - 3)}…` : v;
+}
+/** True when the preview would hide part of the value — the UI offers "show full" then. */
+export function isTruncatedValue(v: Scalar, max = AUDIT_VALUE_PREVIEW): boolean {
+  return typeof v === "string" && !ISO_DATE_RE.test(v) && v.length > max;
 }
 
 /** camelCase → words: "recognitionDate" → "recognition date". */

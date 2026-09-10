@@ -4,11 +4,11 @@ import { DownloadIcon, HistoryIcon, LockIcon, SearchIcon } from "lucide-react";
 import { requirePermission } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
 import { AUDIT_ENTITY_TYPES, loadAuditLog, parseAuditFilter } from "@/lib/audit";
-import { fieldLabel, formatAuditValue } from "@/lib/audit-diff";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { FieldLine } from "@/components/audit-history-card";
 
 // /admin/audit — the company-wide change log. Gated on audit:view (Admin). Filters are plain GET
 // params so a filtered view is a shareable URL and the XLSX export takes the same query string.
@@ -146,7 +146,7 @@ export default async function AuditLogPage({ searchParams }: { searchParams: Pro
                       ) : (
                         <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5">
                           {fields.map(([name, c]) => (
-                            <FieldCells key={name} name={name} from={c.from} to={c.to} action={e.action} />
+                            <FieldLine key={name} name={name} from={c.from} to={c.to} action={e.action} />
                           ))}
                         </dl>
                       )}
@@ -163,18 +163,5 @@ export default async function AuditLogPage({ searchParams }: { searchParams: Pro
         </CardContent>
       </Card>
     </div>
-  );
-}
-
-function FieldCells({ name, from, to, action }: { name: string; from: string | number | boolean | null; to: string | number | boolean | null; action: string }) {
-  return (
-    <>
-      <dt className="text-muted-foreground">{fieldLabel(name)}</dt>
-      <dd className="font-mono tabular-nums">
-        {action === "create" ? formatAuditValue(to)
-          : action === "delete" ? <span className="line-through opacity-70">{formatAuditValue(from)}</span>
-          : <><span className="text-muted-foreground line-through">{formatAuditValue(from)}</span><span className="mx-1.5 text-muted-foreground">→</span>{formatAuditValue(to)}</>}
-      </dd>
-    </>
   );
 }
