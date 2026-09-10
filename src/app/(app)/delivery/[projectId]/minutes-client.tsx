@@ -11,9 +11,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import { OwnerCombobox, type OwnerPerson } from "@/components/owner-combobox";
 import { createMeetingAction, updateMeetingAction, deleteMeetingAction } from "../actions";
 
-export type MinutesAction = { description: string; owner: string | null; dueDate: string | null; done: boolean };
+export type MinutesAction = { description: string; owner: string | null; ownerUserId: string | null; dueDate: string | null; done: boolean };
 export type MinutesParticipant = { name: string; company: string | null; role: string | null; group: string | null };
 export type MinutesRow = {
   id: string;
@@ -34,7 +35,7 @@ const todayIso = () => new Date().toISOString().slice(0, 10);
 const fmtD = (s: string) => { const [y, m, d] = s.split("-"); return `${d}/${m}/${y}`; };
 
 type DraftP = { name: string; company: string; role: string; group: string };
-type DraftA = { description: string; owner: string; dueDate: string; done: boolean };
+type DraftA = { description: string; owner: string; ownerUserId: string | null; dueDate: string; done: boolean };
 type Draft = {
   id?: string; date: string; title: string;
   timeFrom: string; timeTo: string; location: string; minuteTaker: string;
@@ -47,7 +48,7 @@ const emptyDraft = (): Draft => ({
   participants: [{ name: "", company: "", role: "", group: "" }], actions: [],
 });
 
-export function MinutesClient({ projectId, engagementId, items }: { projectId: string; engagementId: string | null; items: MinutesRow[] }) {
+export function MinutesClient({ projectId, engagementId, items, people }: { projectId: string; engagementId: string | null; items: MinutesRow[]; people: OwnerPerson[] }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -60,7 +61,7 @@ export function MinutesClient({ projectId, engagementId, items }: { projectId: s
     if (!draft) return;
     if (!draft.title.trim()) return toast.error("Enter a meeting title.");
     const participants = draft.participants.filter((p) => p.name.trim()).map((p) => ({ name: p.name.trim(), company: p.company || null, role: p.role || null, group: p.group || null }));
-    const actions = draft.actions.filter((a) => a.description.trim()).map((a) => ({ description: a.description.trim(), owner: a.owner || null, dueDate: a.dueDate || null, done: a.done }));
+    const actions = draft.actions.filter((a) => a.description.trim()).map((a) => ({ description: a.description.trim(), owner: a.owner || null, ownerUserId: a.ownerUserId, dueDate: a.dueDate || null, done: a.done }));
     const payload = {
       projectId, engagementId, date: draft.date, title: draft.title.trim(),
       attendees: participants.map((p) => p.name).join(", ") || null, notes: draft.notes || null,
@@ -79,7 +80,7 @@ export function MinutesClient({ projectId, engagementId, items }: { projectId: s
       id: m.id, date: m.date, title: m.title, timeFrom: m.timeFrom ?? "", timeTo: m.timeTo ?? "", location: m.location ?? "", minuteTaker: m.minuteTaker ?? "",
       agendaTopic: m.agendaTopic ?? "", agendaWho: m.agendaWho ?? "", agendaDuration: m.agendaDuration ?? "", notes: m.notes ?? "",
       participants: m.participants.length ? m.participants.map((p) => ({ name: p.name, company: p.company ?? "", role: p.role ?? "", group: p.group ?? "" })) : [{ name: "", company: "", role: "", group: "" }],
-      actions: m.actions.map((a) => ({ description: a.description, owner: a.owner ?? "", dueDate: a.dueDate ?? "", done: a.done })),
+      actions: m.actions.map((a) => ({ description: a.description, owner: a.owner ?? "", ownerUserId: a.ownerUserId, dueDate: a.dueDate ?? "", done: a.done })),
     });
   }
   function remove(id: string) {
@@ -91,7 +92,7 @@ export function MinutesClient({ projectId, engagementId, items }: { projectId: s
   const addP = () => setDraft((d) => (d ? { ...d, participants: [...d.participants, { name: "", company: "", role: "", group: "" }] } : d));
   const rmP = (i: number) => setDraft((d) => (d ? { ...d, participants: d.participants.filter((_, idx) => idx !== i) } : d));
   const setA = (i: number, patch: Partial<DraftA>) => setDraft((d) => (d ? { ...d, actions: d.actions.map((a, idx) => (idx === i ? { ...a, ...patch } : a)) } : d));
-  const addA = () => setDraft((d) => (d ? { ...d, actions: [...d.actions, { description: "", owner: "", dueDate: "", done: false }] } : d));
+  const addA = () => setDraft((d) => (d ? { ...d, actions: [...d.actions, { description: "", owner: "", ownerUserId: null, dueDate: "", done: false }] } : d));
   const rmA = (i: number) => setDraft((d) => (d ? { ...d, actions: d.actions.filter((_, idx) => idx !== i) } : d));
 
   return (
@@ -262,7 +263,7 @@ export function MinutesClient({ projectId, engagementId, items }: { projectId: s
                 {draft.actions.map((a, i) => (
                   <div key={i} className="grid grid-cols-[1fr_130px_130px_auto_auto] gap-2 items-center">
                     <Input className="h-8" placeholder="To discuss / do" value={a.description} onChange={(e) => setA(i, { description: e.target.value })} />
-                    <Input className="h-8" placeholder="Who" value={a.owner} onChange={(e) => setA(i, { owner: e.target.value })} />
+                    <OwnerCombobox value={{ owner: a.owner, ownerUserId: a.ownerUserId }} people={people} onChange={(v) => setA(i, v)} placeholder="Who" inputClassName="h-8" />
                     <Input className="h-8" type="date" value={a.dueDate} onChange={(e) => setA(i, { dueDate: e.target.value })} />
                     <label className="flex items-center gap-1 text-xs whitespace-nowrap"><input type="checkbox" className="size-3.5" checked={a.done} onChange={(e) => setA(i, { done: e.target.checked })} /> Done</label>
                     <Button type="button" size="sm" variant="ghost" onClick={() => rmA(i)}><XIcon className="size-3.5" /></Button>

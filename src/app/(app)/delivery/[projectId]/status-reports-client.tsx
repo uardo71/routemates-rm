@@ -13,11 +13,12 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { OwnerCombobox, type OwnerPerson } from "@/components/owner-combobox";
 import { SEVERITY_LABEL, RAG_PILL, RAG_DOT, CADENCE_LABEL, RAG_DIMENSIONS, RAG_DIMENSION_LABEL, RAG_LABEL } from "@/lib/delivery";
 import type { RagStatus } from "@prisma/client";
 import { createStatusReportAction, updateStatusReportAction, deleteStatusReportAction, markStatusReportSentAction } from "../actions";
 
-export type ReportAction = { description: string; owner: string | null; dueDate: string | null; critical: boolean };
+export type ReportAction = { description: string; owner: string | null; ownerUserId: string | null; dueDate: string | null; critical: boolean };
 export type ReportRow = {
   id: string;
   reportDate: string;
@@ -59,7 +60,7 @@ function DeckRing({ pct, rag }: { pct: number; rag: RagStatus }) {
   );
 }
 
-type DraftAction = { description: string; owner: string; dueDate: string; critical: boolean };
+type DraftAction = { description: string; owner: string; ownerUserId: string | null; dueDate: string; critical: boolean };
 type Draft = {
   id?: string;
   reportDate: string; cadence: string; periodStart: string; periodEnd: string;
@@ -73,10 +74,10 @@ const emptyDraft = (): Draft => ({
   reportDate: todayIso(), cadence: "WEEKLY", periodStart: "", periodEnd: "",
   overallRag: "GREEN", progressPercent: "", scheduleRag: "", budgetRag: "", scopeRag: "",
   summary: "", accomplishments: "", correctiveActions: "", decisionsNeeded: "", milestoneNotes: "",
-  actions: [{ description: "", owner: "", dueDate: "", critical: false }],
+  actions: [{ description: "", owner: "", ownerUserId: null, dueDate: "", critical: false }],
 });
 
-export function StatusReportsClient({ projectId, engagementId, reports }: { projectId: string; engagementId: string | null; reports: ReportRow[] }) {
+export function StatusReportsClient({ projectId, engagementId, reports, people }: { projectId: string; engagementId: string | null; reports: ReportRow[]; people: OwnerPerson[] }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -87,7 +88,7 @@ export function StatusReportsClient({ projectId, engagementId, reports }: { proj
 
   function save() {
     if (!draft) return;
-    const actions = draft.actions.filter((a) => a.description.trim()).map((a) => ({ description: a.description.trim(), owner: a.owner || null, dueDate: a.dueDate || null, critical: a.critical }));
+    const actions = draft.actions.filter((a) => a.description.trim()).map((a) => ({ description: a.description.trim(), owner: a.owner || null, ownerUserId: a.ownerUserId, dueDate: a.dueDate || null, critical: a.critical }));
     const payload = {
       projectId, engagementId, reportDate: draft.reportDate, cadence: draft.cadence as "WEEKLY" | "MONTHLY" | "ADHOC",
       periodStart: draft.periodStart || null, periodEnd: draft.periodEnd || null,
@@ -111,7 +112,7 @@ export function StatusReportsClient({ projectId, engagementId, reports }: { proj
       // A dimension equal to the overall is shown as "follows overall" so it keeps following on edit.
       scheduleRag: r.scheduleRag === r.overallRag ? "" : r.scheduleRag, budgetRag: r.budgetRag === r.overallRag ? "" : r.budgetRag, scopeRag: r.scopeRag === r.overallRag ? "" : r.scopeRag,
       summary: r.summary ?? "", accomplishments: r.accomplishments ?? "", correctiveActions: r.correctiveActions ?? "", decisionsNeeded: r.decisionsNeeded ?? "", milestoneNotes: r.milestoneNotes ?? "",
-      actions: r.actions.length ? r.actions.map((a) => ({ description: a.description, owner: a.owner ?? "", dueDate: a.dueDate ?? "", critical: a.critical })) : [{ description: "", owner: "", dueDate: "", critical: false }],
+      actions: r.actions.length ? r.actions.map((a) => ({ description: a.description, owner: a.owner ?? "", ownerUserId: a.ownerUserId, dueDate: a.dueDate ?? "", critical: a.critical })) : [{ description: "", owner: "", ownerUserId: null, dueDate: "", critical: false }],
     });
   }
   function markSent(id: string) {
@@ -123,7 +124,7 @@ export function StatusReportsClient({ projectId, engagementId, reports }: { proj
   }
 
   const setAction = (i: number, patch: Partial<DraftAction>) => setDraft((d) => (d ? { ...d, actions: d.actions.map((a, idx) => (idx === i ? { ...a, ...patch } : a)) } : d));
-  const addAction = () => setDraft((d) => (d ? { ...d, actions: [...d.actions, { description: "", owner: "", dueDate: "", critical: false }] } : d));
+  const addAction = () => setDraft((d) => (d ? { ...d, actions: [...d.actions, { description: "", owner: "", ownerUserId: null, dueDate: "", critical: false }] } : d));
   const removeAction = (i: number) => setDraft((d) => (d ? { ...d, actions: d.actions.filter((_, idx) => idx !== i) } : d));
 
   return (
@@ -290,7 +291,7 @@ export function StatusReportsClient({ projectId, engagementId, reports }: { proj
                 {draft.actions.map((a, i) => (
                   <div key={i} className="grid grid-cols-[1fr_120px_130px_auto_auto] gap-2 items-center">
                     <Input placeholder="Action" value={a.description} onChange={(e) => setAction(i, { description: e.target.value })} />
-                    <Input placeholder="Owner" value={a.owner} onChange={(e) => setAction(i, { owner: e.target.value })} />
+                    <OwnerCombobox value={{ owner: a.owner, ownerUserId: a.ownerUserId }} people={people} onChange={(v) => setAction(i, v)} placeholder="Owner" />
                     <Input type="date" value={a.dueDate} onChange={(e) => setAction(i, { dueDate: e.target.value })} />
                     <label className="flex items-center gap-1 text-xs whitespace-nowrap"><input type="checkbox" className="size-3.5" checked={a.critical} onChange={(e) => setAction(i, { critical: e.target.checked })} /> Critical</label>
                     <Button type="button" size="sm" variant="ghost" onClick={() => removeAction(i)}><XIcon className="size-3.5" /></Button>

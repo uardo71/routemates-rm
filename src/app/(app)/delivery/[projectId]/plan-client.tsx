@@ -11,12 +11,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { OwnerCombobox, resolveOwner, type OwnerPerson } from "@/components/owner-combobox";
 import { phaseProgress } from "@/lib/delivery";
 import type { PlanTaskStatus } from "@prisma/client";
 import { createPlanTaskAction, updatePlanTaskAction, deletePlanTaskAction, seedDefaultPlanAction, movePlanTaskAction, clearPlanAction } from "../actions";
 
 export type PlanRow = {
-  id: string; phase: string | null; name: string; owner: string | null;
+  id: string; phase: string | null; name: string; owner: string | null; ownerUserId: string | null;
   startDate: string | null; dueDate: string | null; progress: number;
   status: PlanTaskStatus; isMilestone: boolean;
 };
@@ -38,12 +39,12 @@ const derive = (pr: number, cur: PlanTaskStatus): PlanTaskStatus =>
 const ROW_H = 40;
 const HEAD_H = 42;
 
-type Draft = { id?: string; phase: string; name: string; owner: string; startDate: string; dueDate: string; progress: string; status: PlanTaskStatus; isMilestone: boolean };
-const emptyDraft = (phase = ""): Draft => ({ phase, name: "", owner: "", startDate: "", dueDate: "", progress: "0", status: "NOT_STARTED", isMilestone: false });
+type Draft = { id?: string; phase: string; name: string; owner: string; ownerUserId: string | null; startDate: string; dueDate: string; progress: string; status: PlanTaskStatus; isMilestone: boolean };
+const emptyDraft = (phase = ""): Draft => ({ phase, name: "", owner: "", ownerUserId: null, startDate: "", dueDate: "", progress: "0", status: "NOT_STARTED", isMilestone: false });
 
 const CELL = "h-7 rounded border border-transparent bg-transparent px-1.5 text-sm outline-none hover:border-input focus:border-primary focus:bg-background";
 
-export function PlanClient({ projectId, engagementId, tasks }: { projectId: string; engagementId: string | null; tasks: PlanRow[] }) {
+export function PlanClient({ projectId, engagementId, tasks, people }: { projectId: string; engagementId: string | null; tasks: PlanRow[]; people: OwnerPerson[] }) {
   const router = useRouter();
   const [list, setList] = useState<PlanRow[]>(tasks);
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -71,7 +72,7 @@ export function PlanClient({ projectId, engagementId, tasks }: { projectId: stri
     setList((l) => l.map((x) => (x.id === t.id ? { ...x, ...p } : x)));
     const merged = { ...t, ...p };
     updatePlanTaskAction({
-      id: t.id, projectId, engagementId, phase: merged.phase, name: merged.name, owner: merged.owner,
+      id: t.id, projectId, engagementId, phase: merged.phase, name: merged.name, owner: merged.owner, ownerUserId: merged.ownerUserId,
       startDate: merged.startDate, dueDate: merged.dueDate, progress: merged.progress, status: merged.status, isMilestone: merged.isMilestone,
     }).then((r) => { if (r.error) { toast.error(r.error); router.refresh(); } });
   }
@@ -83,7 +84,7 @@ export function PlanClient({ projectId, engagementId, tasks }: { projectId: stri
     if (!draft) return;
     if (!draft.name.trim()) return toast.error("Enter a task name.");
     const payload = {
-      projectId, engagementId, phase: draft.phase || null, name: draft.name.trim(), owner: draft.owner || null,
+      projectId, engagementId, phase: draft.phase || null, name: draft.name.trim(), owner: draft.owner || null, ownerUserId: draft.ownerUserId,
       startDate: draft.startDate || null, dueDate: draft.dueDate || null,
       progress: draft.progress === "" ? 0 : Number(draft.progress), status: draft.status, isMilestone: draft.isMilestone,
     };
@@ -144,6 +145,7 @@ export function PlanClient({ projectId, engagementId, tasks }: { projectId: stri
 
   return (
     <div className="flex flex-col gap-4">
+      <datalist id="plan-owner-people">{people.map((p) => <option key={p.id} value={p.name} />)}</datalist>
       <Card className="overflow-hidden p-0 gap-0">
         <CardHeader className="flex flex-row items-center justify-between border-b p-4">
           <div>
@@ -183,8 +185,8 @@ export function PlanClient({ projectId, engagementId, tasks }: { projectId: stri
                   <div className="px-1 text-right text-xs tabular-nums text-muted-foreground">{r.progress}%</div><div />
                 </div>
               ) : (
-                <TaskLeftRow key={r.t.id} wbs={r.wbs} t={r.t} busy={busy} grid={grid} onPatch={patch}
-                  onEdit={() => setDraft({ id: r.t.id, phase: r.t.phase ?? "", name: r.t.name, owner: r.t.owner ?? "", startDate: r.t.startDate ?? "", dueDate: r.t.dueDate ?? "", progress: String(r.t.progress), status: r.t.status, isMilestone: r.t.isMilestone })}
+                <TaskLeftRow key={r.t.id} wbs={r.wbs} t={r.t} busy={busy} grid={grid} onPatch={patch} people={people}
+                  onEdit={() => setDraft({ id: r.t.id, phase: r.t.phase ?? "", name: r.t.name, owner: r.t.owner ?? "", ownerUserId: r.t.ownerUserId, startDate: r.t.startDate ?? "", dueDate: r.t.dueDate ?? "", progress: String(r.t.progress), status: r.t.status, isMilestone: r.t.isMilestone })}
                   onMove={(dir) => structural(() => movePlanTaskAction(r.t.id, dir))}
                   onDelete={() => { if (confirm(`Delete "${r.t.name}"?`)) structural(() => deletePlanTaskAction(r.t.id), "Deleted."); }} />
               ))}
@@ -230,7 +232,7 @@ export function PlanClient({ projectId, engagementId, tasks }: { projectId: stri
               </div>
               <div className="flex flex-col gap-1.5"><Label>Task name</Label><Input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} maxLength={300} /></div>
               <div className="grid grid-cols-3 gap-3">
-                <div className="flex flex-col gap-1.5"><Label>Owner</Label><Input value={draft.owner} onChange={(e) => setDraft({ ...draft, owner: e.target.value })} placeholder="Who's working on it" maxLength={200} /></div>
+                <div className="flex flex-col gap-1.5"><Label>Owner</Label><OwnerCombobox value={{ owner: draft.owner, ownerUserId: draft.ownerUserId }} people={people} onChange={(v) => setDraft({ ...draft, ...v })} placeholder="Who's working on it" /></div>
                 <div className="flex flex-col gap-1.5"><Label>Start</Label><Input type="date" value={draft.startDate} onChange={(e) => setDraft({ ...draft, startDate: e.target.value })} /></div>
                 <div className="flex flex-col gap-1.5"><Label>{draft.isMilestone ? "Date" : "Due"}</Label><Input type="date" value={draft.dueDate} onChange={(e) => setDraft({ ...draft, dueDate: e.target.value })} /></div>
               </div>
@@ -265,8 +267,8 @@ function ColHead({ label, align, onResize }: { label: string; align?: "right"; o
   );
 }
 
-function TaskLeftRow({ wbs, t, busy, grid, onPatch, onEdit, onMove, onDelete }: {
-  wbs: string; t: PlanRow; busy: boolean; grid: string;
+function TaskLeftRow({ wbs, t, busy, grid, onPatch, onEdit, onMove, onDelete, people }: {
+  wbs: string; t: PlanRow; busy: boolean; grid: string; people: OwnerPerson[];
   onPatch: (t: PlanRow, p: Partial<PlanRow>) => void; onEdit: () => void; onMove: (dir: "up" | "down") => void; onDelete: () => void;
 }) {
   const eff = derive(t.progress, t.status);
@@ -278,7 +280,7 @@ function TaskLeftRow({ wbs, t, busy, grid, onPatch, onEdit, onMove, onDelete }: 
         {t.isMilestone && <DiamondIcon className="size-3 shrink-0 text-primary" />}
         <input defaultValue={t.name} key={`n${t.name}`} onBlur={(e) => { const v = e.target.value.trim(); if (v && v !== t.name) onPatch(t, { name: v }); }} className={cn(CELL, "min-w-0 flex-1")} />
       </div>
-      <input defaultValue={t.owner ?? ""} key={`o${t.owner}`} placeholder="—" onBlur={(e) => { const v = e.target.value.trim() || null; if (v !== t.owner) onPatch(t, { owner: v }); }} className={cn(CELL, "w-full text-xs")} />
+      <input defaultValue={t.owner ?? ""} key={`o${t.owner}`} placeholder="—" title={t.ownerUserId ? "Linked to a person" : "Free text — type a colleague's exact name to link them"} list="plan-owner-people" onBlur={(e) => { const r = resolveOwner(e.target.value, people); if ((r.owner || null) !== t.owner || r.ownerUserId !== t.ownerUserId) onPatch(t, { owner: r.owner || null, ownerUserId: r.ownerUserId }); }} className={cn(CELL, "w-full text-xs", t.ownerUserId && "text-emerald-700 dark:text-emerald-400")} />
       <input type="date" defaultValue={t.startDate ?? ""} key={`s${t.startDate}`} onChange={(e) => onPatch(t, { startDate: e.target.value || null })} className={cn(CELL, "w-full text-xs")} />
       <input type="date" defaultValue={t.dueDate ?? ""} key={`d${t.dueDate}`} onChange={(e) => onPatch(t, { dueDate: e.target.value || null })} className={cn(CELL, "w-full text-xs")} />
       {t.isMilestone

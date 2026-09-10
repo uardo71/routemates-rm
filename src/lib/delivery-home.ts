@@ -259,6 +259,7 @@ export async function loadDeliveryHome(user: { id: string; companyId: string; ro
     todo: dayItems.length,
     dueThisWeek: upcoming.length,
     openIssues: openIssuesTotal,
+    myActions: 0, // filled by the page from the actions register (cross-project, owner = me)
   };
 
   return { dayItems, stats, upcoming, workspaces };

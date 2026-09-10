@@ -31,7 +31,7 @@ export type DayItem = {
   href?: string; // overrides the default cockpit-tab link (e.g. the cutover plan route)
 };
 
-export type DayStats = { overdue: number; todo: number; dueThisWeek: number; openIssues: number };
+export type DayStats = { overdue: number; todo: number; dueThisWeek: number; openIssues: number; myActions: number };
 
 export type WorkspaceRow = {
   key: string;

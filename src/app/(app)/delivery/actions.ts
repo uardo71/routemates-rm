@@ -5,6 +5,16 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/session";
 import { canManageProject, STAFF_ONLY } from "@/lib/permissions";
+
+/** Owner ids the client sent, kept only when they are active staff of this company. A link to a
+ *  person is never trusted from the payload alone. */
+async function validOwners(companyId: string, ids: (string | null | undefined)[]): Promise<Set<string>> {
+  const wanted = [...new Set(ids.filter((x): x is string => !!x))];
+  if (wanted.length === 0) return new Set();
+  const rows = await prisma.user.findMany({ where: { id: { in: wanted }, companyId, active: true, ...STAFF_ONLY }, select: { id: true } });
+  return new Set(rows.map((r) => r.id));
+}
+const ownerLink = (id: string | null | undefined, valid: Set<string>) => (id && valid.has(id) ? id : null);
 import { MAX_RECEIPT_SIZE_BYTES, saveReceiptFile, deleteReceiptFile } from "@/lib/receipt-storage";
 import { dateFromFileName, titleFromFileName } from "@/lib/doc-naming";
 
@@ -164,6 +174,7 @@ const RAG = z.enum(["GREEN", "AMBER", "RED"]);
 const ActionSchema = z.object({
   description: z.string().trim().min(1).max(500),
   owner: z.string().max(200).optional().nullable(),
+  ownerUserId: z.string().optional().nullable(),
   dueDate: z.string().optional().nullable(),
   critical: z.boolean().optional(),
 });
@@ -207,11 +218,12 @@ function reportData(d: StatusReportInput) {
   };
 }
 
-function actionCreate(d: StatusReportInput) {
+function actionCreate(d: StatusReportInput, valid: Set<string>) {
   return (d.actions ?? []).map((a, i) => ({
-    description: a.description.trim(), owner: a.owner?.trim() || null, dueDate: toUtc(a.dueDate), critical: a.critical ?? false, sortOrder: i * 10,
+    description: a.description.trim(), owner: a.owner?.trim() || null, ownerUserId: ownerLink(a.ownerUserId, valid), dueDate: toUtc(a.dueDate), critical: a.critical ?? false, sortOrder: i * 10,
   }));
 }
+const actionOwnerIds = (d: StatusReportInput) => (d.actions ?? []).map((a) => a.ownerUserId);
 
 export async function createStatusReportAction(input: StatusReportInput): Promise<{ error?: string; id?: string }> {
   const parsed = ReportSchema.safeParse(input);
@@ -223,7 +235,7 @@ export async function createStatusReportAction(input: StatusReportInput): Promis
   const created = await prisma.statusReport.create({
     data: {
       companyId: ctx.companyId!, projectId: parsed.data.projectId, authorId: ctx.userId!, engagementId,
-      ...reportData(parsed.data), actions: { create: actionCreate(parsed.data) },
+      ...reportData(parsed.data), actions: { create: actionCreate(parsed.data, await validOwners(ctx.companyId!, actionOwnerIds(parsed.data))) },
     },
   });
   revalidatePath(`/delivery/${parsed.data.projectId}`);
@@ -242,7 +254,7 @@ export async function updateStatusReportAction(input: z.infer<typeof ReportUpdat
   const engagementId = await resolveEngagement(existing.projectId, parsed.data.engagementId);
   await prisma.$transaction([
     prisma.statusReportAction.deleteMany({ where: { reportId: parsed.data.id } }),
-    prisma.statusReport.update({ where: { id: parsed.data.id }, data: { ...reportData(parsed.data), engagementId, actions: { create: actionCreate(parsed.data) } } }),
+    prisma.statusReport.update({ where: { id: parsed.data.id }, data: { ...reportData(parsed.data), engagementId, actions: { create: actionCreate(parsed.data, await validOwners(ctx.companyId!, actionOwnerIds(parsed.data))) } } }),
   ]);
   revalidatePath(`/delivery/${existing.projectId}`);
   return {};
@@ -280,12 +292,13 @@ const RaidSchema = z.object({
   severity: z.enum(["LOW", "MEDIUM", "HIGH", "CRITICAL"]).optional().nullable(),
   status: z.enum(["OPEN", "IN_PROGRESS", "CLOSED"]),
   owner: z.string().max(200).optional().nullable(),
+  ownerUserId: z.string().optional().nullable(),
   dueDate: z.string().optional().nullable(),
   response: z.string().max(4000).optional().nullable(),
 });
 export type RaidInput = z.infer<typeof RaidSchema>;
 
-function raidData(d: RaidInput) {
+function raidData(d: RaidInput, valid: Set<string>) {
   return {
     type: d.type,
     title: d.title,
@@ -293,6 +306,7 @@ function raidData(d: RaidInput) {
     severity: d.severity ?? null,
     status: d.status,
     owner: d.owner?.trim() || null,
+    ownerUserId: ownerLink(d.ownerUserId, valid),
     dueDate: toUtc(d.dueDate),
     response: d.response?.trim() || null,
   };
@@ -304,7 +318,7 @@ export async function createRaidItemAction(input: RaidInput): Promise<{ error?: 
   const ctx = await assertManage(parsed.data.projectId);
   if (ctx.error) return { error: ctx.error };
   const engagementId = await resolveEngagement(parsed.data.projectId, parsed.data.engagementId);
-  await prisma.raidItem.create({ data: { companyId: ctx.companyId!, projectId: parsed.data.projectId, createdById: ctx.userId!, engagementId, ...raidData(parsed.data) } });
+  await prisma.raidItem.create({ data: { companyId: ctx.companyId!, projectId: parsed.data.projectId, createdById: ctx.userId!, engagementId, ...raidData(parsed.data, await validOwners(ctx.companyId!, [parsed.data.ownerUserId])) } });
   revalidatePath(`/delivery/${parsed.data.projectId}`);
   return {};
 }
@@ -318,7 +332,7 @@ export async function updateRaidItemAction(input: z.infer<typeof RaidUpdateSchem
   const ctx = await assertManage(existing.projectId);
   if (ctx.error) return { error: ctx.error };
   const engagementId = await resolveEngagement(existing.projectId, parsed.data.engagementId);
-  await prisma.raidItem.update({ where: { id: parsed.data.id }, data: { ...raidData(parsed.data), engagementId } });
+  await prisma.raidItem.update({ where: { id: parsed.data.id }, data: { ...raidData(parsed.data, await validOwners(ctx.companyId!, [parsed.data.ownerUserId])), engagementId } });
   revalidatePath(`/delivery/${existing.projectId}`);
   return {};
 }
@@ -338,6 +352,7 @@ export async function deleteRaidItemAction(id: string): Promise<{ error?: string
 const MinutesActionSchema = z.object({
   description: z.string().trim().min(1).max(500),
   owner: z.string().max(200).optional().nullable(),
+  ownerUserId: z.string().optional().nullable(),
   dueDate: z.string().optional().nullable(),
   done: z.boolean().optional(),
 });
@@ -375,9 +390,10 @@ function minutesData(d: MinutesInput) {
     agendaTopic: d.agendaTopic?.trim() || null, agendaWho: d.agendaWho?.trim() || null, agendaDuration: d.agendaDuration?.trim() || null,
   };
 }
-function minutesActionCreate(d: MinutesInput) {
-  return (d.actions ?? []).map((a, i) => ({ description: a.description.trim(), owner: a.owner?.trim() || null, dueDate: toUtc(a.dueDate), done: a.done ?? false, sortOrder: i * 10 }));
+function minutesActionCreate(d: MinutesInput, valid: Set<string>) {
+  return (d.actions ?? []).map((a, i) => ({ description: a.description.trim(), owner: a.owner?.trim() || null, ownerUserId: ownerLink(a.ownerUserId, valid), dueDate: toUtc(a.dueDate), done: a.done ?? false, doneAt: a.done ? new Date() : null, sortOrder: i * 10 }));
 }
+const minutesOwnerIds = (d: MinutesInput) => (d.actions ?? []).map((a) => a.ownerUserId);
 function participantsCreate(d: MinutesInput) {
   return (d.participants ?? []).filter((p) => p.name.trim()).map((p, i) => ({ name: p.name.trim(), company: p.company?.trim() || null, role: p.role?.trim() || null, group: p.group?.trim() || null, sortOrder: i * 10 }));
 }
@@ -389,7 +405,7 @@ export async function createMeetingAction(input: MinutesInput): Promise<{ error?
   if (ctx.error) return { error: ctx.error };
   const engagementId = await resolveEngagement(parsed.data.projectId, parsed.data.engagementId);
   const created = await prisma.meetingMinutes.create({
-    data: { companyId: ctx.companyId!, projectId: parsed.data.projectId, createdById: ctx.userId!, engagementId, ...minutesData(parsed.data), actions: { create: minutesActionCreate(parsed.data) }, participants: { create: participantsCreate(parsed.data) } },
+    data: { companyId: ctx.companyId!, projectId: parsed.data.projectId, createdById: ctx.userId!, engagementId, ...minutesData(parsed.data), actions: { create: minutesActionCreate(parsed.data, await validOwners(ctx.companyId!, minutesOwnerIds(parsed.data))) }, participants: { create: participantsCreate(parsed.data) } },
   });
   revalidatePath(`/delivery/${parsed.data.projectId}`);
   return { id: created.id };
@@ -407,7 +423,7 @@ export async function updateMeetingAction(input: z.infer<typeof MinutesUpdateSch
   await prisma.$transaction([
     prisma.meetingActionItem.deleteMany({ where: { minutesId: parsed.data.id } }),
     prisma.meetingParticipant.deleteMany({ where: { minutesId: parsed.data.id } }),
-    prisma.meetingMinutes.update({ where: { id: parsed.data.id }, data: { ...minutesData(parsed.data), engagementId: engId, actions: { create: minutesActionCreate(parsed.data) }, participants: { create: participantsCreate(parsed.data) } } }),
+    prisma.meetingMinutes.update({ where: { id: parsed.data.id }, data: { ...minutesData(parsed.data), engagementId: engId, actions: { create: minutesActionCreate(parsed.data, await validOwners(ctx.companyId!, minutesOwnerIds(parsed.data))) }, participants: { create: participantsCreate(parsed.data) } } }),
   ]);
   revalidatePath(`/delivery/${existing.projectId}`);
   return {};
@@ -507,6 +523,7 @@ const PlanSchema = z.object({
   phase: z.string().max(80).optional().nullable(),
   name: z.string().trim().min(1, "Name is required.").max(300),
   owner: z.string().max(200).optional().nullable(),
+  ownerUserId: z.string().optional().nullable(),
   startDate: z.string().optional().nullable(),
   dueDate: z.string().optional().nullable(),
   progress: z.coerce.number().int().min(0).max(100).optional().nullable(),
@@ -515,11 +532,12 @@ const PlanSchema = z.object({
 });
 export type PlanTaskInput = z.infer<typeof PlanSchema>;
 
-function planData(d: PlanTaskInput) {
+function planData(d: PlanTaskInput, valid: Set<string>) {
   return {
     phase: d.phase?.trim() || null,
     name: d.name.trim(),
     owner: d.owner?.trim() || null,
+    ownerUserId: ownerLink(d.ownerUserId, valid),
     startDate: toUtc(d.startDate),
     dueDate: toUtc(d.dueDate),
     progress: d.progress ?? 0,
@@ -535,7 +553,7 @@ export async function createPlanTaskAction(input: PlanTaskInput): Promise<{ erro
   if (ctx.error) return { error: ctx.error };
   const max = await prisma.planTask.aggregate({ where: { projectId: parsed.data.projectId }, _max: { sortOrder: true } });
   const engagementId = await resolveEngagement(parsed.data.projectId, parsed.data.engagementId);
-  await prisma.planTask.create({ data: { companyId: ctx.companyId!, projectId: parsed.data.projectId, engagementId, sortOrder: (max._max.sortOrder ?? 0) + 10, ...planData(parsed.data) } });
+  await prisma.planTask.create({ data: { companyId: ctx.companyId!, projectId: parsed.data.projectId, engagementId, sortOrder: (max._max.sortOrder ?? 0) + 10, ...planData(parsed.data, await validOwners(ctx.companyId!, [parsed.data.ownerUserId])) } });
   revalidatePath(`/delivery/${parsed.data.projectId}`);
   return {};
 }
@@ -548,7 +566,7 @@ export async function updatePlanTaskAction(input: z.infer<typeof PlanUpdateSchem
   if (!existing) return { error: "Task not found." };
   const ctx = await assertManage(existing.projectId);
   if (ctx.error) return { error: ctx.error };
-  await prisma.planTask.update({ where: { id: parsed.data.id }, data: { ...planData(parsed.data), engagementId: await resolveEngagement(existing.projectId, parsed.data.engagementId) } });
+  await prisma.planTask.update({ where: { id: parsed.data.id }, data: { ...planData(parsed.data, await validOwners(ctx.companyId!, [parsed.data.ownerUserId])), engagementId: await resolveEngagement(existing.projectId, parsed.data.engagementId) } });
   revalidatePath(`/delivery/${existing.projectId}`);
   return {};
 }

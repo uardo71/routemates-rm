@@ -36,6 +36,7 @@ import {
   UserSearchIcon,
   LayoutGridIcon,
   SparklesIcon,
+  ListChecksIcon,
 } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
@@ -71,6 +72,7 @@ const ICONS = {
   settings: SettingsIcon,
   audit: HistoryIcon,
   people: UserSearchIcon,
+  actions: ListChecksIcon,
   matrix: LayoutGridIcon,
   skills: SparklesIcon,
 } as const;

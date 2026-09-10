@@ -5,7 +5,7 @@ import Link from "next/link";
 import {
   TriangleAlertIcon, CalendarClockIcon, CheckCircle2Icon,
   FileTextIcon, CalendarIcon, AlertCircleIcon, ClipboardListIcon, MessageSquareIcon,
-  ArrowRightIcon, LightbulbIcon, CheckIcon, RocketIcon, ClipboardCheckIcon, LayoutListIcon,
+  ArrowRightIcon, LightbulbIcon, CheckIcon, RocketIcon, ClipboardCheckIcon, LayoutListIcon, ListChecksIcon,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { GuideHelp } from "@/components/guide-help";
@@ -109,6 +109,7 @@ export function DeliveryHomeClient({
           <span className="inline-flex items-center gap-1.5"><span className="size-2 rounded-full bg-rose-500" /> {stats.overdue} overdue</span>
           <span className="inline-flex items-center gap-1.5"><CalendarClockIcon className="size-3.5" /> {stats.dueThisWeek} due this week</span>
           <span className="inline-flex items-center gap-1.5"><TriangleAlertIcon className="size-3.5" /> {stats.openIssues} open issues</span>
+          <Link href="/actions?mine=1" className="inline-flex items-center gap-1.5 hover:text-foreground hover:underline"><ListChecksIcon className="size-3.5" /> {stats.myActions} my actions</Link>
         </div>
       </div>
 

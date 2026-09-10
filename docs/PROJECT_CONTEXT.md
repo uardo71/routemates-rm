@@ -1520,3 +1520,27 @@ Two migrations (`status_report_drop_next_steps`, `project_track_overall_status`)
    duration-weighted (`phaseProgress`, inclusive days, plain average when any task has no dates),
    shared by the plan grid and the deck; `paginate` helper. Both pure + tested in `src/lib/delivery.ts`.
 
+### A2 · Wave 2 — Actions register (2026-09-11)
+Migration `20260911170000_action_owner_user`. 197 tests green. Build green. Not clicked through (SSO).
+- **Owner link**: `ownerUserId` (+ `ownerUser` relation, SetNull) on `PlanTask`, `RaidItem`,
+  `StatusReportAction`, `MeetingActionItem`; free-text `owner` stays for client-side people. The
+  migration **backfills** by exact, case-insensitive, trimmed name match against ACTIVE users of the
+  same company, skipping ambiguous names; on erp_dev it linked 19 of 20 (one abbreviated "Sindi" left
+  as text). `scripts/report-action-owners.ts` prints linked vs text-only per source (needs the
+  server-only shim on NODE_PATH). `StatusReportAction.done/doneAt`, `MeetingActionItem.doneAt/createdAt`
+  added (createdAt backfilled from the minutes' date so age is honest).
+- **Editors**: `src/components/owner-combobox.tsx` — free text plus a list of active staff; picking
+  stores name + id; typing an exact name links too (`resolveOwner`). Used in the plan dialog (the
+  inline row keeps a datalist input that links on exact match), RAID dialog, status-report actions,
+  meeting actions. Server side, `validOwners()` only keeps ids that are active staff of the company.
+- **`/actions`** (Delivery menu, everyone): `src/lib/actions-register.ts` (pure: one row shape,
+  `enrichAll` with age/overdue, worst-first order, filters, sort, summary — tested) +
+  `actions-register-data.ts` (server: `actionScope` — delivery managers see the projects they manage,
+  admins all, everyone else only their own; `loadOpenActions`; `completeActionAtSource`: RAID →
+  CLOSED, meeting/status action → done+doneAt, plan task → 100%/COMPLETED; owner or project manager
+  only). Filters mine / unassigned / overdue / project / source / search, sortable columns, inline
+  done tick, XLSX at `/api/actions/export` with the same query string.
+- **Cockpit Overview** gets an "Actions" card (open actions in scope, worst-overdue first, top 6,
+  link to the register); **My Day** header shows "N my actions" (`DayStats.myActions`, counted
+  cross-project by `countMyOpenActions`).
+

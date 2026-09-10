@@ -224,6 +224,10 @@ model User {
   engagementMemberships EngagementMember[]
   skills             UserSkill[]
   certifications     Certification[]
+  planTasksOwned     PlanTask[]           @relation("PlanTaskOwner")
+  raidItemsOwned     RaidItem[]           @relation("RaidOwner")
+  statusActionsOwned StatusReportAction[] @relation("StatusActionOwner")
+  meetingActionsOwned MeetingActionItem[] @relation("MeetingActionOwner")
   clientTeamsCreated ClientTeamMember[] @relation("ClientTeamMemberCreatedBy")
 }
 
@@ -1341,12 +1345,17 @@ model StatusReportAction {
   report      StatusReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
   description String
   owner       String?
+  ownerUserId String?
+  ownerUser   User?        @relation("StatusActionOwner", fields: [ownerUserId], references: [id], onDelete: SetNull)
   dueDate     DateTime?
   critical    Boolean      @default(false)
+  done        Boolean      @default(false)
+  doneAt      DateTime?
   sortOrder   Int          @default(0)
   createdAt   DateTime     @default(now())
 
   @@index([reportId])
+  @@index([ownerUserId])
 }
 
 // A RAID entry (Risk / Assumption / Issue / Dependency / Decision) — the governance backbone that
@@ -1365,6 +1374,8 @@ model RaidItem {
   severity    RaidSeverity?
   status      RaidStatus    @default(OPEN)
   owner       String? // free-text owner (may be client-side)
+  ownerUserId String?
+  ownerUser   User?         @relation("RaidOwner", fields: [ownerUserId], references: [id], onDelete: SetNull)
   dueDate     DateTime?
   response    String? // mitigation / resolution / decision detail
   createdById String
@@ -1374,6 +1385,7 @@ model RaidItem {
 
   @@index([projectId])
   @@index([companyId])
+  @@index([ownerUserId])
 }
 
 // ---------- Meeting minutes ----------
@@ -1417,11 +1429,16 @@ model MeetingActionItem {
   minutes     MeetingMinutes @relation(fields: [minutesId], references: [id], onDelete: Cascade)
   description String
   owner       String?
+  ownerUserId String?
+  ownerUser   User?          @relation("MeetingActionOwner", fields: [ownerUserId], references: [id], onDelete: SetNull)
   dueDate     DateTime?
   done        Boolean        @default(false)
+  doneAt      DateTime?
+  createdAt   DateTime       @default(now())
   sortOrder   Int            @default(0)
 
   @@index([minutesId])
+  @@index([ownerUserId])
 }
 
 // A row in the TDM156 participants table: Name · Company · Role · Group.
@@ -1483,6 +1500,8 @@ model PlanTask {
   phase       String? // grouping, e.g. "Analysis & Design & Build", "Deployment & Transition"
   name        String
   owner       String? // who's working on it (may be internal, customer or partner side)
+  ownerUserId String? // set when the owner is one of our people (keeps `owner` for client-side names)
+  ownerUser   User?          @relation("PlanTaskOwner", fields: [ownerUserId], references: [id], onDelete: SetNull)
   startDate   DateTime?
   dueDate     DateTime?
   progress    Int            @default(0) // 0-100 % complete
@@ -1494,6 +1513,7 @@ model PlanTask {
 
   @@index([projectId])
   @@index([companyId])
+  @@index([ownerUserId])
 }
 
 // ---------- Cutover plan (go-live runbook) ----------

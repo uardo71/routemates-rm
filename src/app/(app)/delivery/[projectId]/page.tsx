@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { format, differenceInCalendarDays } from "date-fns";
-import { TriangleAlertIcon, CalendarIcon, MessageSquareIcon, DiamondIcon, RocketIcon, ClipboardCheckIcon, CheckCircle2Icon } from "lucide-react";
+import { TriangleAlertIcon, CalendarIcon, MessageSquareIcon, DiamondIcon, RocketIcon, ClipboardCheckIcon, CheckCircle2Icon, ListChecksIcon } from "lucide-react";
+import { enrichAll, ACTION_SOURCE_LABEL, type RegisterAction } from "@/lib/actions-register";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { InitialsAvatar } from "@/components/initials-avatar";
 import { LinkButton } from "@/components/link-button";
@@ -64,14 +65,14 @@ export default async function DeliveryProjectPage({ params, searchParams }: { pa
     id: r.id, reportDate: iso(r.reportDate)!, periodStart: iso(r.periodStart), periodEnd: iso(r.periodEnd),
     cadence: r.cadence, overallRag: r.overallRag, scheduleRag: r.scheduleRag, budgetRag: r.budgetRag, scopeRag: r.scopeRag, progressPercent: r.progressPercent,
     summary: r.summary, accomplishments: r.accomplishments, correctiveActions: r.correctiveActions, decisionsNeeded: r.decisionsNeeded, milestoneNotes: r.milestoneNotes,
-    actions: r.actions.map((a) => ({ description: a.description, owner: a.owner, dueDate: iso(a.dueDate), critical: a.critical })),
+    actions: r.actions.map((a) => ({ description: a.description, owner: a.owner, ownerUserId: a.ownerUserId, dueDate: iso(a.dueDate), critical: a.critical })),
     sentAt: iso(r.sentAt), authorName: r.author.name,
     documents: r.documents.map((d) => ({ id: d.id, fileName: d.fileName, originalName: d.originalName })),
   }));
 
   const raid: RaidRow[] = project.raidItems.filter(inEng).map((r) => ({
     id: r.id, type: r.type, title: r.title, description: r.description, severity: r.severity, status: r.status,
-    owner: r.owner, dueDate: iso(r.dueDate), response: r.response,
+    owner: r.owner, ownerUserId: r.ownerUserId, dueDate: iso(r.dueDate), response: r.response,
   }));
 
   const minutes: MinutesRow[] = project.meetings.filter(inEng).map((m) => ({
@@ -79,17 +80,40 @@ export default async function DeliveryProjectPage({ params, searchParams }: { pa
     timeFrom: m.timeFrom, timeTo: m.timeTo, location: m.location, minuteTaker: m.minuteTaker,
     agendaTopic: m.agendaTopic, agendaWho: m.agendaWho, agendaDuration: m.agendaDuration,
     participants: m.participants.map((p) => ({ name: p.name, company: p.company, role: p.role, group: p.group })),
-    actions: m.actions.map((a) => ({ description: a.description, owner: a.owner, dueDate: iso(a.dueDate), done: a.done })),
+    actions: m.actions.map((a) => ({ description: a.description, owner: a.owner, ownerUserId: a.ownerUserId, dueDate: iso(a.dueDate), done: a.done })),
     documents: m.documents.map((d) => ({ id: d.id, fileName: d.fileName, originalName: d.originalName })),
   }));
   const docs: LibraryDoc[] = project.documents.filter(inEng).map((d) => ({
     id: d.id, kind: d.kind, fileName: d.fileName, originalName: d.originalName, uploadedAt: iso(d.uploadedAt)!, uploadedByName: d.uploadedBy.name,
   }));
   const plan: PlanRow[] = project.planTasks.filter(inEng).map((t) => ({
-    id: t.id, phase: t.phase, name: t.name, owner: t.owner, startDate: iso(t.startDate), dueDate: iso(t.dueDate), progress: t.progress, status: t.status, isMilestone: t.isMilestone,
+    id: t.id, phase: t.phase, name: t.name, owner: t.owner, ownerUserId: t.ownerUserId, startDate: iso(t.startDate), dueDate: iso(t.dueDate), progress: t.progress, status: t.status, isMilestone: t.isMilestone,
   }));
 
   const openRaidList = raid.filter((r) => r.status !== "CLOSED");
+
+  // Every open action in scope, worst-overdue first — the Overview's "Actions" card.
+  const engNameOf = (id: string | null) => (id ? project.engagements.find((e) => e.id === id)?.name ?? null : null);
+  const scopeActions: RegisterAction[] = [
+    ...project.raidItems.filter(inEng).filter((r) => r.status !== "CLOSED").map((r) => ({
+      id: r.id, source: "RAID" as const, title: r.title, projectId: project.id, projectName: project.name, engagementId: r.engagementId, engagementName: engNameOf(r.engagementId),
+      owner: r.owner, ownerUserId: r.ownerUserId, dueDate: iso(r.dueDate), createdAt: r.createdAt.toISOString(), status: r.status === "IN_PROGRESS" ? "In progress" : "Open", critical: r.severity === "HIGH" || r.severity === "CRITICAL",
+    })),
+    ...project.meetings.filter(inEng).flatMap((m) => m.actions.filter((a) => !a.done).map((a) => ({
+      id: a.id, source: "MEETING" as const, title: a.description, projectId: project.id, projectName: project.name, engagementId: m.engagementId, engagementName: engNameOf(m.engagementId),
+      owner: a.owner, ownerUserId: a.ownerUserId, dueDate: iso(a.dueDate), createdAt: a.createdAt.toISOString(), status: m.title, critical: false,
+    }))),
+    ...project.statusReports.filter(inEng).flatMap((r) => r.actions.filter((a) => !a.done).map((a) => ({
+      id: a.id, source: "STATUS" as const, title: a.description, projectId: project.id, projectName: project.name, engagementId: r.engagementId, engagementName: engNameOf(r.engagementId),
+      owner: a.owner, ownerUserId: a.ownerUserId, dueDate: iso(a.dueDate), createdAt: a.createdAt.toISOString(), status: `Status ${iso(r.reportDate)}`, critical: a.critical,
+    }))),
+    ...project.planTasks.filter(inEng).filter((t) => !t.isMilestone && t.status !== "COMPLETED" && t.progress < 100).map((t) => ({
+      id: t.id, source: "PLAN" as const, title: t.name, projectId: project.id, projectName: project.name, engagementId: t.engagementId, engagementName: engNameOf(t.engagementId),
+      owner: t.owner, ownerUserId: t.ownerUserId, dueDate: iso(t.dueDate), createdAt: t.createdAt.toISOString(), status: t.status === "BLOCKED" ? "Blocked" : `${t.progress}%`, critical: t.status === "BLOCKED",
+    })),
+  ];
+  const openActions = enrichAll(scopeActions, new Date().toISOString().slice(0, 10));
+  const overdueActionsCount = openActions.filter((a) => a.isOverdue).length;
   const planDone = plan.filter((t) => t.status === "COMPLETED").length;
   const engName = project.engagements.find((e) => e.id === selectedEng)?.name ?? null;
 
@@ -208,6 +232,34 @@ export default async function DeliveryProjectPage({ params, searchParams }: { pa
         <LinkButton href={tHref("status")} size="sm">{latest ? "Build new update" : "Build first update"}</LinkButton>
       </div>
 
+      {/* open actions in scope, worst-overdue first */}
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between pb-2">
+          <CardTitle className="text-base flex items-center gap-2">
+            <ListChecksIcon className="size-4 text-muted-foreground" /> Actions
+            <span className="font-normal text-muted-foreground">({openActions.length} open{overdueActionsCount > 0 ? <span className="text-rose-600">, {overdueActionsCount} overdue</span> : null})</span>
+          </CardTitle>
+          <Link href={`/actions?project=${project.id}`} className="text-xs font-medium text-primary hover:underline">Register →</Link>
+        </CardHeader>
+        <CardContent className="pt-1">
+          {openActions.length === 0 ? (
+            <p className="py-2 text-sm text-muted-foreground">Nothing open — plan tasks, issues, status and meeting actions all clear.</p>
+          ) : (
+            <div className="flex flex-col">
+              {openActions.slice(0, 6).map((a) => (
+                <div key={`${a.source}:${a.id}`} className="flex items-center gap-2.5 border-b py-2 last:border-none">
+                  <span className="w-24 shrink-0 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{ACTION_SOURCE_LABEL[a.source].replace(" / RAID", "")}</span>
+                  <span className="min-w-0 flex-1 truncate text-sm">{a.title}</span>
+                  <span className="shrink-0 text-xs text-muted-foreground">{a.owner ?? <span className="text-amber-600">unassigned</span>}</span>
+                  <span className={cn("w-16 shrink-0 text-right font-mono text-xs", a.isOverdue ? "text-rose-600 dark:text-rose-400" : "text-muted-foreground")}>{a.dueDate ? format(new Date(a.dueDate), "MMM d") : "—"}</span>
+                </div>
+              ))}
+              {openActions.length > 6 && <p className="pt-2 text-xs text-muted-foreground">+ {openActions.length - 6} more in the register.</p>}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       {/* next up + recent meetings */}
       <div className="grid gap-4 lg:grid-cols-2">
         {/* next up */}
@@ -272,10 +324,10 @@ export default async function DeliveryProjectPage({ params, searchParams }: { pa
   // deep-link to it (tab: "raid"), so it must exist as a tab. The count is what is still open.
   const tabs: CockpitTab[] = [
     { value: "overview", label: "Overview", content: overview },
-    { value: "status", label: `Status updates (${reports.length})`, content: <StatusReportsClient projectId={project.id} engagementId={selectedEng} reports={reports} /> },
-    { value: "plan", label: `Plan (${plan.length})`, content: <PlanClient projectId={project.id} engagementId={selectedEng} tasks={plan} /> },
-    { value: "raid", label: `Issues (${openRaidList.length})`, content: <RaidClient projectId={project.id} engagementId={selectedEng} items={raid} /> },
-    { value: "minutes", label: `Minutes (${minutes.length})`, content: <MinutesClient projectId={project.id} engagementId={selectedEng} items={minutes} /> },
+    { value: "status", label: `Status updates (${reports.length})`, content: <StatusReportsClient projectId={project.id} engagementId={selectedEng} reports={reports} people={staff} /> },
+    { value: "plan", label: `Plan (${plan.length})`, content: <PlanClient projectId={project.id} engagementId={selectedEng} tasks={plan} people={staff} /> },
+    { value: "raid", label: `Issues (${openRaidList.length})`, content: <RaidClient projectId={project.id} engagementId={selectedEng} items={raid} people={staff} /> },
+    { value: "minutes", label: `Minutes (${minutes.length})`, content: <MinutesClient projectId={project.id} engagementId={selectedEng} items={minutes} people={staff} /> },
     { value: "documents", label: `Documents (${docs.length})`, content: <DocumentsLibraryClient projectId={project.id} engagementId={selectedEng} docs={docs} /> },
   ];
 

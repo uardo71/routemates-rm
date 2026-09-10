@@ -48,6 +48,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         ...(can(user, "projects:view")
           ? [{ href: "/projects", label: "Projects", icon: "projects" as const }]
           : []),
+        { href: "/actions", label: "Actions", icon: "actions" as const },
         { href: "/uat", label: "UAT scripts", icon: "uat" as const },
         { href: "/cutover", label: "Cutover plans", icon: "cutover" as const },
       ],

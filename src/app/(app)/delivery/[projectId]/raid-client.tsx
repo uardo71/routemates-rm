@@ -14,6 +14,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
+import { OwnerCombobox, type OwnerPerson } from "@/components/owner-combobox";
 import { RAID_TYPE_LABEL, RAID_STATUS_LABEL, RAID_SEVERITY_LABEL } from "@/lib/delivery";
 import type { RaidType, RaidStatus, RaidSeverity } from "@prisma/client";
 import { createRaidItemAction, updateRaidItemAction, deleteRaidItemAction } from "../actions";
@@ -26,6 +27,7 @@ export type RaidRow = {
   severity: RaidSeverity | null;
   status: RaidStatus;
   owner: string | null;
+  ownerUserId: string | null;
   dueDate: string | null;
   response: string | null;
 };
@@ -40,14 +42,14 @@ const SEV_CLASS: Record<RaidSeverity, string> = {
 
 type Draft = {
   id?: string;
-  type: RaidType; title: string; description: string; severity: "" | RaidSeverity; status: RaidStatus; owner: string; dueDate: string; response: string;
+  type: RaidType; title: string; description: string; severity: "" | RaidSeverity; status: RaidStatus; owner: string; ownerUserId: string | null; dueDate: string; response: string;
 };
 // New entries default to ISSUE — that is what a PM logs in the moment; the other RAID types stay a click away.
-const emptyDraft = (): Draft => ({ type: "ISSUE", title: "", description: "", severity: "", status: "OPEN", owner: "", dueDate: "", response: "" });
+const emptyDraft = (): Draft => ({ type: "ISSUE", title: "", description: "", severity: "", status: "OPEN", owner: "", ownerUserId: null, dueDate: "", response: "" });
 
 type StatusFilter = "OPEN_ONLY" | "ALL" | RaidStatus;
 
-export function RaidClient({ projectId, engagementId, items }: { projectId: string; engagementId: string | null; items: RaidRow[] }) {
+export function RaidClient({ projectId, engagementId, items, people }: { projectId: string; engagementId: string | null; items: RaidRow[]; people: OwnerPerson[] }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [typeFilter, setTypeFilter] = useState<"ALL" | RaidType>("ALL");
@@ -70,7 +72,7 @@ export function RaidClient({ projectId, engagementId, items }: { projectId: stri
     if (!draft.title.trim()) return toast.error("Enter a title.");
     const payload = {
       projectId, engagementId, type: draft.type, title: draft.title.trim(), description: draft.description || null,
-      severity: draft.severity || null, status: draft.status, owner: draft.owner || null, dueDate: draft.dueDate || null, response: draft.response || null,
+      severity: draft.severity || null, status: draft.status, owner: draft.owner || null, ownerUserId: draft.ownerUserId, dueDate: draft.dueDate || null, response: draft.response || null,
     };
     start(async () => {
       const r = draft.id ? await updateRaidItemAction({ id: draft.id, ...payload }) : await createRaidItemAction(payload);
@@ -87,7 +89,7 @@ export function RaidClient({ projectId, engagementId, items }: { projectId: stri
     });
   }
   function edit(i: RaidRow) {
-    setDraft({ id: i.id, type: i.type, title: i.title, description: i.description ?? "", severity: i.severity ?? "", status: i.status, owner: i.owner ?? "", dueDate: i.dueDate ?? "", response: i.response ?? "" });
+    setDraft({ id: i.id, type: i.type, title: i.title, description: i.description ?? "", severity: i.severity ?? "", status: i.status, owner: i.owner ?? "", ownerUserId: i.ownerUserId, dueDate: i.dueDate ?? "", response: i.response ?? "" });
   }
 
   return (
@@ -176,7 +178,7 @@ export function RaidClient({ projectId, engagementId, items }: { projectId: stri
                     <SelectContent><SelectItem value="NONE">—</SelectItem>{SEVERITIES.map((s) => <SelectItem key={s} value={s}>{RAID_SEVERITY_LABEL[s]}</SelectItem>)}</SelectContent>
                   </Select>
                 </div>
-                <div className="flex flex-col gap-1.5"><Label>Owner</Label><Input value={draft.owner} onChange={(e) => setDraft({ ...draft, owner: e.target.value })} maxLength={200} /></div>
+                <div className="flex flex-col gap-1.5"><Label>Owner</Label><OwnerCombobox value={{ owner: draft.owner, ownerUserId: draft.ownerUserId }} people={people} onChange={(v) => setDraft({ ...draft, ...v })} /></div>
                 <div className="flex flex-col gap-1.5"><Label>Due</Label><Input type="date" value={draft.dueDate} onChange={(e) => setDraft({ ...draft, dueDate: e.target.value })} /></div>
               </div>
               <div className="flex flex-col gap-1.5"><Label>Response / mitigation</Label><Textarea value={draft.response} onChange={(e) => setDraft({ ...draft, response: e.target.value })} rows={2} maxLength={4000} /></div>
