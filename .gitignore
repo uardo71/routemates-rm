@@ -16,6 +16,11 @@
 # next.js
 /.next/
 /out/
+# A scratch build directory (a build run with distDir pointed away from /.next). It must be ignored
+# as well as unused: Tailwind's source detection scans whatever .gitignore does NOT cover, so an
+# un-ignored build output gets read as source and its compiled chunks turn into garbage class
+# candidates — which lands raw control characters in the generated CSS and breaks the parser.
+/.next-verify/
 
 # production
 /build
