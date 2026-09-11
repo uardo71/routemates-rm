@@ -5,7 +5,7 @@ import { canManageClientTickets } from "@/lib/permissions";
 import { loadTicketConfig, fieldsForType } from "@/lib/ticket-config.server";
 import { buildThread, COMMENT_INCLUDE } from "@/lib/ticket-thread";
 import { asCrStage, isChangeRequestType, timeInStages, type CrStageKey } from "@/lib/change-request";
-import { crDraftFromRow } from "@/lib/change-request.server";
+import { crDraftFrom } from "@/lib/change-request.server";
 import { createDropNotices } from "@/lib/ticket";
 import { TicketDetailClient, type DetailConfig } from "./ticket-detail-client";
 import type { CrView } from "./change-request-panel";
@@ -100,7 +100,8 @@ export default async function TicketDetailPage({ params, searchParams }: {
     }
     cr = {
       stage: asCrStage(t.statusDef.key), statusName: t.statusDef.name,
-      saved: crDraftFromRow(t.changeRequest),
+      // The panel's values are the type's stage-scoped fields; the next step stays on the record row.
+      saved: crDraftFrom(t.changeRequest, type?.stageFields ?? [], valueByField),
       events, timeInStage: timeInStages(timeline, now.toISOString()), stageSince: timeline[timeline.length - 1].at,
       loggedMinutes: t.worklogs.reduce((s, w) => s + w.minutes, 0),
       evidence, todayIso: now.toISOString().slice(0, 10),

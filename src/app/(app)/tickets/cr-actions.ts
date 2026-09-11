@@ -10,7 +10,10 @@ import { isOpenCategory } from "@/lib/ticket-config";
 import {
   CR_STAGES, asCrStage, crRecordFromDraft, decideCrMove, isChangeRequestType, parseHours, type CrDraft,
 } from "@/lib/change-request";
-import { crDraftFromRow, evidenceByStage } from "@/lib/change-request.server";
+import { loadCrDraft, evidenceByStage } from "@/lib/change-request.server";
+import { crValuesFromDraft } from "@/lib/change-request-fields";
+import { loadTicketConfig, findType } from "@/lib/ticket-config.server";
+import { applyValuesForFields } from "@/lib/ticket-fields";
 import { extractFiles, validateFiles, saveTicketAttachments, cleanupSaved } from "@/lib/ticket-attachments";
 import { notifyTicketParticipants, notifyTicketUser, userName } from "@/lib/ticket-notify";
 
@@ -78,16 +81,21 @@ export async function saveChangeRequestAction(ticketId: string, draft: CrDraft):
     if (!owner) return { error: "Pick the next-step owner from the team." };
   }
   const s = (v: string) => v.trim() || null;
-  const data = {
-    assessment: s(d.assessment), estimateHours: hours, quoteReference: s(d.quoteReference),
-    approvedByName: s(d.approvedByName), approvedOn: utcDate(d.approvedOn), approvalReference: s(d.approvalReference),
-    plannedGoLive: utcDate(d.plannedGoLive), buildReference: s(d.buildReference),
-    unitTestNotes: s(d.unitTestNotes), unitTestedOn: utcDate(d.unitTestedOn),
-    uatSignedOffBy: s(d.uatSignedOffBy), uatSignedOffOn: utcDate(d.uatSignedOffOn), uatNotes: s(d.uatNotes),
-    goLiveOn: utcDate(d.goLiveOn),
-    nextStep: s(d.nextStep), nextStepOwnerId: ownerId, nextStepDue: utcDate(d.nextStepDue),
-  };
-  await prisma.changeRequest.upsert({ where: { ticketId }, create: { ticketId, ...data }, update: data });
+  // The record lives in stage-scoped custom fields now (see lib/change-request-fields.ts). Only the
+  // next step stays on the ChangeRequest row; the old columns are left as they are, unused.
+  const nextStepData = { nextStep: s(d.nextStep), nextStepOwnerId: ownerId, nextStepDue: utcDate(d.nextStepDue) };
+  const cfg = await loadTicketConfig(user.companyId);
+  const stageFields = findType(cfg, t.typeId)?.stageFields ?? [];
+  const fieldByKey = new Map(stageFields.map((f) => [f.key, f]));
+  const rawById: Record<string, unknown> = {};
+  for (const [fieldKey, value] of Object.entries(crValuesFromDraft(d, hours))) {
+    const f = fieldByKey.get(fieldKey);
+    if (f) rawById[f.id] = value;
+  }
+  await prisma.$transaction(async (tx) => {
+    await tx.changeRequest.upsert({ where: { ticketId }, create: { ticketId, ...nextStepData }, update: nextStepData });
+    await applyValuesForFields(tx, ticketId, stageFields, rawById);
+  });
 
   if (ownerId && ownerId !== user.id && ownerId !== (t.changeRequest?.nextStepOwnerId ?? null)) {
     await notifyTicketUser({ ticketId, companyId: user.companyId, userId: ownerId, actorId: user.id, actorName: await userName(user.id), kind: "ASSIGN", summary: "made you the owner of the next step" });
@@ -110,7 +118,7 @@ export async function moveChangeRequestAction(
   const to = asCrStage(input.to);
   if (!to) return { error: "Unknown stage." };
 
-  const record = crRecordFromDraft(crDraftFromRow(t.changeRequest), {
+  const record = crRecordFromDraft(await loadCrDraft(ticketId, user.companyId, t.typeId), {
     assigneeId: t.assigneeId, resolution: t.resolution, evidence: await evidenceByStage(ticketId),
   });
   const note = input.note?.trim() || null;

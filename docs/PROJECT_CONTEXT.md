@@ -1842,3 +1842,37 @@ before migrations, fix only the named items, every refusal names what and why). 
 6. **Internal tick refused → told**: `addCommentAction` returns `notice: INTERNAL_NOTE_REFUSED`; the
    composer toasts it (portal never offers the tick).
 Tests: `src/lib/__tests__/ticket-filters.test.ts`.
+
+### Support redesign — Phase 1: two lifecycle modes (STATUS and STAGE) (2026-09-12)
+Five migrations, each applied and committed on its own; the owner authorised them one at a time.
+- **A `20260911230000_ticket_lifecycle_modes`** (schema, additive): `TicketLifecycleMode` enum;
+  `TicketTypeDef.lifecycleMode` (default STATUS) + `slaApplicable` (backfilled `NOT slaExempt`;
+  slaExempt stays as an unread legacy column — the duplication objection is recorded in the schema);
+  `TicketStageDef` / `TicketStageGate` / `TicketGateCheck`; `TicketFieldDef.stageId`; `Ticket.stageId`;
+  `TicketStatusDef.archivedAt/archivedById`. Stage and gate `key`s are stable slugs — seeds and code
+  resolve by them. Nothing reads any of it yet.
+- **B `20260912090000_bug_stage_mode_seed`**: Bug → STAGE. Stages Triage (starting) · In progress ·
+  Fix verification · Closed (terminal); gates Reproduced + Severity set (Triage), Fix verified in test
+  environment; Severity/Environment/Steps moved onto Triage; slaApplicable false.
+- **C `20260912091000_bug_tickets_to_stages`**: Bug tickets map by status CATEGORY — DONE/CANCELLED →
+  Closed, everything else → Triage — and the Bug status list is archived (never deleted), so a ticket
+  still shows its old status read-only and switching the type back restores it. No-op today (0 bugs).
+  `scripts/migrate-bug-stage-mode.ts` dry-runs exactly this.
+- **D `20260912092000_change_request_stage_set`**: CR's 7 stages + 9 gates as rows, its record as 14
+  stage-scoped `TicketFieldDef`s, and existing `ChangeRequest` column values COPIED into
+  `TicketFieldValue` (skips empty, never overwrites). CR → STAGE, each ticket's stage set from its
+  status key. CR statuses are deliberately NOT archived yet: its code still writes a status on every
+  stage move. "Rejected" has no stage (agreed gap) — status stays its truth there.
+- **E `20260912093000_rollback_plan_general_panel`**: corrects D. Stage-scoping "Rollback plan" would
+  have hidden it, since the panel renders a fixed set of values; it stays on the general panel until
+  the redesigned stage panel can render arbitrary stage fields.
+- **Panel plumbing swap (no UI change)**: `src/lib/change-request-fields.ts` (pure, tested) is the one
+  mapping draft key ↔ field key; `change-request.server.ts#crDraftFrom/loadCrDraft` builds the panel's
+  values from stage-scoped field values; `cr-actions.ts` writes them through
+  `ticket-fields.ts#applyValuesForFields` (new export) and keeps only the next step on the
+  `ChangeRequest` row. The old columns are left untouched, unused, so it is reversible.
+  `loadTicketConfig` now splits `types[].fields` (general panel) from `types[].stageFields`, so
+  stage-scoped fields never appear on the general panel, the new-ticket form or column pickers.
+- Still to come in Phase 1: the generic stage panel/stepper/gate checklist UI (STAGE types other than
+  CR have no stage UI yet), resolvedSlaPolicy surfacing, portal-ticket notifications to the client
+  team, settings editors for stages/gates, and archiving CR's statuses once nothing writes them.

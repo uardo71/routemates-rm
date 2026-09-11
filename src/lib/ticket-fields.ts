@@ -37,7 +37,17 @@ export async function applyFieldValues(
   rawById: Record<string, unknown>, cfg: TicketConfig,
   customerScope?: "editable" | "creatable",
 ) {
-  const fields = fieldsForType(cfg, typeId);
+  // fieldsForType is the general Details panel (type fields + global); stage-scoped fields are
+  // written by their own panel through applyValuesForFields.
+  await applyValuesForFields(tx, ticketId, fieldsForType(cfg, typeId), rawById, customerScope);
+}
+
+/** Upsert/delete values for an explicit list of fields. `rawById` maps fieldId → raw value; a value
+ *  that coerces to null deletes the row (that is how a field is cleared). */
+export async function applyValuesForFields(
+  tx: Prisma.TransactionClient, ticketId: string, fields: LoadedField[],
+  rawById: Record<string, unknown>, customerScope?: "editable" | "creatable",
+) {
   for (const f of fields) {
     if (customerScope === "editable" && !f.customerEditable) continue;
     if (customerScope === "creatable" && !f.customerVisible) continue;

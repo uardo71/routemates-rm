@@ -13,11 +13,16 @@ export type LoadedField = {
   options: string[]; required: boolean; customerVisible: boolean; customerEditable: boolean; order: number;
   /** ISO time the field was archived ("deleted"), or null for a live field. */
   archivedAt: string | null;
+  /** Set = the field belongs to that stage's panel (STAGE-mode types), not the general Details panel. */
+  stageId: string | null;
 };
 export type LoadedType = {
   id: string; key: string; name: string; description: string | null; icon: string | null; color: string | null;
   order: number; active: boolean; isDefault: boolean; customerCanCreate: boolean; slaExempt: boolean;
-  statuses: LoadedStatus[]; fields: LoadedField[];
+  statuses: LoadedStatus[];
+  /** The general Details panel's fields. Stage-scoped ones are kept apart, in `stageFields`. */
+  fields: LoadedField[];
+  stageFields: LoadedField[];
 };
 /** `types[].fields` and `globalFields` hold only live fields — the ones every input list offers.
  *  `archivedFields` holds archived ones, kept solely to display values tickets already carry. */
@@ -86,18 +91,22 @@ export async function loadTicketConfig(companyId: string, includeInactive = fals
     prisma.ticketFieldDef.findMany({ where: { companyId }, orderBy: { order: "asc" } }),
   ]);
   const fieldsByType = new Map<string, LoadedField[]>();
+  const stageFieldsByType = new Map<string, LoadedField[]>();
   const globalFields: LoadedField[] = [];
   const archivedFields: LoadedField[] = [];
   for (const f of fields) {
     const lf: LoadedField = {
       id: f.id, typeId: f.typeId, key: f.key, name: f.name, kind: f.kind, options: opts(f.options),
       required: f.required, customerVisible: f.customerVisible, customerEditable: f.customerEditable, order: f.order,
-      archivedAt: f.archivedAt ? f.archivedAt.toISOString() : null,
+      archivedAt: f.archivedAt ? f.archivedAt.toISOString() : null, stageId: f.stageId,
     };
     // An archived field never appears in an input list (settings, new-ticket forms, the ticket's
     // editable fields, column pickers); it's kept only so existing values still display.
     if (f.archivedAt) { archivedFields.push(lf); continue; }
     if (!includeInactive && !f.active) continue;
+    // A stage-scoped field belongs to its stage's panel, never to the general Details panel or the
+    // new-ticket form — so it is kept out of `fields` / `fieldsForType`.
+    if (f.stageId && f.typeId) { const a = stageFieldsByType.get(f.typeId) ?? []; a.push(lf); stageFieldsByType.set(f.typeId, a); continue; }
     if (f.typeId) { const a = fieldsByType.get(f.typeId) ?? []; a.push(lf); fieldsByType.set(f.typeId, a); }
     else globalFields.push(lf);
   }
@@ -109,6 +118,7 @@ export async function loadTicketConfig(companyId: string, includeInactive = fals
       isInitial: s.isInitial, customerVisible: s.customerVisible, customerCanSet: s.customerCanSet,
     })),
     fields: fieldsByType.get(t.id) ?? [],
+    stageFields: stageFieldsByType.get(t.id) ?? [],
   }));
   return { types: loadedTypes, globalFields, archivedFields };
 }
@@ -138,6 +148,7 @@ export function customerConfig(config: TicketConfig): TicketConfig {
         ...t,
         statuses: t.statuses.filter((s) => s.customerVisible),
         fields: t.fields.filter((f) => f.customerVisible),
+        stageFields: t.stageFields.filter((f) => f.customerVisible),
       })),
     globalFields: config.globalFields.filter((f) => f.customerVisible),
     archivedFields: config.archivedFields.filter((f) => f.customerVisible),

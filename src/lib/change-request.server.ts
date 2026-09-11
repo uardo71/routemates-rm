@@ -1,22 +1,39 @@
 import "server-only";
-import type { ChangeRequest, Prisma } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { EMPTY_CR_DRAFT, asCrStage, type CrDraft, type CrStageKey } from "@/lib/change-request";
+import { crDraftFromValues } from "@/lib/change-request-fields";
+import { loadTicketConfig, type LoadedField } from "@/lib/ticket-config.server";
 
 const d10 = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : "");
 
-/** The stored record as the form's text fields. */
-export function crDraftFromRow(r: ChangeRequest | null): CrDraft {
-  if (!r) return { ...EMPTY_CR_DRAFT };
+/** The record as the form's text fields. Values come from the stage-scoped custom fields
+ *  (migration 20260912092000); only the next step still lives on the ChangeRequest row. */
+export function crDraftFrom(
+  row: { nextStep: string | null; nextStepOwnerId: string | null; nextStepDue: Date | null } | null,
+  stageFields: Pick<LoadedField, "id" | "key">[],
+  valueByFieldId: Map<string, unknown>,
+): CrDraft {
+  const byFieldKey: Record<string, unknown> = {};
+  for (const f of stageFields) byFieldKey[f.key] = valueByFieldId.get(f.id);
   return {
-    assessment: r.assessment ?? "", estimateHours: r.estimateHours?.toString() ?? "", quoteReference: r.quoteReference ?? "",
-    approvedByName: r.approvedByName ?? "", approvedOn: d10(r.approvedOn), approvalReference: r.approvalReference ?? "",
-    plannedGoLive: d10(r.plannedGoLive), buildReference: r.buildReference ?? "",
-    unitTestNotes: r.unitTestNotes ?? "", unitTestedOn: d10(r.unitTestedOn),
-    uatSignedOffBy: r.uatSignedOffBy ?? "", uatSignedOffOn: d10(r.uatSignedOffOn), uatNotes: r.uatNotes ?? "",
-    goLiveOn: d10(r.goLiveOn),
-    nextStep: r.nextStep ?? "", nextStepOwnerId: r.nextStepOwnerId ?? "", nextStepDue: d10(r.nextStepDue),
+    ...EMPTY_CR_DRAFT,
+    ...crDraftFromValues(byFieldKey),
+    nextStep: row?.nextStep ?? "",
+    nextStepOwnerId: row?.nextStepOwnerId ?? "",
+    nextStepDue: d10(row?.nextStepDue ?? null),
   };
+}
+
+/** The same draft, loaded on its own (the gate checks need it outside the ticket page's query). */
+export async function loadCrDraft(ticketId: string, companyId: string, typeId: string): Promise<CrDraft> {
+  const [row, values, cfg] = await Promise.all([
+    prisma.changeRequest.findUnique({ where: { ticketId }, select: { nextStep: true, nextStepOwnerId: true, nextStepDue: true } }),
+    prisma.ticketFieldValue.findMany({ where: { ticketId }, select: { fieldId: true, value: true } }),
+    loadTicketConfig(companyId),
+  ]);
+  const stageFields = cfg.types.find((t) => t.id === typeId)?.stageFields ?? [];
+  return crDraftFrom(row, stageFields, new Map(values.map((v) => [v.fieldId, v.value])));
 }
 
 /** A ticket just became a change request (created as one, or its type changed): its record and the
