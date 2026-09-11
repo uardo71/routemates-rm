@@ -53,6 +53,8 @@ export type WorkspaceRow = {
   openIssues: number;
   overdueTasks: number;
   progress: number | null; // latest reported progress %
+  /** Plan finish vs baseline finish in days (+ = late), over baselined tasks; null when not baselined. */
+  slipDays: number | null;
   statusLine: string; // one-line current status (from the latest report, or a derived state)
   nextMilestone: string | null; // e.g. "UAT · Oct 20" — the soonest upcoming plan milestone/task
 };

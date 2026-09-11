@@ -192,7 +192,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       const g = p.planTasks.filter((t) => (t.phase ?? "General") === ph);
       const ss = g.map((t) => t.startDate?.getTime()).filter((n): n is number => n != null);
       const ee = g.map((t) => (t.dueDate ?? t.startDate)?.getTime()).filter((n): n is number => n != null);
-      flat.push({ kind: "phase", label: ph, wbs: String(pi + 1), s: ss.length ? Math.min(...ss) : NaN, e: ee.length ? Math.max(...ee) : NaN, progress: phaseProgress(g) });
+      flat.push({ kind: "phase", label: ph, wbs: String(pi + 1), s: ss.length ? Math.min(...ss) : NaN, e: ee.length ? Math.max(...ee) : NaN, progress: phaseProgress(g.map((t) => ({ ...t, estimatedHours: t.estimatedHours == null ? null : Number(t.estimatedHours) }))) });
       g.forEach((t, ti) => flat.push({ kind: "task", wbs: `${pi + 1}.${ti + 1}`, t }));
     });
 

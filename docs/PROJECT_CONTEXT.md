@@ -1608,3 +1608,35 @@ Command Center's unbilled view alike.
   €177,300 when fully delivered, and no milestone is shown above list.
 - Tests: the earlier "negative adjustment" test encoded the bug (it dropped the contract value by
   the adjustment); replaced with the Pirelli case plus a combined discount + adjustment case.
+
+### A5 · Wave 5 — a plan that means something (2026-09-11)
+Migration `20260911180000_plantask_owner_effort_baseline` (applied to erp_dev; prod via the pipeline).
+236 tests green. Build green. Not clicked through (SSO).
+- **Schema** (`PlanTask`): `estimatedHours Decimal(8,2)`, `milestoneId` → Milestone (SetNull),
+  `taskId` → Task (SetNull; narrows actuals to one task of that milestone), `baselineStart`,
+  `baselineEnd`, `dependsOnId` → PlanTask (self-FK, SetNull, finish-to-start). `ownerUserId` already
+  existed from A2.
+- **Pure `src/lib/plan-schedule.ts` (tested)**: `wouldCreateCycle` (self + transitive + stored loops),
+  `cascadeShift` (BFS over dependents, each moved once, undated sides stay undated), `finishDelta`
+  (push = change of the DUE date; a start-only resize pushes nobody), `slipDays` (due − baseline end),
+  `planSlip` (latest due − latest baseline end over baselined tasks; null when none), `formatSlip`,
+  `weightedProgress` (effort when every task has an estimate > 0, else duration when every task is
+  dated, else plain count — never mixes bases; milestones ignored), `planActualHours`.
+  `delivery.ts#phaseProgress` now delegates to `weightedProgress`, so the grid, the PPTX Gantt, the
+  print/PDF plan and the status editor all show the same number.
+- **Baseline**: "Set baseline" on the plan header (`setPlanBaselineAction`) freezes current dates for
+  every dated task in scope WITHOUT a baseline; audited on the Project ("Plan baselined (N tasks)").
+  It never overwrites — a second click ("Baseline N new") only baselines tasks added since. Drags and
+  edits (`updatePlanTaskAction`) never write baseline columns. Grid: Slip column (`+N d` rose /
+  `−N d` green), phase slip, a thin ghost bar (or dashed diamond for gates) at the baseline position.
+- **Dependencies**: "Starts after" in the edit dialog (options that would loop are not offered; the
+  server refuses them anyway). `updatePlanTaskAction` moves every downstream task by the same delta in
+  the same transaction and returns the shifted rows; the grid shows them and a 10-second toast with
+  **Undo** (`setPlanDatesAction` restores exact dates for the moved task and its dependents, no
+  cascade). A link icon on the task name shows the predecessor.
+- **Actuals**: "Time logged on" milestone (+ optional task) and "Estimated hours" in the dialog. The
+  cockpit page sums APPROVED `TimeEntry` hours by (milestoneId, taskId); the Actual / est. column
+  shows `12 / 40h` with a bar (rose when over). Hours only — no rates.
+- **Portfolio**: `WorkspaceRow.slipDays` = `planSlip` of the workspace's plan; sortable "Slip" column.
+- **Status editor**: a new update's Progress % is prefilled with the plan's weighted % (the last
+  report's figure only when there is no plan), with a "Suggested from the plan — weighted by …" hint.

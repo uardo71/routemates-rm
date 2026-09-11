@@ -16,15 +16,16 @@ import { InitialsAvatar } from "@/components/initials-avatar";
 import { cn } from "@/lib/utils";
 import { RAG_DOT, RAG_PILL } from "@/lib/delivery";
 import type { WorkspaceRow } from "@/lib/delivery-day";
+import { formatSlip } from "@/lib/plan-schedule";
 
 // A triage table, so the worst health sorts to the top by default.
 const RAG_RANK: Record<RagStatus, number> = { RED: 0, AMBER: 1, GREEN: 2 };
 const RAG_ORDER: RagStatus[] = ["RED", "AMBER", "GREEN"];
 const RAG_SHORT: Record<RagStatus, string> = { RED: "Red", AMBER: "Amber", GREEN: "Green" };
 
-type SortKey = "health" | "name" | "customer" | "progress" | "status" | "issues" | "overdue";
+type SortKey = "health" | "name" | "customer" | "progress" | "status" | "issues" | "overdue" | "slip";
 type Dir = "asc" | "desc";
-const SORT_KEYS: SortKey[] = ["health", "name", "customer", "progress", "status", "issues", "overdue"];
+const SORT_KEYS: SortKey[] = ["health", "name", "customer", "progress", "status", "issues", "overdue", "slip"];
 const DEFAULT_SORT: SortKey = "health";
 const DEFAULT_DIR: Dir = "asc";
 const isSortKey = (v: string | null): v is SortKey => v != null && (SORT_KEYS as string[]).includes(v);
@@ -72,6 +73,9 @@ function compare(a: WorkspaceRow, b: WorkspaceRow, key: SortKey): number {
       return a.openIssues - b.openIssues;
     case "overdue":
       return a.overdueTasks - b.overdueTasks;
+    case "slip":
+      // Not baselined sorts below "on baseline".
+      return (a.slipDays ?? -1e9) - (b.slipDays ?? -1e9);
   }
 }
 
@@ -169,7 +173,7 @@ export function PortfolioClient({ workspaces, isAdmin }: { workspaces: Workspace
 
   const anyFilter = q.trim() !== "" || rag.size > 0 || attention || due || over;
   const clearFilters = () => { setQ(""); setRag(new Set()); setAttention(false); setDue(false); setOver(false); };
-  const colCount = group ? 7 : 8;
+  const colCount = group ? 8 : 9;
 
   const headCls = "sticky top-0 z-10 border-b bg-muted";
 
@@ -244,6 +248,7 @@ export function PortfolioClient({ workspaces, isAdmin }: { workspaces: Workspace
                   <SortHead col="status" label="Last status" sort={sort} dir={dir} onSort={onSort} className={cn(headCls, "w-[1%]")} />
                   <SortHead col="issues" label="Issues" sort={sort} dir={dir} onSort={onSort} className={cn(headCls, "w-[1%] text-right")} />
                   <SortHead col="overdue" label="Overdue" sort={sort} dir={dir} onSort={onSort} className={cn(headCls, "w-[1%] text-right")} />
+                  <SortHead col="slip" label="Slip" sort={sort} dir={dir} onSort={onSort} className={cn(headCls, "w-[1%] text-right")} />
                   <TableHead className={cn(headCls, "w-[1%]")}>Next</TableHead>
                 </TableRow>
               </TableHeader>
@@ -397,6 +402,13 @@ function WorkspaceTableRow({ w, showCustomer, onOpen }: { w: WorkspaceRow; showC
           <span className="rounded-full bg-rose-500/12 px-2 py-0.5 font-mono text-[11px] font-medium tabular-nums text-rose-600 dark:text-rose-400">{w.overdueTasks}</span>
         ) : (
           <span className="text-muted-foreground">—</span>
+        )}
+      </TableCell>
+      <TableCell className="text-right" title={w.slipDays == null ? "No baseline set on this plan" : "Plan finish vs baseline finish"}>
+        {w.slipDays == null ? (
+          <span className="text-muted-foreground">—</span>
+        ) : (
+          <span className={cn("rounded-full px-2 py-0.5 font-mono text-[11px] font-medium tabular-nums", w.slipDays > 0 ? "bg-rose-500/12 text-rose-600 dark:text-rose-400" : w.slipDays < 0 ? "bg-emerald-500/12 text-emerald-700 dark:text-emerald-400" : "text-muted-foreground")}>{formatSlip(w.slipDays)}</span>
         )}
       </TableCell>
       <TableCell className="max-w-[16rem]">

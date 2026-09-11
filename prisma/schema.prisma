@@ -457,6 +457,7 @@ model Milestone {
 
   assignments      Assignment[]
   tasks            Task[]
+  planTasks        PlanTask[]
   timeEntries      TimeEntry[]
   timeCards        TimeCard[]
   invoiceLines     InvoiceLine[]
@@ -554,6 +555,7 @@ model Task {
 
   timeEntries     TimeEntry[]
   assignmentPlans AssignmentPlan[]
+  planTasks       PlanTask[]
 
   @@index([milestoneId])
 }
@@ -1508,12 +1510,28 @@ model PlanTask {
   status      PlanTaskStatus @default(NOT_STARTED)
   isMilestone Boolean        @default(false) // a gate/milestone (Go-live, Quality Ready, …)
   sortOrder   Int            @default(0)
+  // Effort and the work it maps to: a plan row can point at the milestone (and optionally the
+  // task) people log time against, so approved hours show as actuals beside the estimate.
+  estimatedHours Decimal?    @db.Decimal(8, 2)
+  milestoneId String?
+  milestone   Milestone?     @relation(fields: [milestoneId], references: [id], onDelete: SetNull)
+  taskId      String?
+  task        Task?          @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  // Frozen once by "Set baseline" (audited); a drag never touches it. Slip = dueDate − baselineEnd.
+  baselineStart DateTime?
+  baselineEnd   DateTime?
+  // Finish-to-start dependency: when the predecessor's due date moves, this row moves by the same delta.
+  dependsOnId String?
+  dependsOn   PlanTask?      @relation("PlanTaskDependency", fields: [dependsOnId], references: [id], onDelete: SetNull)
+  dependents  PlanTask[]     @relation("PlanTaskDependency")
   createdAt   DateTime       @default(now())
   updatedAt   DateTime       @updatedAt
 
   @@index([projectId])
   @@index([companyId])
   @@index([ownerUserId])
+  @@index([milestoneId])
+  @@index([dependsOnId])
 }
 
 // ---------- Cutover plan (go-live runbook) ----------

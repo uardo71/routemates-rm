@@ -10,14 +10,15 @@ import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/session";
 import { canManageProject, STAFF_ONLY } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
-import { RAG_DOT, RAG_LABEL, RAG_PILL, worstRag, phaseProgress } from "@/lib/delivery";
+import { RAG_DOT, RAG_LABEL, RAG_PILL, worstRag } from "@/lib/delivery";
+import { weightedProgress, planActualHours } from "@/lib/plan-schedule";
 import { cadenceDays } from "@/lib/delivery-day";
 import type { RagStatus } from "@prisma/client";
 import { StatusReportsClient, type ReportRow } from "./status-reports-client";
 import { RaidClient, type RaidRow } from "./raid-client";
 import { MinutesClient, type MinutesRow } from "./minutes-client";
 import { DocumentsLibraryClient, type LibraryDoc } from "./documents-client";
-import { PlanClient, type PlanRow } from "./plan-client";
+import { PlanClient, type PlanRow, type PlanMilestone } from "./plan-client";
 import { EngagementBar } from "./engagement-bar";
 import { CockpitShell, type CockpitTab } from "./cockpit-shell";
 
@@ -46,6 +47,7 @@ export default async function DeliveryProjectPage({ params, searchParams }: { pa
       meetings: { orderBy: { date: "desc" }, include: { createdBy: { select: { name: true } }, actions: { orderBy: { sortOrder: "asc" } }, participants: { orderBy: { sortOrder: "asc" } }, documents: { select: { id: true, fileName: true, originalName: true } } } },
       documents: { orderBy: { uploadedAt: "desc" }, include: { uploadedBy: { select: { name: true } } } },
       planTasks: { orderBy: { sortOrder: "asc" } },
+      milestones: { orderBy: [{ startDate: "asc" }, { name: "asc" }], select: { id: true, name: true, tasks: { orderBy: { name: "asc" }, select: { id: true, name: true } } } },
       cutoverPlans: { select: { id: true, engagementId: true, tasks: { select: { id: true, parentId: true, status: true } } } },
       uatScripts: { select: { id: true, engagementId: true, status: true, _count: { select: { cases: true } } } },
     },
@@ -86,9 +88,24 @@ export default async function DeliveryProjectPage({ params, searchParams }: { pa
   const docs: LibraryDoc[] = project.documents.filter(inEng).map((d) => ({
     id: d.id, kind: d.kind, fileName: d.fileName, originalName: d.originalName, uploadedAt: iso(d.uploadedAt)!, uploadedByName: d.uploadedBy.name,
   }));
-  const plan: PlanRow[] = project.planTasks.filter(inEng).map((t) => ({
+  // Actuals for plan rows linked to a milestone (and optionally one of its tasks): approved hours only
+  // ("draft hours are not actual"). Hours, never rates — PMs may read them.
+  const scopedPlan = project.planTasks.filter(inEng);
+  const approvedRows = project.milestones.length && scopedPlan.some((t) => t.milestoneId)
+    ? await prisma.timeEntry.groupBy({
+        by: ["milestoneId", "taskId"],
+        where: { milestoneId: { in: project.milestones.map((m) => m.id) }, timeCard: { status: "APPROVED" } },
+        _sum: { hours: true },
+      })
+    : [];
+  const actualByRow = planActualHours(scopedPlan, approvedRows.map((r) => ({ milestoneId: r.milestoneId, taskId: r.taskId, hours: Number(r._sum.hours ?? 0) })));
+  const plan: PlanRow[] = scopedPlan.map((t) => ({
     id: t.id, phase: t.phase, name: t.name, owner: t.owner, ownerUserId: t.ownerUserId, startDate: iso(t.startDate), dueDate: iso(t.dueDate), progress: t.progress, status: t.status, isMilestone: t.isMilestone,
+    estimatedHours: t.estimatedHours != null ? Number(t.estimatedHours) : null, milestoneId: t.milestoneId, taskId: t.taskId, dependsOnId: t.dependsOnId,
+    baselineStart: iso(t.baselineStart), baselineEnd: iso(t.baselineEnd), actualHours: actualByRow.get(t.id) ?? null,
   }));
+  const planMilestones: PlanMilestone[] = project.milestones.map((m) => ({ id: m.id, name: m.name, tasks: m.tasks }));
+  const planWeighted = weightedProgress(plan);
 
   const openRaidList = raid.filter((r) => r.status !== "CLOSED");
 
@@ -324,8 +341,8 @@ export default async function DeliveryProjectPage({ params, searchParams }: { pa
   // deep-link to it (tab: "raid"), so it must exist as a tab. The count is what is still open.
   const tabs: CockpitTab[] = [
     { value: "overview", label: "Overview", content: overview },
-    { value: "status", label: `Status updates (${reports.length})`, content: <StatusReportsClient projectId={project.id} engagementId={selectedEng} reports={reports} people={staff} planProgress={plan.length ? phaseProgress(plan) : null} /> },
-    { value: "plan", label: `Plan (${plan.length})`, content: <PlanClient projectId={project.id} engagementId={selectedEng} tasks={plan} people={staff} /> },
+    { value: "status", label: `Status updates (${reports.length})`, content: <StatusReportsClient projectId={project.id} engagementId={selectedEng} reports={reports} people={staff} planProgress={plan.length ? planWeighted.percent : null} planBasis={plan.length ? planWeighted.basis : null} /> },
+    { value: "plan", label: `Plan (${plan.length})`, content: <PlanClient projectId={project.id} engagementId={selectedEng} tasks={plan} people={staff} milestones={planMilestones} /> },
     { value: "raid", label: `Issues (${openRaidList.length})`, content: <RaidClient projectId={project.id} engagementId={selectedEng} items={raid} people={staff} /> },
     { value: "minutes", label: `Minutes (${minutes.length})`, content: <MinutesClient projectId={project.id} engagementId={selectedEng} items={minutes} people={staff} /> },
     { value: "documents", label: `Documents (${docs.length})`, content: <DocumentsLibraryClient projectId={project.id} engagementId={selectedEng} docs={docs} /> },

@@ -3,6 +3,7 @@ import { format } from "date-fns";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/session";
 import { canManageProject } from "@/lib/permissions";
+import { phaseProgress } from "@/lib/delivery";
 import type { PlanTaskStatus } from "@prisma/client";
 import { AutoPrint } from "./auto-print";
 
@@ -44,8 +45,7 @@ export default async function PlanPrintPage({ params, searchParams }: { params: 
     const g = tasks.filter((t) => (t.phase ?? "General") === ph);
     const ss = g.map((t) => dnum(t.startDate)).filter((n) => !Number.isNaN(n));
     const ee = g.map((t) => dnum(t.dueDate ?? t.startDate)).filter((n) => !Number.isNaN(n));
-    const real = g.filter((t) => !t.isMilestone);
-    const progress = real.length ? Math.round(real.reduce((s, t) => s + t.progress, 0) / real.length) : 0;
+    const progress = phaseProgress(g.map((t) => ({ ...t, estimatedHours: t.estimatedHours == null ? null : Number(t.estimatedHours) })));
     flat.push({ kind: "phase", label: ph, wbs: String(pi + 1), s: ss.length ? Math.min(...ss) : NaN, e: ee.length ? Math.max(...ee) : NaN, progress });
     g.forEach((t, ti) => flat.push({ kind: "task", wbs: `${pi + 1}.${ti + 1}`, t }));
   });

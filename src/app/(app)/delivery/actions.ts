@@ -18,6 +18,8 @@ const ownerLink = (id: string | null | undefined, valid: Set<string>) => (id && 
 import { MAX_RECEIPT_SIZE_BYTES, saveReceiptFile, deleteReceiptFile } from "@/lib/receipt-storage";
 import { dateFromFileName, titleFromFileName } from "@/lib/doc-naming";
 import { approvedHoursForPeriod, type PeriodHours } from "@/lib/realization-data";
+import { recordAudit } from "@/lib/audit";
+import { wouldCreateCycle, cascadeShift, finishDelta, type DateShift } from "@/lib/plan-schedule";
 
 // The delivery library accepts the everyday deliverable formats (PDF, images, Office, email), matched
 // by extension so a browser mis-reporting the MIME (common for .msg/.pptx) doesn't block a valid file.
@@ -541,6 +543,10 @@ const PlanSchema = z.object({
   progress: z.coerce.number().int().min(0).max(100).optional().nullable(),
   status: PLAN_STATUS,
   isMilestone: z.boolean().optional(),
+  estimatedHours: z.coerce.number().min(0, "Estimated hours can't be negative.").max(100000).optional().nullable(),
+  milestoneId: z.string().optional().nullable(),
+  taskId: z.string().optional().nullable(),
+  dependsOnId: z.string().optional().nullable(),
 });
 export type PlanTaskInput = z.infer<typeof PlanSchema>;
 
@@ -555,7 +561,34 @@ function planData(d: PlanTaskInput, valid: Set<string>) {
     progress: d.progress ?? 0,
     status: d.status,
     isMilestone: d.isMilestone ?? false,
+    estimatedHours: d.estimatedHours != null && d.estimatedHours > 0 ? d.estimatedHours : null,
   };
+}
+
+/** The milestone / task / predecessor links a plan row may carry, each checked against the project:
+ *  the milestone must be this project's, the task must be on that milestone, and the predecessor must
+ *  be on this plan without closing a loop. Never trusted from the payload alone. */
+async function resolvePlanLinks(projectId: string, selfId: string | null, d: PlanTaskInput): Promise<{ error?: string; links?: { milestoneId: string | null; taskId: string | null; dependsOnId: string | null } }> {
+  let milestoneId: string | null = null;
+  let taskId: string | null = null;
+  let dependsOnId: string | null = null;
+  if (d.milestoneId) {
+    const m = await prisma.milestone.findFirst({ where: { id: d.milestoneId, projectId }, select: { id: true } });
+    if (!m) return { error: "That milestone isn't on this project." };
+    milestoneId = m.id;
+    if (d.taskId) {
+      const t = await prisma.task.findFirst({ where: { id: d.taskId, milestoneId: m.id }, select: { id: true } });
+      if (!t) return { error: "That task isn't on the selected milestone." };
+      taskId = t.id;
+    }
+  }
+  if (d.dependsOnId) {
+    const all = await prisma.planTask.findMany({ where: { projectId }, select: { id: true, dependsOnId: true } });
+    if (!all.some((t) => t.id === d.dependsOnId)) return { error: "The task it depends on isn't on this plan." };
+    if (wouldCreateCycle(all, selfId ?? "__new__", d.dependsOnId)) return { error: "That dependency would create a loop — a task can't (even indirectly) wait for itself." };
+    dependsOnId = d.dependsOnId;
+  }
+  return { links: { milestoneId, taskId, dependsOnId } };
 }
 
 export async function createPlanTaskAction(input: PlanTaskInput): Promise<{ error?: string }> {
@@ -563,24 +596,96 @@ export async function createPlanTaskAction(input: PlanTaskInput): Promise<{ erro
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Invalid input." };
   const ctx = await assertManage(parsed.data.projectId);
   if (ctx.error) return { error: ctx.error };
+  const linked = await resolvePlanLinks(parsed.data.projectId, null, parsed.data);
+  if (linked.error) return { error: linked.error };
   const max = await prisma.planTask.aggregate({ where: { projectId: parsed.data.projectId }, _max: { sortOrder: true } });
   const engagementId = await resolveEngagement(parsed.data.projectId, parsed.data.engagementId);
-  await prisma.planTask.create({ data: { companyId: ctx.companyId!, projectId: parsed.data.projectId, engagementId, sortOrder: (max._max.sortOrder ?? 0) + 10, ...planData(parsed.data, await validOwners(ctx.companyId!, [parsed.data.ownerUserId])) } });
+  await prisma.planTask.create({ data: { companyId: ctx.companyId!, projectId: parsed.data.projectId, engagementId, sortOrder: (max._max.sortOrder ?? 0) + 10, ...planData(parsed.data, await validOwners(ctx.companyId!, [parsed.data.ownerUserId])), ...linked.links! } });
   revalidatePath(`/delivery/${parsed.data.projectId}`);
   return {};
 }
 
+const isoDate = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : null);
+
 const PlanUpdateSchema = PlanSchema.extend({ id: z.string().min(1) });
-export async function updatePlanTaskAction(input: z.infer<typeof PlanUpdateSchema>): Promise<{ error?: string }> {
+/** Saves a plan row. When its due date moves, every task downstream of it (finish-to-start) moves by
+ *  the same number of days in the same transaction; the shifted rows come back so the grid can show
+ *  them and offer an undo. The baseline is never touched here. */
+export async function updatePlanTaskAction(input: z.infer<typeof PlanUpdateSchema>): Promise<{ error?: string; shifted?: DateShift[]; delta?: number }> {
   const parsed = PlanUpdateSchema.safeParse(input);
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Invalid input." };
-  const existing = await prisma.planTask.findUnique({ where: { id: parsed.data.id }, select: { projectId: true } });
+  const existing = await prisma.planTask.findUnique({ where: { id: parsed.data.id }, select: { projectId: true, dueDate: true } });
   if (!existing) return { error: "Task not found." };
   const ctx = await assertManage(existing.projectId);
   if (ctx.error) return { error: ctx.error };
-  await prisma.planTask.update({ where: { id: parsed.data.id }, data: { ...planData(parsed.data, await validOwners(ctx.companyId!, [parsed.data.ownerUserId])), engagementId: await resolveEngagement(existing.projectId, parsed.data.engagementId) } });
+  const linked = await resolvePlanLinks(existing.projectId, parsed.data.id, parsed.data);
+  if (linked.error) return { error: linked.error };
+  const data = {
+    ...planData(parsed.data, await validOwners(ctx.companyId!, [parsed.data.ownerUserId])),
+    ...linked.links!,
+    engagementId: await resolveEngagement(existing.projectId, parsed.data.engagementId),
+  };
+  const delta = finishDelta(isoDate(existing.dueDate), isoDate(data.dueDate));
+  let shifted: DateShift[] = [];
+  await prisma.$transaction(async (tx) => {
+    await tx.planTask.update({ where: { id: parsed.data.id }, data });
+    if (delta === 0) return;
+    const all = await tx.planTask.findMany({ where: { projectId: existing.projectId }, select: { id: true, dependsOnId: true, startDate: true, dueDate: true } });
+    shifted = cascadeShift(all.map((t) => ({ id: t.id, dependsOnId: t.dependsOnId, startDate: isoDate(t.startDate), dueDate: isoDate(t.dueDate) })), parsed.data.id, delta);
+    for (const s of shifted) await tx.planTask.update({ where: { id: s.id }, data: { startDate: toUtc(s.startDate), dueDate: toUtc(s.dueDate) } });
+  });
   revalidatePath(`/delivery/${existing.projectId}`);
+  return { shifted, delta };
+}
+
+const PlanDatesSchema = z.object({
+  projectId: z.string().min(1),
+  rows: z.array(z.object({ id: z.string().min(1), startDate: z.string().nullable(), dueDate: z.string().nullable() })).min(1).max(500),
+});
+/** Puts plan rows back to exact dates — the undo of a cascaded move. No cascade of its own. */
+export async function setPlanDatesAction(input: z.infer<typeof PlanDatesSchema>): Promise<{ error?: string }> {
+  const parsed = PlanDatesSchema.safeParse(input);
+  if (!parsed.success) return { error: "Invalid input." };
+  const ctx = await assertManage(parsed.data.projectId);
+  if (ctx.error) return { error: ctx.error };
+  const ids = [...new Set(parsed.data.rows.map((r) => r.id))];
+  const found = await prisma.planTask.count({ where: { id: { in: ids }, projectId: parsed.data.projectId } });
+  if (found !== ids.length) return { error: "Some of those tasks are no longer on this plan." };
+  await prisma.$transaction(parsed.data.rows.map((r) => prisma.planTask.update({ where: { id: r.id }, data: { startDate: toUtc(r.startDate), dueDate: toUtc(r.dueDate) } })));
+  revalidatePath(`/delivery/${parsed.data.projectId}`);
   return {};
+}
+
+/** Freezes the current dates as the baseline for every dated task in scope that has none yet. A
+ *  baseline, once written, is never changed — not by this action, not by a drag, not by an edit — so
+ *  a second click only baselines tasks added since. Audited on the project. */
+export async function setPlanBaselineAction(projectId: string, engagementIdInput?: string | null): Promise<{ error?: string; count?: number }> {
+  const user = await requirePermission("delivery:manage");
+  const ctx = await assertManage(projectId);
+  if (ctx.error) return { error: ctx.error };
+  const engagementId = await resolveEngagement(projectId, engagementIdInput);
+  const scope = { projectId, engagementId };
+  const [pending, already, project, eng] = await Promise.all([
+    prisma.planTask.findMany({ where: { ...scope, baselineStart: null, baselineEnd: null, OR: [{ startDate: { not: null } }, { dueDate: { not: null } }] }, select: { id: true, startDate: true, dueDate: true } }),
+    prisma.planTask.count({ where: { ...scope, OR: [{ baselineStart: { not: null } }, { baselineEnd: { not: null } }] } }),
+    prisma.project.findUnique({ where: { id: projectId }, select: { name: true } }),
+    engagementId ? prisma.engagement.findUnique({ where: { id: engagementId }, select: { name: true } }) : null,
+  ]);
+  if (pending.length === 0) return { error: "Nothing to baseline — every dated task already has one." };
+  await prisma.$transaction(async (tx) => {
+    for (const t of pending) {
+      await tx.planTask.update({ where: { id: t.id }, data: { baselineStart: t.startDate ?? t.dueDate, baselineEnd: t.dueDate ?? t.startDate } });
+    }
+    await recordAudit(tx, {
+      entityType: "Project", entityId: projectId, action: "update", actor: user,
+      before: { baselinedTasks: already }, after: { baselinedTasks: already + pending.length },
+      label: `${project?.name ?? "Project"} plan${eng ? ` · ${eng.name}` : ""}`,
+      note: already === 0 ? `Plan baselined (${pending.length} tasks)` : `Baselined ${pending.length} task${pending.length === 1 ? "" : "s"} added since the first baseline`,
+    });
+  });
+  revalidatePath(`/delivery/${projectId}`);
+  revalidatePath("/portfolio");
+  return { count: pending.length };
 }
 
 export async function deletePlanTaskAction(id: string): Promise<{ error?: string }> {

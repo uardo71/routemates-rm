@@ -16,6 +16,7 @@ import { cn } from "@/lib/utils";
 import { OwnerCombobox, type OwnerPerson } from "@/components/owner-combobox";
 import { SEVERITY_LABEL, RAG_PILL, RAG_DOT, CADENCE_LABEL, RAG_DIMENSIONS, RAG_DIMENSION_LABEL, RAG_LABEL, defaultPeriod, actionsToCarry, progressMismatch } from "@/lib/delivery";
 import type { PeriodHours } from "@/lib/realization-data";
+import { PROGRESS_BASIS_LABEL, type ProgressBasis } from "@/lib/plan-schedule";
 import type { RagStatus } from "@prisma/client";
 import { createStatusReportAction, updateStatusReportAction, deleteStatusReportAction, markStatusReportSentAction, periodHoursAction } from "../actions";
 
@@ -81,8 +82,9 @@ const emptyDraft = (): Draft => ({
 /** A new update starts from the latest report in the same scope: same cadence and RAGs, the last
  *  progress figure, and every action that is still open (or was closed after that report went out),
  *  marked "carried". Narrative fields start blank — those must be written fresh. */
-function seededDraft(latest: ReportRow | undefined): Draft {
-  const base = emptyDraft();
+function seededDraft(latest: ReportRow | undefined, planPct: number | null): Draft {
+  // The plan's effort/duration-weighted % is the suggestion; the last report's figure only when there is no plan.
+  const base = { ...emptyDraft(), progressPercent: planPct != null ? String(planPct) : "" };
   if (!latest) return base;
   const cadence = latest.cadence ?? "WEEKLY";
   const carried = actionsToCarry(latest.actions, latest.reportDate).map((a) => ({ description: a.description, owner: a.owner ?? "", ownerUserId: a.ownerUserId, dueDate: a.dueDate ?? "", critical: a.critical, carried: true }));
@@ -94,12 +96,12 @@ function seededDraft(latest: ReportRow | undefined): Draft {
     scheduleRag: latest.scheduleRag === latest.overallRag ? "" : latest.scheduleRag,
     budgetRag: latest.budgetRag === latest.overallRag ? "" : latest.budgetRag,
     scopeRag: latest.scopeRag === latest.overallRag ? "" : latest.scopeRag,
-    progressPercent: latest.progressPercent != null ? String(latest.progressPercent) : "",
+    progressPercent: planPct != null ? String(planPct) : latest.progressPercent != null ? String(latest.progressPercent) : "",
     actions: carried.length ? carried : base.actions,
   };
 }
 
-export function StatusReportsClient({ projectId, engagementId, reports, people, planProgress }: { projectId: string; engagementId: string | null; reports: ReportRow[]; people: OwnerPerson[]; planProgress: number | null }) {
+export function StatusReportsClient({ projectId, engagementId, reports, people, planProgress, planBasis }: { projectId: string; engagementId: string | null; reports: ReportRow[]; people: OwnerPerson[]; planProgress: number | null; planBasis: ProgressBasis | null }) {
   const router = useRouter();
   const [pending, start] = useTransition();
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -180,7 +182,7 @@ export function StatusReportsClient({ projectId, engagementId, reports, people, 
           <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search status updates…" className="w-64 pl-8" />
         </div>
-        <Button size="sm" onClick={() => openDraft(seededDraft(reports[0]))} title={reports[0] ? "Starts from the latest update: cadence, health, progress and open actions carried over" : undefined}><PlusIcon className="size-3.5" /> New status update</Button>
+        <Button size="sm" onClick={() => openDraft(seededDraft(reports[0], planProgress))} title={reports[0] ? "Starts from the latest update: cadence, health, progress and open actions carried over" : undefined}><PlusIcon className="size-3.5" /> New status update</Button>
       </div>
 
       {reports.length === 0 && (
@@ -328,6 +330,7 @@ export function StatusReportsClient({ projectId, engagementId, reports, people, 
                   </Select>
                 </div>
                 <div className="flex flex-col gap-1.5"><Label>Progress %</Label><Input type="number" min="0" max="100" value={draft.progressPercent} onChange={(e) => setDraft({ ...draft, progressPercent: e.target.value })} placeholder={planProgress != null ? `plan says ${planProgress}` : "e.g. 90"} />
+                  {!planWarn && planProgress != null && draft.progressPercent === String(planProgress) && <p className="text-[11px] text-muted-foreground">Suggested from the plan — {PROGRESS_BASIS_LABEL[planBasis ?? "duration"]}.</p>}
                   {planWarn && <p className="inline-flex items-center gap-1 text-[11px] text-amber-700 dark:text-amber-400"><TriangleAlertIcon className="size-3" /> The plan says {planProgress}% — is the report right?</p>}
                 </div>
                 <div className="col-span-2 grid grid-cols-3 gap-3 border-t pt-3">

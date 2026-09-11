@@ -2,6 +2,7 @@ import { format, differenceInCalendarDays } from "date-fns";
 import type { RagStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { RAG_LABEL, worstRag } from "@/lib/delivery";
+import { planSlip } from "@/lib/plan-schedule";
 import { statusChase, overduePlanTasks, overdueRaidItems, highOpenRaidItems, overdueActions as overdueActionItems, goLiveReadiness, isPlanTaskOpen } from "@/lib/delivery-signals";
 import {
   DAY_HINT, PRIORITY_RANK,
@@ -36,7 +37,7 @@ export async function loadDeliveryHome(user: { id: string; companyId: string; ro
         where: { status: { not: "CLOSED" }, type: { in: ["RISK", "ISSUE"] } },
         select: { id: true, engagementId: true, title: true, severity: true, dueDate: true },
       },
-      planTasks: { select: { engagementId: true, name: true, dueDate: true, status: true, isMilestone: true, progress: true } },
+      planTasks: { select: { engagementId: true, name: true, dueDate: true, status: true, isMilestone: true, progress: true, baselineEnd: true } },
       meetings: { select: { engagementId: true, actions: { select: { done: true, dueDate: true, description: true } } } },
       cutoverPlans: { select: { tasks: { select: { id: true, parentId: true, status: true } } } },
       uatScripts: { select: { status: true, _count: { select: { cases: true } } } },
@@ -196,6 +197,7 @@ export async function loadDeliveryHome(user: { id: string; companyId: string; ro
         openIssues: raid.length,
         overdueTasks: overduePlan.length,
         progress: last?.progressPercent ?? null,
+        slipDays: planSlip(plan.map((t) => ({ dueDate: t.dueDate ? t.dueDate.toISOString().slice(0, 10) : null, baselineEnd: t.baselineEnd ? t.baselineEnd.toISOString().slice(0, 10) : null }))),
         statusLine,
         nextMilestone,
       });
