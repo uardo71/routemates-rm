@@ -12,10 +12,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { uploadDeliveryDocumentAction, deleteDeliveryDocumentAction } from "../actions";
+import { attachmentError } from "@/lib/file-types";
 
 export type LibraryDoc = { id: string; kind: string; fileName: string; originalName: string; uploadedAt: string; uploadedByName: string };
 
-const KINDS: { value: string; label: string }[] = [
+export const KINDS: { value: string; label: string }[] = [
   { value: "PROJECT_PLAN", label: "Project plan" },
   { value: "STATUS_UPDATE", label: "Status update" },
   { value: "MEETING_MINUTES", label: "Meeting minutes" },
@@ -32,7 +33,7 @@ export function DocumentsLibraryClient({ projectId, engagementId, docs }: { proj
   const [pending, start] = useTransition();
   const fileRef = useRef<HTMLInputElement>(null);
   const [kind, setKind] = useState("PROJECT_PLAN");
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
   const [q, setQ] = useState("");
   const [kindFilter, setKindFilter] = useState("ALL");
 
@@ -42,15 +43,17 @@ export function DocumentsLibraryClient({ projectId, engagementId, docs }: { proj
   }, [docs, q, kindFilter]);
 
   function upload() {
-    if (!file) return toast.error("Pick a file.");
+    if (files.length === 0) return toast.error("Pick a file.");
+    const invalid = attachmentError(files, 10);
+    if (invalid) return toast.error(invalid);
     const fd = new FormData();
     fd.append("kind", kind);
-    fd.append("file", file);
+    files.forEach((f) => fd.append("files", f));
     if (engagementId) fd.append("engagementId", engagementId);
     start(async () => {
       const r = await uploadDeliveryDocumentAction(projectId, fd);
       if (r.error) toast.error(r.error);
-      else { toast.success("Uploaded."); setFile(null); if (fileRef.current) fileRef.current.value = ""; router.refresh(); }
+      else { toast.success(r.count === 1 ? "Uploaded." : `${r.count} files uploaded.`); setFiles([]); if (fileRef.current) fileRef.current.value = ""; router.refresh(); }
     });
   }
   function remove(id: string) {
@@ -72,12 +75,12 @@ export function DocumentsLibraryClient({ projectId, engagementId, docs }: { proj
               </Select>
             </div>
             <div className="flex flex-col gap-1.5 flex-1 min-w-56">
-              <Label>File</Label>
-              <Input ref={fileRef} type="file" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+              <Label>Files</Label>
+              <Input ref={fileRef} type="file" multiple onChange={(e) => setFiles(Array.from(e.target.files ?? []))} />
             </div>
-            <Button size="sm" onClick={upload} disabled={pending || !file}><UploadIcon className="size-3.5" /> Upload</Button>
+            <Button size="sm" onClick={upload} disabled={pending || files.length === 0}><UploadIcon className="size-3.5" /> {pending ? "Uploading…" : "Upload"}</Button>
           </div>
-          <p className="mt-2 text-[11px] text-muted-foreground">PDF, images, and Office files (Excel/Word/PowerPoint) up to 10MB. Files are stored securely and served only to authorized users. A <span className="font-medium text-foreground">Meeting minutes</span> or <span className="font-medium text-foreground">Status update</span> file also creates its entry in the Minutes / Status updates tab, so decks made in another template still count.</p>
+          <p className="mt-2 text-[11px] text-muted-foreground">Any file — MS Project (.mpp), Primavera, Excel, Word, PowerPoint, PDF, e-mail, archives — up to 25MB each; programs and scripts aren&apos;t accepted. Files are stored securely and served only to authorized users. A <span className="font-medium text-foreground">Meeting minutes</span> or <span className="font-medium text-foreground">Status update</span> file also creates its entry in the Minutes / Status updates tab, so decks made in another template still count.</p>
         </CardContent>
       </Card>
 

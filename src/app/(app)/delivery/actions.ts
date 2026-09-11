@@ -15,19 +15,13 @@ async function validOwners(companyId: string, ids: (string | null | undefined)[]
   return new Set(rows.map((r) => r.id));
 }
 const ownerLink = (id: string | null | undefined, valid: Set<string>) => (id && valid.has(id) ? id : null);
-import { MAX_RECEIPT_SIZE_BYTES, saveReceiptFile, deleteReceiptFile } from "@/lib/receipt-storage";
+import { saveReceiptFile, deleteReceiptFile, type SavedReceipt } from "@/lib/receipt-storage";
+import { attachmentError } from "@/lib/file-types";
 import { dateFromFileName, titleFromFileName } from "@/lib/doc-naming";
 import { approvedHoursForPeriod, type PeriodHours } from "@/lib/realization-data";
 import { recordAudit } from "@/lib/audit";
 import { completionChange } from "@/lib/actions-register";
 import { wouldCreateCycle, cascadeShift, finishDelta, type DateShift } from "@/lib/plan-schedule";
-
-// The delivery library accepts the everyday deliverable formats (PDF, images, Office, email), matched
-// by extension so a browser mis-reporting the MIME (common for .msg/.pptx) doesn't block a valid file.
-const ALLOWED_DOC_EXT = new Set([
-  ".pdf", ".png", ".jpg", ".jpeg", ".webp", ".heic", ".heif", ".gif",
-  ".xlsx", ".xls", ".csv", ".docx", ".doc", ".pptx", ".ppt", ".txt", ".msg", ".eml", ".zip",
-]);
 
 const dateOnly = /^\d{4}-\d{2}-\d{2}$/;
 const toUtc = (v: string | null | undefined): Date | null =>
@@ -514,51 +508,63 @@ export async function deleteMeetingAction(id: string): Promise<{ error?: string 
 const DELIVERY_DOC_KINDS = ["PROJECT_PLAN", "STATUS_UPDATE", "MEETING_MINUTES", "CUTOVER_PLAN", "KICKOFF", "SCOPE", "UAT_ACCEPTANCE", "OTHER"] as const;
 type DeliveryDocKind = (typeof DELIVERY_DOC_KINDS)[number];
 
-export async function uploadDeliveryDocumentAction(projectId: string, formData: FormData): Promise<{ error?: string }> {
+/** Uploads one or more files into the workspace's library (from the cockpit's Documents tab or the
+ *  Portfolio's Attach button). Any file type except programs/scripts (src/lib/file-types.ts) — a
+ *  project plan is as likely to be .mpp, .xer or .xlsx as a PDF. */
+export async function uploadDeliveryDocumentAction(projectId: string, formData: FormData): Promise<{ error?: string; count?: number }> {
   const ctx = await assertManage(projectId);
   if (ctx.error) return { error: ctx.error };
   const kind = String(formData.get("kind") ?? "");
   if (!DELIVERY_DOC_KINDS.includes(kind as DeliveryDocKind)) return { error: "Invalid document type." };
-  const file = formData.get("file");
-  if (!(file instanceof File) || file.size === 0) return { error: "Pick a file to upload." };
-  if (file.size > MAX_RECEIPT_SIZE_BYTES) return { error: `File is too large (max ${MAX_RECEIPT_SIZE_BYTES / 1024 / 1024}MB).` };
-  const ext = file.name.slice(file.name.lastIndexOf(".")).toLowerCase();
-  if (!ALLOWED_DOC_EXT.has(ext)) return { error: "Unsupported file type — use a PDF, image, Office file, or email." };
+  // "files" (several at once), or the single "file" field older callers send.
+  const files = [...formData.getAll("files"), formData.get("file")].filter((f): f is File => f instanceof File && f.size > 0);
+  if (files.length === 0) return { error: "Pick a file to upload." };
+  const invalid = attachmentError(files, 10);
+  if (invalid) return { error: invalid };
   const engagementId = await resolveEngagement(projectId, (formData.get("engagementId") as string) || null);
-  const saved = await saveReceiptFile(file, "documents");
   const companyId = ctx.companyId!;
   const userId = ctx.userId!;
-  const docDate = dateFromFileName(file.name) ?? new Date(new Date().toISOString().slice(0, 10));
-  const title = titleFromFileName(file.name);
 
-  // A minutes or status-update file made in another template still counts: create the matching
-  // entry so it shows in its tab (and drives the overview), linked to the file. Same transaction.
-  await prisma.$transaction(async (tx) => {
-    const doc = await tx.document.create({ data: { companyId, kind: kind as DeliveryDocKind, projectId, engagementId, uploadedById: userId, ...saved } });
-    if (kind === "MEETING_MINUTES") {
-      const m = await tx.meetingMinutes.create({
-        data: { companyId, projectId, engagementId, createdById: userId, date: docDate, title, notes: `Minutes attached as a document: ${file.name}` },
-      });
-      await tx.document.update({ where: { id: doc.id }, data: { minutesId: m.id } });
-    } else if (kind === "STATUS_UPDATE") {
-      // Start from the latest report in the same scope so the overview keeps its health/progress
-      // until the PM edits the new entry.
-      const prev = await tx.statusReport.findFirst({ where: { projectId, engagementId }, orderBy: { reportDate: "desc" } });
-      const r = await tx.statusReport.create({
-        data: {
-          companyId, projectId, engagementId, authorId: userId, reportDate: docDate,
-          cadence: prev?.cadence ?? "ADHOC",
-          overallRag: prev?.overallRag ?? "GREEN", scheduleRag: prev?.scheduleRag ?? "GREEN", budgetRag: prev?.budgetRag ?? "GREEN", scopeRag: prev?.scopeRag ?? "GREEN",
-          progressPercent: prev?.progressPercent ?? null,
-          summary: `Status update attached as a document: ${file.name}`,
-        },
-      });
-      await tx.document.update({ where: { id: doc.id }, data: { statusReportId: r.id } });
-    }
-  });
+  const stored: { file: File; saved: SavedReceipt }[] = [];
+  for (const file of files) stored.push({ file, saved: await saveReceiptFile(file, "documents") });
+  try {
+    // A minutes or status-update file made in another template still counts: create the matching
+    // entry so it shows in its tab (and drives the overview), linked to the file. Same transaction.
+    await prisma.$transaction(async (tx) => {
+      for (const { file, saved } of stored) {
+        const docDate = dateFromFileName(file.name) ?? new Date(new Date().toISOString().slice(0, 10));
+        const title = titleFromFileName(file.name);
+        const doc = await tx.document.create({ data: { companyId, kind: kind as DeliveryDocKind, projectId, engagementId, uploadedById: userId, ...saved } });
+        if (kind === "MEETING_MINUTES") {
+          const m = await tx.meetingMinutes.create({
+            data: { companyId, projectId, engagementId, createdById: userId, date: docDate, title, notes: `Minutes attached as a document: ${file.name}` },
+          });
+          await tx.document.update({ where: { id: doc.id }, data: { minutesId: m.id } });
+        } else if (kind === "STATUS_UPDATE") {
+          // Start from the latest report in the same scope so the overview keeps its health/progress
+          // until the PM edits the new entry.
+          const prev = await tx.statusReport.findFirst({ where: { projectId, engagementId }, orderBy: { reportDate: "desc" } });
+          const r = await tx.statusReport.create({
+            data: {
+              companyId, projectId, engagementId, authorId: userId, reportDate: docDate,
+              cadence: prev?.cadence ?? "ADHOC",
+              overallRag: prev?.overallRag ?? "GREEN", scheduleRag: prev?.scheduleRag ?? "GREEN", budgetRag: prev?.budgetRag ?? "GREEN", scopeRag: prev?.scopeRag ?? "GREEN",
+              progressPercent: prev?.progressPercent ?? null,
+              summary: `Status update attached as a document: ${file.name}`,
+            },
+          });
+          await tx.document.update({ where: { id: doc.id }, data: { statusReportId: r.id } });
+        }
+      }
+    });
+  } catch {
+    for (const s of stored) await deleteReceiptFile(s.saved.fileName, "documents");
+    return { error: "Could not save the documents. Please try again." };
+  }
   revalidatePath(`/delivery/${projectId}`);
   revalidatePath("/delivery");
-  return {};
+  revalidatePath("/portfolio");
+  return { count: stored.length };
 }
 
 /** Removes every plan task in scope (an end customer, or the project overall) — the "delete the

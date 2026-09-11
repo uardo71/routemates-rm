@@ -42,6 +42,7 @@ export async function loadDeliveryHome(user: { id: string; companyId: string; ro
       meetings: { select: { engagementId: true, actions: { select: { done: true, dueDate: true, description: true } } } },
       cutoverPlans: { select: { tasks: { select: { id: true, parentId: true, status: true } } } },
       uatScripts: { select: { status: true, _count: { select: { cases: true } } } },
+      documents: { where: { kind: "PROJECT_PLAN" }, orderBy: { uploadedAt: "desc" }, select: { engagementId: true, fileName: true, originalName: true, uploadedAt: true } },
     },
     orderBy: [{ name: "asc" }],
   });
@@ -82,6 +83,11 @@ export async function loadDeliveryHome(user: { id: string; companyId: string; ro
       const arr = actionsByScope.get(k) ?? actionsByScope.set(k, []).get(k)!;
       for (const a of m.actions) arr.push(a);
     }
+    const planFilesByScope = new Map<string, WorkspaceRow["planFiles"]>();
+    for (const d of p.documents) {
+      const k = scopeKey(d.engagementId);
+      (planFilesByScope.get(k) ?? planFilesByScope.set(k, []).get(k)!).push({ name: d.originalName, url: `/api/documents/${d.fileName}`, date: d.uploadedAt.toISOString().slice(0, 10) });
+    }
 
     // Which scopes become their own workspace row. No-engagement project → just Overall (the project).
     // Multi-engagement project → each engagement, plus Overall only if it carries project-level items.
@@ -93,7 +99,8 @@ export async function loadDeliveryHome(user: { id: string; companyId: string; ro
         (latestByScope.has(OVERALL)) ||
         (raidByScope.get(OVERALL)?.length ?? 0) > 0 ||
         (planByScope.get(OVERALL)?.length ?? 0) > 0 ||
-        (actionsByScope.get(OVERALL)?.length ?? 0) > 0;
+        (actionsByScope.get(OVERALL)?.length ?? 0) > 0 ||
+        (planFilesByScope.get(OVERALL)?.length ?? 0) > 0;
       if (overallHasItems || p.trackOverallStatus) scopes.push({ engagementId: null, name: "Overall", isEngagement: false, done: projectDone });
       for (const e of p.engagements) scopes.push({ engagementId: e.id, name: e.name, isEngagement: true, done: projectDone || e.status === "COMPLETED" });
     }
@@ -201,6 +208,7 @@ export async function loadDeliveryHome(user: { id: string; companyId: string; ro
         slipDays: planSlip(plan.map((t) => ({ dueDate: t.dueDate ? t.dueDate.toISOString().slice(0, 10) : null, baselineEnd: t.baselineEnd ? t.baselineEnd.toISOString().slice(0, 10) : null }))),
         statusLine,
         nextMilestone,
+        planFiles: planFilesByScope.get(k) ?? [],
       });
     }
 

@@ -58,6 +58,8 @@ export type WorkspaceRow = {
   slipDays: number | null;
   statusLine: string; // one-line current status (from the latest report, or a derived state)
   nextMilestone: string | null; // e.g. "UAT · Oct 20" — the soonest upcoming plan milestone/task
+  /** "Project plan" files in this workspace's library, newest first. */
+  planFiles: { name: string; url: string; date: string }[];
 };
 
 // Category grouping for the My Day path so repeated items read as one tracked group.

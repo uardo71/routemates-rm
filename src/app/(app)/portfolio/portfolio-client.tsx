@@ -5,8 +5,9 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   SearchIcon, Building2Icon, ChevronDownIcon, ChevronRightIcon,
-  ArrowUpIcon, ArrowDownIcon, ArrowUpDownIcon, FlagIcon, XIcon, ListChecksIcon,
+  ArrowUpIcon, ArrowDownIcon, ArrowUpDownIcon, FlagIcon, XIcon, ListChecksIcon, PaperclipIcon, FileTextIcon,
 } from "lucide-react";
+import { AttachDialog } from "./attach-dialog";
 import type { RagStatus } from "@prisma/client";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -41,9 +42,10 @@ const TYPE_META = (w: WorkspaceRow) =>
 // "Needs attention" = anything that isn't quietly green — the same rule the old card board used.
 const needsAttention = (w: WorkspaceRow) => !w.completed && !(w.rag === "GREEN" && !w.statusDue && w.overdueTasks === 0);
 
-function wsHref(w: WorkspaceRow) {
+function wsHref(w: WorkspaceRow, tab?: string) {
   const p = new URLSearchParams();
   if (w.engagementId) p.set("eng", w.engagementId);
+  if (tab) p.set("tab", tab);
   p.set("from", "portfolio"); // so the workspace's back link returns here, not to My Day
   return `/delivery/${w.projectId}?${p.toString()}`;
 }
@@ -98,6 +100,7 @@ export function PortfolioClient({ workspaces, hygiene, isAdmin }: { workspaces: 
   const [sort, setSort] = useState<SortKey>(() => (isSortKey(sp.get("sort")) ? (sp.get("sort") as SortKey) : DEFAULT_SORT));
   const [dir, setDir] = useState<Dir>(sp.get("dir") === "desc" ? "desc" : DEFAULT_DIR);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [attachTo, setAttachTo] = useState<WorkspaceRow | null>(null);
   const [hyg, setHyg] = useState<HygieneKey | null>(() => { const v = sp.get("hyg"); return HYGIENE_CHECKS.some((c) => c.key === v) ? (v as HygieneKey) : null; });
   const hygCounts = useMemo(() => hygieneCounts(hygiene), [hygiene]);
   const hygProjects = useMemo(() => (hyg ? new Set(hygiene.filter((h) => h.key === hyg).map((h) => h.projectId)) : null), [hyg, hygiene]);
@@ -179,7 +182,7 @@ export function PortfolioClient({ workspaces, hygiene, isAdmin }: { workspaces: 
 
   const anyFilter = q.trim() !== "" || rag.size > 0 || attention || due || over || hyg !== null;
   const clearFilters = () => { setQ(""); setRag(new Set()); setAttention(false); setDue(false); setOver(false); setHyg(null); };
-  const colCount = group ? 8 : 9;
+  const colCount = group ? 9 : 10;
 
   const headCls = "sticky top-0 z-10 border-b bg-muted";
 
@@ -287,6 +290,7 @@ export function PortfolioClient({ workspaces, hygiene, isAdmin }: { workspaces: 
                   <SortHead col="overdue" label="Overdue" sort={sort} dir={dir} onSort={onSort} className={cn(headCls, "w-[1%] text-right")} />
                   <SortHead col="slip" label="Slip" sort={sort} dir={dir} onSort={onSort} className={cn(headCls, "w-[1%] text-right")} />
                   <TableHead className={cn(headCls, "w-[1%]")}>Next</TableHead>
+                  <TableHead className={cn(headCls, "w-[1%]")}>Plan</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -300,16 +304,17 @@ export function PortfolioClient({ workspaces, hygiene, isAdmin }: { workspaces: 
                       const isCollapsed = collapsed.has(g.client);
                       return (
                         <GroupRows key={g.client} colCount={colCount} client={g.client} count={g.list.length} red={g.red} amber={g.amber} green={g.green} collapsed={isCollapsed} onToggle={() => toggleCollapse(g.client)}>
-                          {!isCollapsed && g.list.map((w) => <WorkspaceTableRow key={w.key} w={w} showCustomer={false} onOpen={() => router.push(wsHref(w))} />)}
+                          {!isCollapsed && g.list.map((w) => <WorkspaceTableRow key={w.key} w={w} showCustomer={false} onOpen={() => router.push(wsHref(w))} onAttach={() => setAttachTo(w)} />)}
                         </GroupRows>
                       );
                     })
-                  : rows.map((w) => <WorkspaceTableRow key={w.key} w={w} showCustomer onOpen={() => router.push(wsHref(w))} />)}
+                  : rows.map((w) => <WorkspaceTableRow key={w.key} w={w} showCustomer onOpen={() => router.push(wsHref(w))} onAttach={() => setAttachTo(w)} />)}
               </TableBody>
             </table>
           </div>
         </>
       )}
+      {attachTo && <AttachDialog w={attachTo} onClose={() => setAttachTo(null)} />}
     </div>
   );
 }
@@ -371,7 +376,8 @@ function GroupRows({ colCount, client, count, red, amber, green, collapsed, onTo
   );
 }
 
-function WorkspaceTableRow({ w, showCustomer, onOpen }: { w: WorkspaceRow; showCustomer: boolean; onOpen: () => void }) {
+function WorkspaceTableRow({ w, showCustomer, onOpen, onAttach }: { w: WorkspaceRow; showCustomer: boolean; onOpen: () => void; onAttach: () => void }) {
+  const latest = w.planFiles[0];
   const type = TYPE_META(w);
   const pct = w.progress == null ? null : Math.max(0, Math.min(100, w.progress));
   return (
@@ -454,6 +460,26 @@ function WorkspaceTableRow({ w, showCustomer, onOpen }: { w: WorkspaceRow; showC
         ) : (
           <span className="text-muted-foreground">—</span>
         )}
+      </TableCell>
+      {/* The latest attached project plan, and Attach — clicks here never open the row. */}
+      <TableCell onClick={(e) => e.stopPropagation()} className="cursor-default">
+        <div className="flex items-center gap-1.5">
+          {latest && (
+            <a href={latest.url} target="_blank" rel="noreferrer" title={`${latest.name} · attached ${latest.date}`} className="inline-flex max-w-[11rem] items-center gap-1 text-xs text-primary hover:underline">
+              <FileTextIcon className="size-3.5 shrink-0" /><span className="truncate">{latest.name}</span>
+            </a>
+          )}
+          {w.planFiles.length > 1 && (
+            <Link href={wsHref(w, "documents")} title="All plan files in the Documents library" className="shrink-0 font-mono text-[11px] text-muted-foreground hover:underline">+{w.planFiles.length - 1}</Link>
+          )}
+          <button
+            type="button" onClick={onAttach}
+            title="Attach a project plan or any other document"
+            className="inline-flex shrink-0 items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground"
+          >
+            <PaperclipIcon className="size-3" />{latest ? <span className="sr-only">Attach</span> : "Attach"}
+          </button>
+        </div>
       </TableCell>
     </TableRow>
   );

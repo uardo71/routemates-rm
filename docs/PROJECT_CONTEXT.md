@@ -1801,3 +1801,18 @@ Migration `20260911210000_change_request_lifecycle`. A ticket of type `change_re
   50mb** — proxy.ts made Next buffer only 10MB and pass a silently truncated body on.
 - Not done: CR next steps aren't in the Actions register or alerts yet; the portal shows the stage name
   only (no stepper); CR billing (estimate → quote/amendment) is not linked.
+
+### Portfolio: attach project plans (any file type) (2026-09-11)
+No migration. Owner's ask: attach project plans from the Portfolio, any attachment type.
+- **Delivery library takes any file** except programs/scripts (`attachmentError` in `src/lib/file-types.ts`,
+  25MB a file) — the old extension allow-list refused MS Project `.mpp`, Primavera `.xer` and the like.
+  `uploadDeliveryDocumentAction` accepts several files at once (`files`, or the legacy `file` field); a
+  Minutes / Status update kind still creates one entry per file; stored files are removed if the
+  transaction fails.
+- **Portfolio "Plan" column**: the workspace's newest "Project plan" file (link), `+N` to the Documents
+  tab for the rest, and an **Attach** button (`portfolio/attach-dialog.tsx`: type defaults to Project plan,
+  several files, drag and drop) that uploads into that workspace — the project or the end customer's
+  stream. `WorkspaceRow.planFiles` comes from `delivery-home.ts`; project-level plan files make a
+  programme's "Overall" row appear, like any other project-level item.
+- `/api/documents/[fileName]` now serves only images/PDF inline; everything else downloads as
+  octet-stream with `nosniff` (same rule as ticket attachments).
