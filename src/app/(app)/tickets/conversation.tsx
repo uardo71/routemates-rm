@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { InitialsAvatar } from "@/components/initials-avatar";
 import { cn } from "@/lib/utils";
+import { attachmentError, isInlineImage } from "@/lib/file-types";
 
 export type Attachment = { id: string; url: string; name: string; mime: string; size: number; canDelete: boolean };
 export type CommentNode = {
@@ -163,8 +164,8 @@ function AttachmentGrid({ items, deleteAttachmentAction }: { items: Attachment[]
   const router = useRouter();
   const openLightbox = React.useContext(LightboxCtx);
   const [, start] = React.useTransition();
-  const images = items.filter((a) => a.mime.startsWith("image/"));
-  const files = items.filter((a) => !a.mime.startsWith("image/"));
+  const images = items.filter((a) => isInlineImage(a.mime));
+  const files = items.filter((a) => !isInlineImage(a.mime));
   const del = (id: string) => deleteAttachmentAction && start(async () => { await deleteAttachmentAction(id); router.refresh(); });
   return (
     <div className="mt-3 flex flex-col gap-3">
@@ -216,6 +217,8 @@ export function Composer({ postAction, parentId, canInternal, placeholder, autoF
 
   function submit() {
     if (!body.trim() && files.length === 0) { setErr("Add a message or an attachment."); return; }
+    const fileErr = attachmentError(files.map((f) => f.file), 10);
+    if (fileErr) { setErr(fileErr); return; }
     const fd = new FormData();
     fd.set("body", body);
     if (parentId) fd.set("parentId", parentId);
@@ -259,8 +262,8 @@ export function Composer({ postAction, parentId, canInternal, placeholder, autoF
         </div>
       )}
       <div className="flex items-center gap-2">
-        <input ref={fileRef} type="file" multiple accept="image/*,application/pdf" className="hidden" onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }} />
-        <button type="button" onClick={() => fileRef.current?.click()} className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs text-muted-foreground hover:bg-muted" title="Attach images or PDF"><PaperclipIcon className="size-3.5" /> Attach</button>
+        <input ref={fileRef} type="file" multiple className="hidden" onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }} />
+        <button type="button" onClick={() => fileRef.current?.click()} className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs text-muted-foreground hover:bg-muted" title="Attach any file — documents, e-mails, spreadsheets, archives, screenshots (up to 25MB each)"><PaperclipIcon className="size-3.5" /> Attach</button>
         {canInternal && <label className="flex items-center gap-1.5 text-xs text-muted-foreground"><input type="checkbox" checked={internal} onChange={(e) => setInternal(e.target.checked)} className="accent-amber-500" /> Internal note</label>}
         {err && <span className="text-xs text-destructive">{err}</span>}
         <Button size="sm" className="ml-auto gap-1.5" disabled={pending} onClick={submit}><SendIcon className="size-4" /> {parentId ? "Reply" : "Send"}</Button>

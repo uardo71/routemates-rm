@@ -14,7 +14,7 @@ export type LoadedField = {
 };
 export type LoadedType = {
   id: string; key: string; name: string; description: string | null; icon: string | null; color: string | null;
-  order: number; active: boolean; isDefault: boolean; customerCanCreate: boolean;
+  order: number; active: boolean; isDefault: boolean; customerCanCreate: boolean; slaExempt: boolean;
   statuses: LoadedStatus[]; fields: LoadedField[];
 };
 export type TicketConfig = { types: LoadedType[]; globalFields: LoadedField[] };
@@ -47,7 +47,7 @@ async function seedTicketConfig(companyId: string): Promise<void> {
         data: {
           companyId, key: t.key, name: t.name, description: t.description ?? null,
           icon: t.icon, color: t.color, order: ti, active: true,
-          isDefault: t.isDefault ?? false, customerCanCreate: t.customerCanCreate ?? true,
+          isDefault: t.isDefault ?? false, customerCanCreate: t.customerCanCreate ?? true, slaExempt: t.slaExempt ?? false,
         },
       });
       await tx.ticketStatusDef.createMany({
@@ -96,7 +96,7 @@ export async function loadTicketConfig(companyId: string, includeInactive = fals
   }
   const loadedTypes: LoadedType[] = types.map((t) => ({
     id: t.id, key: t.key, name: t.name, description: t.description, icon: t.icon, color: t.color,
-    order: t.order, active: t.active, isDefault: t.isDefault, customerCanCreate: t.customerCanCreate,
+    order: t.order, active: t.active, isDefault: t.isDefault, customerCanCreate: t.customerCanCreate, slaExempt: t.slaExempt,
     statuses: t.statuses.map((s) => ({
       id: s.id, key: s.key, name: s.name, color: s.color, category: s.category, order: s.order,
       isInitial: s.isInitial, customerVisible: s.customerVisible, customerCanSet: s.customerCanSet,

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { AlertTriangleIcon, CheckCircle2Icon, PlusIcon, TicketIcon, UserXIcon, UsersIcon } from "lucide-react";
+import { AlertTriangleIcon, CheckCircle2Icon, GitPullRequestIcon, PlusIcon, TicketIcon, UserXIcon, UsersIcon } from "lucide-react";
+import { CR_FLOW, CR_STAGES, asCrStage, isChangeRequestType } from "@/lib/change-request";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/session";
 import { canManageClientTickets, visibleClientWhere, visibleTicketWhere, STAFF_ONLY } from "@/lib/permissions";
@@ -81,6 +82,16 @@ export default async function ClientWorkspacePage({ params, searchParams }: { pa
   }).length;
   const resolved7d = rows.filter((r) => r.resolvedAt && new Date(r.resolvedAt).getTime() >= weekAgo).length;
 
+  // Change requests carry no SLA — this strip shows where they are instead.
+  const crType = cfg.types.find((x) => isChangeRequestType(x.key));
+  const crStageOf = new Map((crType?.statuses ?? []).map((s) => [s.id, asCrStage(s.key)]));
+  const crOpen = crType ? open.filter((r) => r.typeId === crType.id) : [];
+  const crByStage = CR_FLOW.map((k) => ({ key: k, label: CR_STAGES[k].label, count: crOpen.filter((r) => crStageOf.get(r.statusId) === k).length })).filter((s) => s.count > 0);
+  const todayUtc = new Date(`${asOf.toISOString().slice(0, 10)}T00:00:00.000Z`);
+  const crOverdue = crOpen.length > 0
+    ? await prisma.changeRequest.count({ where: { ticketId: { in: crOpen.map((r) => r.id) }, nextStepDue: { lt: todayUtc } } })
+    : 0;
+
   const seen = new Set<string>();
   const customColumns: { key: string; label: string }[] = [];
   for (const t of cfg.types) for (const f of [...t.fields, ...cfg.globalFields]) {
@@ -120,6 +131,19 @@ export default async function ClientWorkspacePage({ params, searchParams }: { pa
         <Link href={`/tickets/c/${client.id}?focus=unassigned`} className="block rounded-lg ring-primary/40 hover:ring-2"><StatCard label="Unassigned" value={unassigned} icon={UserXIcon} tone={unassigned > 0 ? "warning" : "default"} sublabel="open, nobody on it" /></Link>
         <Link href={`/tickets/c/${client.id}?focus=resolved7d`} className="block rounded-lg ring-primary/40 hover:ring-2"><StatCard label="Resolved" value={resolved7d} icon={CheckCircle2Icon} sublabel="last 7 days" /></Link>
       </div>
+
+      {crOpen.length > 0 && (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border bg-card px-4 py-2.5 text-sm">
+          <span className="inline-flex items-center gap-1.5 font-medium"><GitPullRequestIcon className="size-4 text-muted-foreground" /> {crOpen.length} change request{crOpen.length === 1 ? "" : "s"} in flight</span>
+          {crByStage.map((s) => (
+            <span key={s.key} className="inline-flex items-center gap-1 text-muted-foreground">
+              {s.label} <span className="rounded-full bg-muted px-1.5 text-xs font-medium tabular-nums text-foreground">{s.count}</span>
+            </span>
+          ))}
+          {crOverdue > 0 && <span className="inline-flex items-center gap-1 text-rose-600 dark:text-rose-400"><AlertTriangleIcon className="size-3.5" /> {crOverdue} next step{crOverdue === 1 ? "" : "s"} overdue</span>}
+          <span className="ml-auto text-xs text-muted-foreground">No SLA — tracked by stage</span>
+        </div>
+      )}
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
         <TicketsClient

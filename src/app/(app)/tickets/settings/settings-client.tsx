@@ -28,7 +28,7 @@ import {
 
 type ClientStatus = { id: string; name: string; color: string | null; category: TicketStatusCategory; isInitial: boolean; customerVisible: boolean; customerCanSet: boolean };
 type ClientField = { id: string; name: string; kind: string; options: string[]; required: boolean; customerVisible: boolean; customerEditable: boolean };
-type ClientType = { id: string; key: string; name: string; description: string | null; icon: string | null; color: string | null; active: boolean; isDefault: boolean; customerCanCreate: boolean; statuses: ClientStatus[]; fields: ClientField[] };
+type ClientType = { id: string; key: string; name: string; description: string | null; icon: string | null; color: string | null; active: boolean; isDefault: boolean; customerCanCreate: boolean; slaExempt: boolean; statuses: ClientStatus[]; fields: ClientField[] };
 export type SettingsConfig = { types: ClientType[]; globalFields: ClientField[] };
 
 const selectCls = "h-9 w-full rounded-md border bg-transparent px-2 text-sm outline-none focus:border-primary/50";
@@ -72,6 +72,7 @@ export function TicketSettingsClient({ config, slaDefault }: { config: SettingsC
               <span className="font-semibold">{t.name}</span>
               {t.isDefault && <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[0.65rem] font-medium text-primary">Default</span>}
               {t.customerCanCreate ? <span className="inline-flex items-center gap-0.5 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[0.65rem] text-emerald-700 dark:text-emerald-400"><EyeIcon className="size-3" /> customer</span> : <span className="inline-flex items-center gap-0.5 rounded-full bg-muted px-1.5 py-0.5 text-[0.65rem] text-muted-foreground"><EyeOffIcon className="size-3" /> internal</span>}
+              {t.slaExempt && <span className="rounded-full bg-muted px-1.5 py-0.5 text-[0.65rem] text-muted-foreground" title="No response or resolution targets">no SLA</span>}
               {!t.active && <span className="rounded-full bg-muted px-1.5 py-0.5 text-[0.65rem] text-muted-foreground">inactive</span>}
             </div>
             <div className="flex items-center gap-1">
@@ -207,6 +208,7 @@ function TypeDialog({ type, onClose, onSaved }: { type?: ClientType; onClose: ()
   const [color, setColor] = React.useState(type?.color ?? "sky");
   const [description, setDescription] = React.useState(type?.description ?? "");
   const [customerCanCreate, setCcc] = React.useState(type?.customerCanCreate ?? true);
+  const [slaExempt, setSlaExempt] = React.useState(type?.slaExempt ?? false);
   const [active, setActive] = React.useState(type?.active ?? true);
 
   return (
@@ -219,12 +221,13 @@ function TypeDialog({ type, onClose, onSaved }: { type?: ClientType; onClose: ()
           <div className="flex flex-col gap-1"><Label>Colour</Label><ColorPicker value={color} onChange={setColor} /></div>
           <div className="flex flex-col gap-1"><Label>Description</Label><Textarea rows={2} value={description} onChange={(e) => setDescription(e.target.value)} /></div>
           <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={customerCanCreate} onChange={(e) => setCcc(e.target.checked)} className="accent-primary" /> Customers can raise this type from the portal</label>
+          <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={slaExempt} onChange={(e) => setSlaExempt(e.target.checked)} className="mt-0.5 accent-primary" /> <span>No SLA — no response or resolution targets<span className="block text-xs text-muted-foreground">Existing tickets of this type are updated when you save.</span></span></label>
           {type && <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} className="accent-primary" /> Active</label>}
           {err && <p className="text-sm text-destructive">{err}</p>}
         </div>
         <div className="flex justify-end gap-2 border-t pt-3">
           <Button variant="outline" onClick={onClose}>Cancel</Button>
-          <Button disabled={saving || !name.trim()} onClick={() => run(() => type ? updateTicketTypeAction(type.id, { name, icon, color, description, customerCanCreate, active }) : createTicketTypeAction({ name, icon, color, description, customerCanCreate }))}>{saving ? "Saving…" : "Save"}</Button>
+          <Button disabled={saving || !name.trim()} onClick={() => run(() => type ? updateTicketTypeAction(type.id, { name, icon, color, description, customerCanCreate, slaExempt, active }) : createTicketTypeAction({ name, icon, color, description, customerCanCreate, slaExempt }))}>{saving ? "Saving…" : "Save"}</Button>
         </div>
       </DialogContent>
     </Dialog>

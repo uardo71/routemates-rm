@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/session";
 import { canManageClientTickets } from "@/lib/permissions";
 import { readReceiptFile } from "@/lib/receipt-storage";
+import { servedAs, contentDisposition } from "@/lib/file-types";
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ fileName: string }> }) {
   const { fileName } = await params;
@@ -33,10 +34,14 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ fil
   if (!buffer) {
     return new NextResponse("Not found", { status: 404 });
   }
+  // Images and PDFs open in the browser; anything else (Office, e-mail, archives, HTML, SVG…) downloads
+  // with a neutral type, so an uploaded file can never run script in the app's origin.
+  const served = servedAs(a.mimeType || "application/octet-stream");
   return new NextResponse(buffer as unknown as BodyInit, {
     headers: {
-      "Content-Type": a.mimeType || "application/octet-stream",
-      "Content-Disposition": `inline; filename="${encodeURIComponent(a.originalName)}"`,
+      "Content-Type": served.contentType,
+      "Content-Disposition": contentDisposition(a.originalName, served.inline),
+      "X-Content-Type-Options": "nosniff",
       "Cache-Control": "private, max-age=3600",
     },
   });

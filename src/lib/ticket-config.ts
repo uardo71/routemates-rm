@@ -87,7 +87,7 @@ export type SeedField = {
 };
 export type SeedType = {
   key: string; name: string; description?: string; icon: TypeIconKey; color: StatusColor;
-  isDefault?: boolean; customerCanCreate?: boolean; statuses: SeedStatus[]; fields?: SeedField[];
+  isDefault?: boolean; customerCanCreate?: boolean; slaExempt?: boolean; statuses: SeedStatus[]; fields?: SeedField[];
 };
 
 // A generic support workflow reused by several types.
@@ -128,15 +128,17 @@ export const DEFAULT_TICKET_CONFIG: SeedType[] = [
     ],
   },
   {
-    key: "change_request", name: "Change request", icon: "change", color: "indigo", customerCanCreate: true,
-    description: "A planned change to a system, tracked through review and implementation.",
+    key: "change_request", name: "Change request", icon: "change", color: "indigo", customerCanCreate: true, slaExempt: true,
+    description: "A change to be evaluated, developed, unit tested, accepted in UAT and taken live. No SLA — tracked by stage.",
+    // The stage keys are load-bearing: src/lib/change-request.ts gates moves between them.
     statuses: [
-      { key: "submitted", name: "Submitted", color: "violet", category: "OPEN", isInitial: true },
-      { key: "under_review", name: "Under review", color: "amber", category: "IN_PROGRESS" },
-      { key: "approved", name: "Approved", color: "blue", category: "IN_PROGRESS" },
-      { key: "scheduled", name: "Scheduled", color: "cyan", category: "IN_PROGRESS" },
-      { key: "implemented", name: "Implemented", color: "teal", category: "IN_PROGRESS" },
-      { key: "closed", name: "Closed", color: "emerald", category: "DONE", customerCanSet: true },
+      { key: "evaluation", name: "Evaluation", color: "violet", category: "OPEN", isInitial: true },
+      { key: "development", name: "Development", color: "blue", category: "IN_PROGRESS" },
+      { key: "unit_testing", name: "Unit testing", color: "cyan", category: "IN_PROGRESS" },
+      { key: "uat", name: "UAT", color: "amber", category: "IN_PROGRESS" },
+      { key: "go_live", name: "Go-live", color: "teal", category: "IN_PROGRESS" },
+      { key: "closing", name: "Closing", color: "lime", category: "IN_PROGRESS" },
+      { key: "closed", name: "Closed", color: "emerald", category: "DONE" },
       { key: "rejected", name: "Rejected", color: "red", category: "CANCELLED" },
     ],
     fields: [

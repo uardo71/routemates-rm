@@ -8,8 +8,8 @@ import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/session";
 import { canManageClientTickets } from "@/lib/permissions";
 import { nextTicketNumber } from "@/lib/numbering";
-import { addHours, TICKET_PRIORITY_LABEL } from "@/lib/ticket";
-import { resolveSlaTargets } from "@/lib/sla.server";
+import { TICKET_PRIORITY_LABEL } from "@/lib/ticket";
+import { slaDeadlines } from "@/lib/sla.server";
 import { isOpenCategory } from "@/lib/ticket-config";
 import { loadTicketConfig, findType, initialStatus } from "@/lib/ticket-config.server";
 import { applyFieldValues, fieldRawFromForm } from "@/lib/ticket-fields";
@@ -17,6 +17,8 @@ import { extractFiles } from "@/lib/ticket-attachments";
 import { postTicketComment, editCommentBody, softDeleteComment } from "@/lib/ticket-comments";
 import { notifyTicketParticipants, notifyTicketUser, userName } from "@/lib/ticket-notify";
 import { deleteReceiptFile } from "@/lib/receipt-storage";
+import { CR_MOVE_ONLY, isChangeRequestType } from "@/lib/change-request";
+import { startChangeRequest } from "@/lib/change-request.server";
 
 function utcDate(s: string | null | undefined): Date | null {
   if (!s) return null;
@@ -30,6 +32,7 @@ async function ticketForAction(ticketId: string, companyId: string) {
     select: {
       id: true, requesterId: true, assigneeId: true, createdById: true, priority: true, clientId: true,
       typeId: true, statusId: true, firstResponseAt: true, createdAt: true,
+      typeDef: { select: { key: true, slaExempt: true } },
       statusDef: { select: { name: true, category: true } },
     },
   });
@@ -89,7 +92,7 @@ export async function createTicketAction(_prev: unknown, formData: FormData): Pr
   const rawFields = fieldRawFromForm(formData, cfg, d.typeId);
 
   const now = new Date();
-  const sla = (await resolveSlaTargets(user.companyId, d.clientId || null))[d.priority];
+  const sla = await slaDeadlines(user.companyId, d.clientId || null, d.priority, type.slaExempt, now);
   let id: string;
   try {
     const created = await prisma.$transaction(async (tx) => {
@@ -104,12 +107,13 @@ export async function createTicketAction(_prev: unknown, formData: FormData): Pr
           clientId: d.clientId || null, projectId: d.projectId || null,
           category: d.category || null, systemRef: d.systemRef || null, moduleRef: d.moduleRef || null,
           dueDate: utcDate(d.dueDate),
-          respondBy: addHours(now, sla.respond), resolveBy: addHours(now, sla.resolve),
+          respondBy: sla.respondBy, resolveBy: sla.resolveBy,
           comments: { create: { authorId: user.id, kind: "CREATED", body: "raised the ticket" } },
         },
         select: { id: true },
       });
       await applyFieldValues(tx, ticket.id, type.id, rawFields, cfg);
+      if (isChangeRequestType(type.key)) await startChangeRequest(tx, ticket.id, initial.key, user.id);
       return ticket;
     });
     id = created.id;
@@ -131,6 +135,7 @@ export async function setTicketStatusAction(ticketId: string, statusId: string):
   if (!t) return { error: "Not found" };
   if (!involved(t, user.id) && !(await canManageClientTickets(user, t.clientId))) return { error: "Forbidden" };
   if (t.statusId === statusId) return {};
+  if (isChangeRequestType(t.typeDef.key)) return { error: CR_MOVE_ONLY };
   const target = await prisma.ticketStatusDef.findFirst({
     where: { id: statusId, typeId: t.typeId, companyId: user.companyId },
     select: { name: true, category: true },
@@ -178,8 +183,8 @@ export async function setTicketPriorityAction(ticketId: string, priority: Ticket
   if (!t) return { error: "Not found" };
   if (!(await canManageClientTickets(user, t.clientId))) return { error: "Forbidden" };
   if (t.priority === priority) return {};
-  const sla = (await resolveSlaTargets(user.companyId, t.clientId))[priority];
-  await prisma.ticket.update({ where: { id: ticketId }, data: { priority, respondBy: addHours(t.createdAt, sla.respond), resolveBy: addHours(t.createdAt, sla.resolve) } });
+  const sla = await slaDeadlines(user.companyId, t.clientId, priority, t.typeDef.slaExempt, t.createdAt);
+  await prisma.ticket.update({ where: { id: ticketId }, data: { priority, ...sla } });
   await logActivity(ticketId, user.id, "PRIORITY", `${TICKET_PRIORITY_LABEL[t.priority]} → ${TICKET_PRIORITY_LABEL[priority]}`);
   revalidatePath(`/tickets/${ticketId}`);
   revalidatePath("/tickets");
@@ -221,23 +226,27 @@ export async function updateTicketDetailsAction(ticketId: string, patch: z.infer
     category: d.category || null, systemRef: d.systemRef || null, moduleRef: d.moduleRef || null,
     dueDate: utcDate(d.dueDate), resolution: d.resolution || null,
   };
+  let initKey: string | null = null;
   if (typeChanged) {
     const init = initialStatus(newType);
     if (!init) return { error: "Target type has no statuses" };
     data.statusId = init.id;
+    initKey = init.key;
   }
-  // Moving the ticket to a different client re-applies that client's SLA targets from the created date.
+  // A different client or type re-applies the SLA from the created date — or clears it for a type
+  // without SLA (change requests).
   const newClientId = d.clientId || null;
-  if (newClientId !== (t.clientId ?? null)) {
-    const sla = (await resolveSlaTargets(user.companyId, newClientId))[t.priority];
-    data.respondBy = addHours(t.createdAt, sla.respond);
-    data.resolveBy = addHours(t.createdAt, sla.resolve);
+  if (typeChanged || newClientId !== (t.clientId ?? null)) {
+    Object.assign(data, await slaDeadlines(user.companyId, newClientId, t.priority, newType.slaExempt, t.createdAt));
   }
   try {
     await prisma.$transaction(async (tx) => {
       await tx.ticket.update({ where: { id: ticketId }, data });
       if (d.fields) await applyFieldValues(tx, ticketId, d.typeId, d.fields, cfg);
-      if (typeChanged) await tx.ticketComment.create({ data: { ticketId, authorId: user.id, kind: "STATUS", body: `type changed to ${newType.name}`, internal: false } });
+      if (typeChanged) {
+        await tx.ticketComment.create({ data: { ticketId, authorId: user.id, kind: "STATUS", body: `type changed to ${newType.name}`, internal: false } });
+        if (isChangeRequestType(newType.key) && initKey) await startChangeRequest(tx, ticketId, initKey, user.id);
+      }
     });
   } catch {
     return { error: "Could not update the ticket." };
@@ -259,8 +268,10 @@ export async function applyWorkflowAction(
   const manage = await canManageClientTickets(user, t.clientId);
   if (!manage && !involved(t, user.id)) return { error: "Forbidden" };
 
-  // Status — allowed for involved users; assignee/priority are manage-only.
+  // Status — allowed for involved users; assignee/priority are manage-only. A change request's
+  // status is its lifecycle stage and only moves through moveChangeRequestAction.
   if (patch.statusId && patch.statusId !== t.statusId) {
+    if (isChangeRequestType(t.typeDef.key)) return { error: CR_MOVE_ONLY };
     const target = await prisma.ticketStatusDef.findFirst({ where: { id: patch.statusId, typeId: t.typeId, companyId: user.companyId }, select: { name: true, category: true } });
     if (!target) return { error: "That status is not valid for this ticket's type" };
     const now = new Date();
@@ -285,8 +296,8 @@ export async function applyWorkflowAction(
   }
 
   if (manage && patch.priority && patch.priority !== t.priority) {
-    const sla = (await resolveSlaTargets(user.companyId, t.clientId))[patch.priority];
-    await prisma.ticket.update({ where: { id: ticketId }, data: { priority: patch.priority, respondBy: addHours(t.createdAt, sla.respond), resolveBy: addHours(t.createdAt, sla.resolve) } });
+    const sla = await slaDeadlines(user.companyId, t.clientId, patch.priority, t.typeDef.slaExempt, t.createdAt);
+    await prisma.ticket.update({ where: { id: ticketId }, data: { priority: patch.priority, ...sla } });
     await logActivity(ticketId, user.id, "PRIORITY", `${TICKET_PRIORITY_LABEL[t.priority]} → ${TICKET_PRIORITY_LABEL[patch.priority]}`);
   }
 

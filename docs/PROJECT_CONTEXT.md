@@ -1760,3 +1760,44 @@ owner, client, project, milestone, task, end customer, opportunity, invoice, the
 and labels them by what they are; `presentAudit` resolves the ids to names (company-scoped, projects
 and opportunities as "number name", a vanished record as "(deleted)") when the history is READ, so
 old entries read right too. Rebuilt summaries keep their note (`summaryTail`, legacy wording aware).
+
+### Change requests: a gated lifecycle with no SLA; any attachment on tickets (2026-09-11)
+Migration `20260911210000_change_request_lifecycle`. A ticket of type `change_request` is a CR.
+- **Stages = the type's statuses** (keys are load-bearing): evaluation → development → unit_testing →
+  uat → go_live → closing → closed, plus rejected. The migration rewrote the existing type per company
+  (submitted/under_review → evaluation, approved/scheduled → development, implemented → go_live; old
+  statuses deleted once empty; admin-added statuses kept after the lifecycle). Prod had 3 CRs, all
+  "Submitted" → Evaluation. The seed (`DEFAULT_TICKET_CONFIG`) matches.
+- **No SLA**: `TicketTypeDef.slaExempt` (true for CRs; a "No SLA" tick on any type in ticket settings,
+  which clears or re-applies existing tickets' deadlines). Every deadline write goes through
+  `sla.server.ts#slaDeadlines(…, slaExempt, base)` — create (staff + portal), priority, client or type
+  change. Null deadlines already drop out of breach counts, SLA pills and the board.
+- **Pure `src/lib/change-request.ts` (tested)**: `CR_STAGES` (purpose, owner, the next steps that get
+  each stage done), `crMoveKind` (forward one stage at a time; back to any earlier stage; reject from
+  any open stage; reopen Closed → Closing, Rejected → Evaluation), `exitChecks` (evaluation: assessment
+  + estimate > 0 + customer approval name and date; development: assignee + planned go-live; unit
+  testing: results or a file filed under Unit testing; UAT: sign-off name and date; go-live: date;
+  closing: Resolution written), `decideCrMove` (back/reject/reopen need a reason; reject/reopen and
+  overriding red checks are the client team's call — `canManageClientTickets`; people only on the
+  ticket can move forward when green and send back), `timeInStages`, `nextStepState`.
+- **Status can't be set directly on a CR** — the status menu, board drag, `setTicketStatusAction`,
+  `applyWorkflowAction` and the portal all refuse with `CR_MOVE_ONLY`; moves go through
+  `tickets/cr-actions.ts#moveChangeRequestAction` (ticket status + `ChangeRequestStageEvent` + an
+  activity line with the note/override, one transaction, participants notified).
+- **Models**: `ChangeRequest` (1:1 ticket: assessment, estimate h, quote ref, approval by/on/ref,
+  planned go-live, transports, unit test results/date, UAT sign-off by/on/notes, go-live date, next
+  step + owner (plain id) + due) and `ChangeRequestStageEvent` (append-only: from/to/move/note/override/
+  by/at). `startChangeRequest` writes both when a ticket is created as, or changed into, a CR.
+- **Ticket page**: a Lifecycle panel (stepper with time per stage, "Now: <stage>" with its purpose and
+  steps, the checks to move on, Move / Send back / Reject / Reopen dialog, next step with owner/due and
+  an overdue flag, stage history); the CR record replaces the SLA card and saves with the ticket's Save
+  (moves are disabled while there are unsaved changes); header shows stage · time · "no SLA".
+  Client workspace shows "N change requests in flight" by stage and overdue next steps.
+- **Attachments, every ticket**: a Files section lists every file (added there or in the discussion);
+  CR files are filed under a stage (`TicketAttachment.stageKey`, re-filable). Any type is accepted except
+  programs/scripts (`src/lib/file-types.ts`, tested), 25MB a file, 45MB a batch. The serve route shows only
+  images/PDF inline; everything else downloads as octet-stream with `nosniff`, so an uploaded HTML/SVG
+  can't run in the app's origin. `serverActions.bodySizeLimit` → 50mb and **`proxyClientMaxBodySize` →
+  50mb** — proxy.ts made Next buffer only 10MB and pass a silently truncated body on.
+- Not done: CR next steps aren't in the Actions register or alerts yet; the portal shows the stage name
+  only (no stepper); CR billing (estimate → quote/amendment) is not linked.

@@ -7,8 +7,9 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requirePortalUser } from "@/lib/portal";
 import { nextTicketNumber } from "@/lib/numbering";
-import { addHours } from "@/lib/ticket";
-import { resolveSlaTargets } from "@/lib/sla.server";
+import { slaDeadlines } from "@/lib/sla.server";
+import { CR_MOVE_ONLY, isChangeRequestType } from "@/lib/change-request";
+import { startChangeRequest } from "@/lib/change-request.server";
 import { notifyTicketParticipants, userName } from "@/lib/ticket-notify";
 import { isOpenCategory } from "@/lib/ticket-config";
 import { loadTicketConfig, findType, initialStatus } from "@/lib/ticket-config.server";
@@ -21,7 +22,7 @@ import { deleteReceiptFile } from "@/lib/receipt-storage";
 async function portalTicket(ticketId: string, companyId: string, clientId: string) {
   return prisma.ticket.findFirst({
     where: { id: ticketId, companyId, clientId },
-    select: { id: true, typeId: true, statusId: true, firstResponseAt: true, statusDef: { select: { category: true, name: true } } },
+    select: { id: true, typeId: true, statusId: true, firstResponseAt: true, typeDef: { select: { key: true } }, statusDef: { select: { category: true, name: true } } },
   });
 }
 
@@ -51,7 +52,7 @@ export async function createPortalTicketAction(_prev: unknown, formData: FormDat
   const rawFields = fieldRawFromForm(formData, cfg, d.typeId);
 
   const now = new Date();
-  const sla = (await resolveSlaTargets(u.companyId, u.clientId))[d.priority];
+  const sla = await slaDeadlines(u.companyId, u.clientId, d.priority, type.slaExempt, now);
   let id: string;
   try {
     const created = await prisma.$transaction(async (tx) => {
@@ -61,12 +62,13 @@ export async function createPortalTicketAction(_prev: unknown, formData: FormDat
           companyId: u.companyId, number, title: d.title, description: d.description || null,
           typeId: type.id, priority: d.priority, statusId: initial.id,
           requesterId: u.id, createdById: u.id, clientId: u.clientId,
-          respondBy: addHours(now, sla.respond), resolveBy: addHours(now, sla.resolve),
+          respondBy: sla.respondBy, resolveBy: sla.resolveBy,
           comments: { create: { authorId: u.id, kind: "CREATED", body: "raised the ticket", internal: false } },
         },
         select: { id: true },
       });
       await applyFieldValues(tx, ticket.id, type.id, rawFields, cfg, "creatable");
+      if (isChangeRequestType(type.key)) await startChangeRequest(tx, ticket.id, initial.key, u.id);
       return ticket;
     });
     id = created.id;
@@ -141,6 +143,7 @@ export async function setPortalStatusAction(ticketId: string, statusId: string):
   const t = await portalTicket(ticketId, u.companyId, u.clientId);
   if (!t) return { error: "Not found" };
   if (t.statusId === statusId) return {};
+  if (isChangeRequestType(t.typeDef.key)) return { error: CR_MOVE_ONLY };
   const target = await prisma.ticketStatusDef.findFirst({
     where: { id: statusId, typeId: t.typeId, companyId: u.companyId, customerVisible: true, customerCanSet: true },
     select: { name: true, category: true },

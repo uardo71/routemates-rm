@@ -1832,6 +1832,7 @@ model TicketTypeDef {
   active            Boolean  @default(true)
   isDefault         Boolean  @default(false) // pre-selected type on new tickets
   customerCanCreate Boolean  @default(true) // customers may open this type from the portal
+  slaExempt         Boolean  @default(false) // no respond/resolve targets (change requests: tracked by stage)
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
@@ -2014,6 +2015,8 @@ model Ticket {
   attachments TicketAttachment[]
   fieldValues TicketFieldValue[]
   notifications TicketNotification[]
+  changeRequest ChangeRequest?
+  crStageEvents ChangeRequestStageEvent[]
 
   @@unique([companyId, number])
   @@index([companyId, statusId])
@@ -2078,9 +2081,57 @@ model TicketAttachment {
   uploadedById String
   uploadedBy   User     @relation(fields: [uploadedById], references: [id])
   uploadedAt   DateTime @default(now())
+  // Change requests: the lifecycle stage the file belongs to (spec, test evidence, UAT sign-off…).
+  stageKey     String?
 
   @@index([ticketId])
   @@index([commentId])
+}
+
+// ---------- Change requests (a gated lifecycle on tickets of the change_request type) ----------
+
+// What each stage of a change request produced. One row per change-request ticket. The stage itself
+// is the ticket's status (keys in src/lib/change-request.ts). Change requests carry no SLA — they
+// are tracked by stage, time in stage and the next step.
+model ChangeRequest {
+  ticketId          String    @id
+  ticket            Ticket    @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  assessment        String? // evaluation: impact and proposed solution
+  estimateHours     Decimal?  @db.Decimal(8, 2)
+  quoteReference    String?
+  approvedByName    String? // who approved the estimate at the customer
+  approvedOn        DateTime?
+  approvalReference String? // PO / e-mail reference
+  plannedGoLive     DateTime?
+  buildReference    String? // transports / release
+  unitTestNotes     String?
+  unitTestedOn      DateTime?
+  uatSignedOffBy    String?
+  uatSignedOffOn    DateTime?
+  uatNotes          String?
+  goLiveOn          DateTime?
+  nextStep          String?
+  nextStepOwnerId   String? // plain id (no FK), like the other "by" columns
+  nextStepDue       DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+}
+
+// Every stage move of a change request, append-only: where it went, why (rework, rejection,
+// reopening) and the override reason when a gate was skipped. Time in stage comes from these rows.
+model ChangeRequestStageEvent {
+  id             String   @id @default(cuid())
+  ticketId       String
+  ticket         Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  fromKey        String?
+  toKey          String
+  move           String // START | FORWARD | BACK | REJECT | REOPEN
+  note           String?
+  overrideReason String?
+  byId           String // plain id (no FK) so history survives a deleted user
+  at             DateTime @default(now())
+
+  @@index([ticketId, at])
 }
 
 // ---------- Engagements (end-customer streams inside a project's delivery cockpit) ----------

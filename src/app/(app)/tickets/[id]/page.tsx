@@ -4,7 +4,11 @@ import { requireUser } from "@/lib/session";
 import { canManageClientTickets } from "@/lib/permissions";
 import { loadTicketConfig, fieldsForType } from "@/lib/ticket-config.server";
 import { buildThread, COMMENT_INCLUDE } from "@/lib/ticket-thread";
+import { asCrStage, isChangeRequestType, timeInStages, type CrStageKey } from "@/lib/change-request";
+import { crDraftFromRow } from "@/lib/change-request.server";
 import { TicketDetailClient, type DetailConfig } from "./ticket-detail-client";
+import type { CrView } from "./change-request-panel";
+import type { TicketFile } from "./ticket-files";
 
 export const metadata = { title: "Ticket" };
 const iso = (d: Date | null) => (d ? d.toISOString() : "");
@@ -17,8 +21,8 @@ export default async function TicketDetailPage({ params }: { params: Promise<{ i
   const t = await prisma.ticket.findFirst({
     where: { id, companyId: user.companyId },
     include: {
-      typeDef: { select: { id: true, name: true, color: true, icon: true } },
-      statusDef: { select: { id: true, name: true, color: true, category: true } },
+      typeDef: { select: { id: true, key: true, name: true, color: true, icon: true, slaExempt: true } },
+      statusDef: { select: { id: true, key: true, name: true, color: true, category: true } },
       requester: { select: { name: true } },
       assignee: { select: { name: true } },
       client: { select: { name: true } },
@@ -26,6 +30,15 @@ export default async function TicketDetailPage({ params }: { params: Promise<{ i
       comments: COMMENT_INCLUDE,
       worklogs: { orderBy: { createdAt: "desc" }, include: { user: { select: { name: true } } } },
       fieldValues: { select: { fieldId: true, value: true } },
+      attachments: {
+        orderBy: { uploadedAt: "desc" },
+        select: {
+          id: true, fileName: true, originalName: true, mimeType: true, sizeBytes: true, uploadedById: true, uploadedAt: true,
+          stageKey: true, commentId: true, comment: { select: { internal: true } }, uploadedBy: { select: { name: true } },
+        },
+      },
+      changeRequest: true,
+      crStageEvents: { orderBy: { at: "asc" } },
     },
   });
   if (!t) notFound();
@@ -57,9 +70,40 @@ export default async function TicketDetailPage({ params }: { params: Promise<{ i
   const valueByField = new Map(t.fieldValues.map((v) => [v.fieldId, v.value]));
   const { conversation, history } = buildThread(t.comments, user.id, { canManage: manage });
 
+  const files: TicketFile[] = t.attachments.map((a) => ({
+    id: a.id, url: `/api/tickets/attachments/${a.fileName}`, name: a.originalName, mime: a.mimeType, size: a.sizeBytes,
+    uploadedByName: a.uploadedBy.name, uploadedAt: iso(a.uploadedAt), stageKey: a.stageKey,
+    fromComment: !!a.commentId, internal: !!a.comment?.internal, canDelete: manage || a.uploadedById === user.id,
+  }));
+
+  let cr: CrView | null = null;
+  if (isChangeRequestType(t.typeDef.key)) {
+    // Moves may be by anyone who ever touched the ticket (a portal user started it, a leaver moved it).
+    const people = new Map((await prisma.user.findMany({ where: { companyId: user.companyId }, select: { id: true, name: true } })).map((u) => [u.id, u.name]));
+    const now = new Date();
+    const events = t.crStageEvents.map((e) => ({
+      id: e.id, fromKey: e.fromKey, toKey: e.toKey, move: e.move, note: e.note ?? "", overrideReason: e.overrideReason ?? "",
+      byName: people.get(e.byId) ?? "Deleted user", at: iso(e.at),
+    }));
+    const timeline = events.length > 0 ? events : [{ toKey: t.statusDef.key, at: iso(t.createdAt) }];
+    const evidence: Partial<Record<CrStageKey, number>> = {};
+    for (const a of t.attachments) {
+      const k = asCrStage(a.stageKey);
+      if (k) evidence[k] = (evidence[k] ?? 0) + 1;
+    }
+    cr = {
+      stage: asCrStage(t.statusDef.key), statusName: t.statusDef.name,
+      saved: crDraftFromRow(t.changeRequest),
+      events, timeInStage: timeInStages(timeline, now.toISOString()), stageSince: timeline[timeline.length - 1].at,
+      loggedMinutes: t.worklogs.reduce((s, w) => s + w.minutes, 0),
+      evidence, todayIso: now.toISOString().slice(0, 10),
+    };
+  }
+
   return (
     <TicketDetailClient
       canManage={manage}
+      involved={involved}
       users={users}
       clients={clients}
       projects={projects}
@@ -68,7 +112,7 @@ export default async function TicketDetailPage({ params }: { params: Promise<{ i
       history={history}
       t={{
         id: t.id, number: t.number, title: t.title, description: t.description ?? "",
-        typeId: t.typeId, typeName: t.typeDef.name, typeColor: t.typeDef.color, typeIcon: t.typeDef.icon,
+        typeId: t.typeId, typeName: t.typeDef.name, typeColor: t.typeDef.color, typeIcon: t.typeDef.icon, slaExempt: t.typeDef.slaExempt,
         priority: t.priority,
         statusId: t.statusId, statusName: t.statusDef.name, statusColor: t.statusDef.color, statusCategory: t.statusDef.category,
         requesterName: t.requester.name, assigneeId: t.assigneeId, assigneeName: t.assignee?.name ?? null,
@@ -78,6 +122,8 @@ export default async function TicketDetailPage({ params }: { params: Promise<{ i
         respondBy: iso(t.respondBy), resolveBy: iso(t.resolveBy), firstResponseAt: iso(t.firstResponseAt), resolvedAt: iso(t.resolvedAt), closedAt: iso(t.closedAt), createdAt: iso(t.createdAt),
         worklogs: t.worklogs.map((w) => ({ id: w.id, userName: w.user.name, minutes: w.minutes, workedOn: d10(w.workedOn), note: w.note ?? "", mine: w.userId === user.id })),
         fields: config.fields.map((f) => ({ ...f, value: valueByField.get(f.id) ?? null, display: displayValue(f, valueByField.get(f.id) ?? null, nameById) })),
+        files,
+        cr,
       }}
     />
   );

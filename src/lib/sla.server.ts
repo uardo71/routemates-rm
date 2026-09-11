@@ -1,6 +1,18 @@
 import "server-only";
+import type { TicketPriority } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { normalizeTargets, DEFAULT_SLA_TARGETS, type SlaTargets } from "@/lib/sla";
+import { addHours } from "@/lib/ticket";
+
+/** A ticket's respond/resolve deadlines counted from `base` (its creation) — none at all for a type
+ *  without SLA (change requests are tracked by stage instead). */
+export async function slaDeadlines(
+  companyId: string, clientId: string | null, priority: TicketPriority, slaExempt: boolean, base: Date,
+): Promise<{ respondBy: Date | null; resolveBy: Date | null }> {
+  if (slaExempt) return { respondBy: null, resolveBy: null };
+  const t = (await resolveSlaTargets(companyId, clientId))[priority];
+  return { respondBy: addHours(base, t.respond), resolveBy: addHours(base, t.resolve) };
+}
 
 /** The SLA targets that apply to a ticket: the client override if one exists, else the company
  *  default, else the built-in fallback. */

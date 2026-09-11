@@ -27,6 +27,10 @@ import {
   applyWorkflowAction, updateTicketDetailsAction, addCommentAction, deleteTicketAttachmentAction,
   editCommentAction, deleteCommentAction, addWorklogAction, deleteWorklogAction,
 } from "../actions";
+import { saveChangeRequestAction } from "../cr-actions";
+import { formatDuration, isCrTerminal, nextStepState, type CrDraft } from "@/lib/change-request";
+import { ChangeRequestLifecycle, CrRecordSection, type CrView } from "./change-request-panel";
+import { TicketFiles, type TicketFile } from "./ticket-files";
 
 // Laid out like an Azure DevOps work item: a sticky header (type eyebrow, title, assignee, state
 // strip, tabs) over a three-column body — description + discussion on the left, classification and
@@ -52,6 +56,9 @@ type Detail = {
   category: string; systemRef: string; moduleRef: string; dueDate: string; resolution: string;
   respondBy: string; resolveBy: string; firstResponseAt: string; resolvedAt: string; closedAt: string; createdAt: string;
   worklogs: Worklog[]; fields: FieldVal[];
+  slaExempt: boolean; files: TicketFile[];
+  /** Set when the ticket is a change request: its lifecycle, record and stage history. */
+  cr: CrView | null;
 };
 
 const selectCls = "h-8 w-full rounded-md border bg-transparent px-2 text-sm outline-none focus:border-primary/50 disabled:border-transparent disabled:px-0 disabled:opacity-100";
@@ -74,16 +81,16 @@ function draftFrom(t: Detail): Draft {
 }
 
 export function TicketDetailClient(props: {
-  t: Detail; config: DetailConfig; canManage: boolean; users: Opt[]; clients: Opt[]; projects: Opt[];
+  t: Detail; config: DetailConfig; canManage: boolean; involved: boolean; users: Opt[]; clients: Opt[]; projects: Opt[];
   conversation: CommentNode[]; history: HistoryEvent[];
 }) {
   // Re-key on the server's version of the ticket so a refresh after Save resets the draft without
   // an effect that syncs state to props.
-  return <WorkItem key={JSON.stringify(draftFrom(props.t)) + props.t.typeId} {...props} />;
+  return <WorkItem key={JSON.stringify(draftFrom(props.t)) + props.t.typeId + JSON.stringify(props.t.cr?.saved ?? null)} {...props} />;
 }
 
-function WorkItem({ t, config, canManage, users, clients, projects, conversation, history }: {
-  t: Detail; config: DetailConfig; canManage: boolean; users: Opt[]; clients: Opt[]; projects: Opt[];
+function WorkItem({ t, config, canManage, involved, users, clients, projects, conversation, history }: {
+  t: Detail; config: DetailConfig; canManage: boolean; involved: boolean; users: Opt[]; clients: Opt[]; projects: Opt[];
   conversation: CommentNode[]; history: HistoryEvent[];
 }) {
   const router = useRouter();
@@ -97,11 +104,22 @@ function WorkItem({ t, config, canManage, users, clients, projects, conversation
 
   const workflowDirty = d.statusId !== baseline.statusId || d.assigneeId !== baseline.assigneeId || d.priority !== baseline.priority;
   const detailsDirty = JSON.stringify({ ...d, statusId: 0, assigneeId: 0, priority: 0 }) !== JSON.stringify({ ...baseline, statusId: 0, assigneeId: 0, priority: 0 });
-  const dirty = workflowDirty || detailsDirty;
+  // A change request's record is part of the same draft and goes out on the same Save.
+  const crSaved = t.cr?.saved ?? null;
+  const [crd, setCrd] = React.useState<CrDraft | null>(crSaved);
+  const setCr = (p: Partial<CrDraft>) => setCrd((x) => (x ? { ...x, ...p } : x));
+  const crDirty = !!crd && JSON.stringify(crd) !== JSON.stringify(crSaved);
+  const dirty = workflowDirty || detailsDirty || crDirty;
+  // Files and the change-request record: the client's team and the people on the ticket.
+  const canContribute = canManage || involved;
 
   async function save() {
     setSaving(true); setErr(null);
     try {
+      if (crDirty && crd) {
+        const r = await saveChangeRequestAction(t.id, crd);
+        if (r.error) { setErr(r.error); return; }
+      }
       if (workflowDirty) {
         const r = await applyWorkflowAction(t.id, { statusId: d.statusId, assigneeId: canManage ? (d.assigneeId || null) : undefined, priority: canManage ? d.priority : undefined });
         if (r.error) { setErr(r.error); return; }
@@ -185,14 +203,14 @@ function WorkItem({ t, config, canManage, users, clients, projects, conversation
                 )}
               </div>
               <span className="inline-flex items-center gap-1 text-sm text-muted-foreground"><MessageSquareIcon className="size-4" /> {commentCount} Comment{commentCount === 1 ? "" : "s"}</span>
-              <LiveSla t={t} />
+              {t.cr ? <CrPill cr={t.cr} nextDue={crd?.nextStepDue ?? ""} /> : <LiveSla t={t} />}
 
               <div className="ml-auto flex items-center gap-2">
                 {err && <span className="text-sm text-destructive">{err}</span>}
                 {dirty && (
                   <>
                     <Button size="sm" onClick={save} disabled={saving} className="gap-1.5"><SaveIcon className="size-4" /> {saving ? "Saving…" : "Save"}</Button>
-                    <Button size="sm" variant="outline" onClick={() => { setD(baseline); setErr(null); }} disabled={saving} className="gap-1.5"><RotateCcwIcon className="size-3.5" /> Undo</Button>
+                    <Button size="sm" variant="outline" onClick={() => { setD(baseline); setCrd(crSaved); setErr(null); }} disabled={saving} className="gap-1.5"><RotateCcwIcon className="size-3.5" /> Undo</Button>
                   </>
                 )}
                 {canManage && !dirty && (
@@ -206,12 +224,16 @@ function WorkItem({ t, config, canManage, users, clients, projects, conversation
             {/* state strip: State / Priority  |  Client / Project */}
             <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3 border-t pt-3">
             <div className="grid min-w-[320px] flex-1 grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-4">
-              <Strip label="State">
+              <Strip label={t.cr ? "Stage" : "State"}>
                 <div className="flex items-center gap-2">
                   <StatusDot color={statusOf?.color ?? t.statusColor} />
-                  <select value={d.statusId} onChange={(e) => set({ statusId: e.target.value })} className="h-8 flex-1 rounded-md border border-border/60 bg-background px-2 text-sm focus:border-primary/50" aria-label="State">
-                    {config.statuses.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                  </select>
+                  {t.cr ? (
+                    <span className="flex h-8 items-center text-sm" title="A change request moves from the Lifecycle panel below">{t.statusName}</span>
+                  ) : (
+                    <select value={d.statusId} onChange={(e) => set({ statusId: e.target.value })} className="h-8 flex-1 rounded-md border border-border/60 bg-background px-2 text-sm focus:border-primary/50" aria-label="State">
+                      {config.statuses.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    </select>
+                  )}
                 </div>
               </Strip>
               <Strip label="Priority">
@@ -250,6 +272,12 @@ function WorkItem({ t, config, canManage, users, clients, projects, conversation
       </div>
 
       {/* ---------- Body ---------- */}
+      {tab === "details" && t.cr && crd && (
+        <ChangeRequestLifecycle
+          ticketId={t.id} cr={t.cr} draft={crd} set={setCr} editable={canContribute} canManage={canManage} dirty={dirty}
+          assigneeId={d.assigneeId} resolution={d.resolution} users={users}
+        />
+      )}
       {tab === "details" && (
         <div className={cn("grid gap-6", hasFields ? "xl:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)]" : "lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]")}>
           {/* Left: Description + Discussion */}
@@ -260,6 +288,9 @@ function WorkItem({ t, config, canManage, users, clients, projects, conversation
               ) : (
                 <Textarea value={d.description} onChange={(e) => set({ description: e.target.value })} rows={8} placeholder="Describe the issue or request…" className="border-border/60 bg-background focus:border-primary/50" />
               )}
+            </Section>
+            <Section title={`Files${t.files.length ? ` (${t.files.length})` : ""}`}>
+              <TicketFiles key={t.cr?.stage ?? "ticket"} ticketId={t.id} files={t.files} canUpload={canContribute} crStage={t.cr ? t.cr.stage : undefined} />
             </Section>
             <Section title="Discussion">
               <Conversation comments={conversation} canInternal={canManage} postAction={post} deleteAttachmentAction={deleteTicketAttachmentAction} editAction={editCommentAction} deleteCommentAction={deleteCommentAction} />
@@ -276,7 +307,9 @@ function WorkItem({ t, config, canManage, users, clients, projects, conversation
               <Fld label="Requester"><Ro>{t.requesterName}</Ro></Fld>
               <Fld label="Created"><Ro>{fmtDT(t.createdAt)}</Ro></Fld>
             </Section>
-            <SlaSection t={t} />
+            {t.cr && crd
+              ? <CrRecordSection draft={crd} set={setCr} editable={canContribute} loggedMinutes={t.cr.loggedMinutes} stage={t.cr.stage} />
+              : <SlaSection t={t} />}
             {!hasFields && resolutionSection}
           </div>
 
@@ -345,6 +378,21 @@ function LiveSla({ t }: { t: Detail }) {
   return <span className={cn("inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-xs", s.tone)}>{s.label}</span>;
 }
 
+/** A change request has no SLA clock; the header shows its stage, time in it, and an overdue next step. */
+function CrPill({ cr, nextDue }: { cr: CrView; nextDue: string }) {
+  const spent = cr.stage ? cr.timeInStage[cr.stage] : undefined;
+  const live = !!cr.stage && !isCrTerminal(cr.stage);
+  const overdue = live && nextStepState(nextDue || null, cr.todayIso) === "overdue";
+  return (
+    <>
+      <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border bg-muted/40 px-2 py-0.5 text-xs text-muted-foreground">
+        {cr.statusName}{live && spent ? ` · ${formatDuration(spent)}` : ""} · no SLA
+      </span>
+      {overdue && <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-rose-500/40 bg-rose-500/8 px-2 py-0.5 text-xs text-rose-700 dark:text-rose-400"><AlertTriangleIcon className="size-3" /> Next step overdue</span>}
+    </>
+  );
+}
+
 function History({ events }: { events: HistoryEvent[] }) {
   if (events.length === 0) return <p className="py-6 text-center text-sm text-muted-foreground">No history yet.</p>;
   return (
@@ -411,7 +459,7 @@ function SlaSection({ t }: { t: Detail }) {
       </div>
       <SlaTrack label="Respond" start={t.createdAt} target={t.respondBy} doneAt={t.firstResponseAt} now={now} stopped={closed && !t.firstResponseAt} />
       <SlaTrack label="Resolve" start={t.createdAt} target={t.resolveBy} doneAt={t.resolvedAt} now={now} stopped={closed && !t.resolvedAt} />
-      {!t.respondBy && !t.resolveBy && <p className="text-sm text-muted-foreground">No SLA targets on this ticket.</p>}
+      {!t.respondBy && !t.resolveBy && <p className="text-sm text-muted-foreground">{t.slaExempt ? `${t.typeName} tickets have no SLA.` : "No SLA targets on this ticket."}</p>}
     </section>
   );
 }

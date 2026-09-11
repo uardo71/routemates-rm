@@ -1,5 +1,6 @@
 import "server-only";
-import { saveReceiptFile, deleteReceiptFile, isAllowedReceiptType, MAX_RECEIPT_SIZE_BYTES, type SavedReceipt } from "./receipt-storage";
+import { saveReceiptFile, deleteReceiptFile, type SavedReceipt } from "./receipt-storage";
+import { attachmentError } from "./file-types";
 
 export type IncomingFile = File;
 export const MAX_TICKET_FILES = 10;
@@ -9,14 +10,9 @@ export function extractFiles(formData: FormData, field = "files"): File[] {
   return formData.getAll(field).filter((f): f is File => f instanceof File && f.size > 0);
 }
 
-/** Validate size + type; returns an error message or null. */
+/** Validate count, size and type (any file except programs and scripts); an error message or null. */
 export function validateFiles(files: File[]): string | null {
-  if (files.length > MAX_TICKET_FILES) return `Attach at most ${MAX_TICKET_FILES} files at a time.`;
-  for (const f of files) {
-    if (f.size > MAX_RECEIPT_SIZE_BYTES) return `"${f.name}" is larger than 10MB.`;
-    if (!isAllowedReceiptType(f.type)) return `"${f.name}" isn't a supported type (images or PDF).`;
-  }
-  return null;
+  return attachmentError(files, MAX_TICKET_FILES);
 }
 
 export async function saveTicketAttachments(files: File[]): Promise<SavedReceipt[]> {

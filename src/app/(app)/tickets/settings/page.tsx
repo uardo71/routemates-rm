@@ -14,7 +14,7 @@ export default async function TicketSettingsPage() {
   const config: SettingsConfig = {
     types: cfg.types.map((t) => ({
       id: t.id, key: t.key, name: t.name, description: t.description, icon: t.icon, color: t.color,
-      active: t.active, isDefault: t.isDefault, customerCanCreate: t.customerCanCreate,
+      active: t.active, isDefault: t.isDefault, customerCanCreate: t.customerCanCreate, slaExempt: t.slaExempt,
       statuses: t.statuses.map((s) => ({ id: s.id, name: s.name, color: s.color, category: s.category, isInitial: s.isInitial, customerVisible: s.customerVisible, customerCanSet: s.customerCanSet })),
       fields: t.fields.map((f) => ({ id: f.id, name: f.name, kind: f.kind, options: f.options, required: f.required, customerVisible: f.customerVisible, customerEditable: f.customerEditable })),
     })),

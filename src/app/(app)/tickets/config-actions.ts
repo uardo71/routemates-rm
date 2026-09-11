@@ -8,6 +8,7 @@ import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/session";
 import { can } from "@/lib/permissions";
 import { fieldNeedsOptions } from "@/lib/ticket-config";
+import { slaDeadlines } from "@/lib/sla.server";
 
 async function guard() {
   const user = await requireUser();
@@ -32,7 +33,24 @@ const TypeSchema = z.object({
   color: z.string().trim().max(20),
   description: z.string().trim().max(300),
   customerCanCreate: z.boolean(),
+  slaExempt: z.boolean().default(false),
 });
+
+/** A type's SLA flag changed: clear every ticket's deadlines, or re-apply them from each ticket's
+ *  created date (client override, else company default) to the tickets still open. */
+async function reapplyTypeSla(companyId: string, typeId: string, slaExempt: boolean): Promise<void> {
+  if (slaExempt) {
+    await prisma.ticket.updateMany({ where: { companyId, typeId }, data: { respondBy: null, resolveBy: null } });
+    return;
+  }
+  const open = await prisma.ticket.findMany({
+    where: { companyId, typeId, statusDef: { category: { in: ["OPEN", "IN_PROGRESS"] } } },
+    select: { id: true, clientId: true, priority: true, createdAt: true },
+  });
+  for (const t of open) {
+    await prisma.ticket.update({ where: { id: t.id }, data: await slaDeadlines(companyId, t.clientId, t.priority, false, t.createdAt) });
+  }
+}
 
 export async function createTicketTypeAction(input: z.infer<typeof TypeSchema>): Promise<{ error?: string }> {
   const { user, ok } = await guard();
@@ -45,7 +63,7 @@ export async function createTicketTypeAction(input: z.infer<typeof TypeSchema>):
   await prisma.ticketTypeDef.create({
     data: {
       companyId: user.companyId, key, name: d.data.name, icon: d.data.icon || "ticket", color: d.data.color || "sky",
-      description: d.data.description || null, customerCanCreate: d.data.customerCanCreate, order,
+      description: d.data.description || null, customerCanCreate: d.data.customerCanCreate, slaExempt: d.data.slaExempt, order,
       statuses: {
         create: [
           { companyId: user.companyId, key: "open", name: "Open", color: "violet", category: "OPEN", order: 0, isInitial: true },
@@ -62,7 +80,7 @@ export async function createTicketTypeAction(input: z.infer<typeof TypeSchema>):
 export async function updateTicketTypeAction(id: string, input: z.infer<typeof TypeSchema> & { active?: boolean }): Promise<{ error?: string }> {
   const { user, ok } = await guard();
   if (!ok) return { error: "Forbidden" };
-  const type = await prisma.ticketTypeDef.findFirst({ where: { id, companyId: user.companyId }, select: { id: true } });
+  const type = await prisma.ticketTypeDef.findFirst({ where: { id, companyId: user.companyId }, select: { id: true, slaExempt: true } });
   if (!type) return { error: "Not found" };
   const d = TypeSchema.safeParse(input);
   if (!d.success) return { error: d.error.issues[0]?.message ?? "Invalid input" };
@@ -70,10 +88,11 @@ export async function updateTicketTypeAction(id: string, input: z.infer<typeof T
     where: { id },
     data: {
       name: d.data.name, icon: d.data.icon || "ticket", color: d.data.color || "sky",
-      description: d.data.description || null, customerCanCreate: d.data.customerCanCreate,
+      description: d.data.description || null, customerCanCreate: d.data.customerCanCreate, slaExempt: d.data.slaExempt,
       ...(typeof input.active === "boolean" ? { active: input.active } : {}),
     },
   });
+  if (type.slaExempt !== d.data.slaExempt) await reapplyTypeSla(user.companyId, id, d.data.slaExempt);
   return done();
 }
 
