@@ -6,6 +6,7 @@ import { loadTicketConfig, fieldsForType } from "@/lib/ticket-config.server";
 import { buildThread, COMMENT_INCLUDE } from "@/lib/ticket-thread";
 import { asCrStage, isChangeRequestType, timeInStages, type CrStageKey } from "@/lib/change-request";
 import { crDraftFromRow } from "@/lib/change-request.server";
+import { createDropNotices } from "@/lib/ticket";
 import { TicketDetailClient, type DetailConfig } from "./ticket-detail-client";
 import type { CrView } from "./change-request-panel";
 import type { TicketFile } from "./ticket-files";
@@ -14,8 +15,14 @@ export const metadata = { title: "Ticket" };
 const iso = (d: Date | null) => (d ? d.toISOString() : "");
 const d10 = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : "");
 
-export default async function TicketDetailPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function TicketDetailPage({ params, searchParams }: {
+  params: Promise<{ id: string }>;
+  /** Set by createTicketAction when it didn't keep a requester/assignee the person entered. */
+  searchParams: Promise<{ dropped?: string; why?: string }>;
+}) {
   const { id } = await params;
+  const sp = await searchParams;
+  const notices = createDropNotices((sp.dropped ?? "").split(","), sp.why);
   const user = await requireUser();
 
   const t = await prisma.ticket.findFirst({
@@ -110,6 +117,7 @@ export default async function TicketDetailPage({ params }: { params: Promise<{ i
       config={config}
       conversation={conversation}
       history={history}
+      notices={notices}
       t={{
         id: t.id, number: t.number, title: t.title, description: t.description ?? "",
         typeId: t.typeId, typeName: t.typeDef.name, typeColor: t.typeDef.color, typeIcon: t.typeDef.icon, slaExempt: t.typeDef.slaExempt,
@@ -122,6 +130,11 @@ export default async function TicketDetailPage({ params }: { params: Promise<{ i
         respondBy: iso(t.respondBy), resolveBy: iso(t.resolveBy), firstResponseAt: iso(t.firstResponseAt), resolvedAt: iso(t.resolvedAt), closedAt: iso(t.closedAt), createdAt: iso(t.createdAt),
         worklogs: t.worklogs.map((w) => ({ id: w.id, userName: w.user.name, minutes: w.minutes, workedOn: d10(w.workedOn), note: w.note ?? "", mine: w.userId === user.id })),
         fields: config.fields.map((f) => ({ ...f, value: valueByField.get(f.id) ?? null, display: displayValue(f, valueByField.get(f.id) ?? null, nameById) })),
+        // Archived fields: only where this ticket already has a value; read-only, never in the draft.
+        archivedFields: cfg.archivedFields
+          .filter((f) => valueByField.has(f.id))
+          .map((f) => ({ id: f.id, name: f.name, display: displayValue(f, valueByField.get(f.id) ?? null, nameById) }))
+          .filter((f) => f.display !== ""),
         files,
         cr,
       }}

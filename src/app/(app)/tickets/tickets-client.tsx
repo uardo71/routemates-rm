@@ -26,13 +26,22 @@ type ClientStatus = { id: string; name: string; color: string | null; category: 
 export type ClientConfig = {
   types: { id: string; name: string; color: string | null; icon: string | null; statuses: ClientStatus[] }[];
   customColumns: { key: string; label: string }[];
+  /** Archived custom fields: labelled "(archived)" where a saved view already shows them, never offered to add. */
+  archivedColumns: { key: string; label: string }[];
 };
-type SavedView = { id: string; name: string; shared: boolean; mine: boolean; filters: Record<string, unknown>; columns: string[]; sort: { key: string; dir: "asc" | "desc" } | null };
+type SavedView = { id: string; name: string; shared: boolean; mine: boolean; filters: TicketFilters; columns: string[]; sort: { key: string; dir: "asc" | "desc" } | null };
 
 const EMPTY: TicketFilters = { onlyOpen: true };
 
-export function TicketsClient({ rows, config, canManage, currentUserName, views, lockedClient, embedded = false, initialFocus = null }: {
-  rows: TicketRow[]; config: ClientConfig; canManage: boolean; currentUserName: string; views: SavedView[];
+/** Filter chip options keyed by account id, labelled by name, sorted by name. */
+function optionsById(pairs: [string | null, string | null][]): { v: string; l: string }[] {
+  const m = new Map<string, string>();
+  for (const [id, name] of pairs) if (id && name) m.set(id, name);
+  return [...m.entries()].map(([v, l]) => ({ v, l })).sort((a, b) => a.l.localeCompare(b.l));
+}
+
+export function TicketsClient({ rows, config, canManage, currentUserId, views, lockedClient, embedded = false, initialFocus = null }: {
+  rows: TicketRow[]; config: ClientConfig; canManage: boolean; currentUserId: string; views: SavedView[];
   /** Drill-down from an overview number (?focus=…): opens the list already narrowed to those tickets. */
   initialFocus?: TicketFocus | null;
   /** Set inside a client workspace: rows are already scoped server-side, so the client filter is
@@ -55,17 +64,18 @@ export function TicketsClient({ rows, config, canManage, currentUserName, views,
     () => [...NATIVE_COLUMNS, ...config.customColumns.map((c) => ({ key: `cf:${c.key}`, label: c.label }))],
     [config.customColumns],
   );
-  const labelOf = (key: string) => allColumns.find((c) => c.key === key)?.label ?? key;
+  const archivedColumns = config.archivedColumns.map((c) => ({ key: `cf:${c.key}`, label: c.label }));
+  const labelOf = (key: string) => allColumns.find((c) => c.key === key)?.label ?? archivedColumns.find((c) => c.key === key)?.label ?? key;
 
-  const assignees = React.useMemo(() => Array.from(new Set(rows.map((r) => r.assigneeName).filter((x): x is string => !!x))).sort(), [rows]);
-  const clients = React.useMemo(() => Array.from(new Set(rows.map((r) => r.clientName).filter((x): x is string => !!x))).sort(), [rows]);
+  const assignees = React.useMemo(() => optionsById(rows.map((r) => [r.assigneeId, r.assigneeName])), [rows]);
+  const clients = React.useMemo(() => optionsById(rows.map((r) => [r.clientId, r.clientName])), [rows]);
 
-  const shown = React.useMemo(() => sortRows(filterRows(rows, filters, currentUserName), sort), [rows, filters, sort, currentUserName]);
+  const shown = React.useMemo(() => sortRows(filterRows(rows, filters, currentUserId), sort), [rows, filters, sort, currentUserId]);
 
   function applyView(v: SavedView | null) {
     if (!v) { setActiveView(null); setFilters(EMPTY); setColumns(DEFAULT_COLUMNS); setSort({ key: "createdAt", dir: "desc" }); return; }
     setActiveView(v.id);
-    setFilters(v.filters as TicketFilters);
+    setFilters(v.filters);
     setColumns(v.columns.length ? v.columns : DEFAULT_COLUMNS);
     setSort(v.sort);
   }
@@ -114,7 +124,8 @@ export function TicketsClient({ rows, config, canManage, currentUserName, views,
           <button onClick={() => setFilters((f) => ({ ...f, mine: f.mine === "requested" ? null : "requested" }))} className={cn("h-9 rounded-md border px-3 text-sm", filters.mine === "requested" ? "border-primary bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted")}>Raised by me</button>
           <button onClick={() => setColsOpen(true)} className="inline-flex h-9 items-center gap-1.5 rounded-md border px-3 text-sm text-muted-foreground hover:bg-muted"><Columns3Icon className="size-4" /> Columns</button>
           <form method="post" action="/api/tickets/export">
-            <input type="hidden" name="payload" value={JSON.stringify({ filters: lockedClient ? { ...filters, clientNames: [lockedClient.name] } : filters, columns, sort })} />
+            {/* Inside a workspace the export is pinned to this client by ID — a same-named client never mixes in. */}
+            <input type="hidden" name="payload" value={JSON.stringify({ filters: lockedClient ? { ...filters, clientIds: [lockedClient.id] } : filters, columns, sort })} />
             <button type="submit" className="inline-flex h-9 items-center gap-1.5 rounded-md border px-3 text-sm text-muted-foreground hover:bg-muted"><DownloadIcon className="size-4" /> Export</button>
           </form>
         </div>
@@ -134,8 +145,8 @@ export function TicketsClient({ rows, config, canManage, currentUserName, views,
         </div>
         {more && (
           <div className="flex flex-wrap items-start gap-x-4 gap-y-1.5 border-t pt-2">
-            {assignees.length > 0 && <ChipGroup label="Assignee" options={assignees.map((a) => ({ v: a, l: a }))} on={(v) => chipOn("assigneeNames", v)} toggle={(v) => toggle("assigneeNames", v)} />}
-            {!lockedClient && clients.length > 0 && <ChipGroup label="Client" options={clients.map((c) => ({ v: c, l: c }))} on={(v) => chipOn("clientNames", v)} toggle={(v) => toggle("clientNames", v)} />}
+            {assignees.length > 0 && <ChipGroup label="Assignee" options={assignees} on={(v) => chipOn("assigneeIds", v)} toggle={(v) => toggle("assigneeIds", v)} />}
+            {!lockedClient && clients.length > 0 && <ChipGroup label="Client" options={clients} on={(v) => chipOn("clientIds", v)} toggle={(v) => toggle("clientIds", v)} />}
           </div>
         )}
       </div>
@@ -195,7 +206,7 @@ export function TicketsClient({ rows, config, canManage, currentUserName, views,
       )}
       {!canManage && <p className="text-xs text-muted-foreground">You see the tickets of the clients you&apos;re staffed on, plus any you raised or are assigned to.</p>}
 
-      {colsOpen && <ColumnsDialog all={allColumns} value={columns} onChange={setColumns} onClose={() => setColsOpen(false)} />}
+      {colsOpen && <ColumnsDialog all={allColumns} labelOf={labelOf} value={columns} onChange={setColumns} onClose={() => setColsOpen(false)} />}
       {saveOpen && <SaveViewDialog current={activeViewObj} filters={filters} columns={columns} sort={sort} onClose={() => setSaveOpen(false)} onSaved={() => { setSaveOpen(false); router.refresh(); }} />}
     </div>
   );
@@ -230,7 +241,9 @@ function ChipGroup({ label, options, on, toggle }: { label: string; options: { v
   );
 }
 
-function ColumnsDialog({ all, value, onChange, onClose }: { all: { key: string; label: string }[]; value: string[]; onChange: (v: string[]) => void; onClose: () => void }) {
+// `all` holds only addable columns (archived fields excluded); `labelOf` also names archived columns a
+// saved view already shows, so they read "Name (archived)" in the shown list.
+function ColumnsDialog({ all, labelOf, value, onChange, onClose }: { all: { key: string; label: string }[]; labelOf: (key: string) => string; value: string[]; onChange: (v: string[]) => void; onClose: () => void }) {
   const [cols, setCols] = React.useState<string[]>(value);
   const available = all.filter((c) => !cols.includes(c.key));
   const move = (i: number, d: -1 | 1) => setCols((c) => { const n = [...c]; const j = i + d; if (j < 0 || j >= n.length) return c; [n[i], n[j]] = [n[j], n[i]]; return n; });
@@ -244,7 +257,7 @@ function ColumnsDialog({ all, value, onChange, onClose }: { all: { key: string; 
             <div className="flex flex-col divide-y rounded-md border">
               {cols.map((k, i) => (
                 <div key={k} className="flex items-center justify-between gap-2 px-2 py-1.5 text-sm">
-                  <span>{all.find((c) => c.key === k)?.label ?? k}</span>
+                  <span>{labelOf(k)}</span>
                   <div className="flex items-center gap-1">
                     <button onClick={() => move(i, -1)} disabled={i === 0} className="text-muted-foreground hover:text-foreground disabled:opacity-30"><ArrowUpIcon className="size-3.5" /></button>
                     <button onClick={() => move(i, 1)} disabled={i === cols.length - 1} className="text-muted-foreground hover:text-foreground disabled:opacity-30"><ArrowDownIcon className="size-3.5" /></button>

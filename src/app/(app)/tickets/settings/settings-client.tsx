@@ -28,8 +28,12 @@ import {
 
 type ClientStatus = { id: string; name: string; color: string | null; category: TicketStatusCategory; isInitial: boolean; customerVisible: boolean; customerCanSet: boolean };
 type ClientField = { id: string; name: string; kind: string; options: string[]; required: boolean; customerVisible: boolean; customerEditable: boolean };
-type ClientType = { id: string; key: string; name: string; description: string | null; icon: string | null; color: string | null; active: boolean; isDefault: boolean; customerCanCreate: boolean; slaExempt: boolean; statuses: ClientStatus[]; fields: ClientField[] };
-export type SettingsConfig = { types: ClientType[]; globalFields: ClientField[] };
+type ArchivedField = { id: string; name: string; kind: string; archivedAt: string };
+type ClientType = { id: string; key: string; name: string; description: string | null; icon: string | null; color: string | null; active: boolean; isDefault: boolean; customerCanCreate: boolean; slaExempt: boolean; statuses: ClientStatus[]; fields: ClientField[]; archivedFields: ArchivedField[] };
+export type SettingsConfig = { types: ClientType[]; globalFields: ClientField[]; archivedGlobalFields: ArchivedField[] };
+
+const ARCHIVE_CONFIRM = (name: string) =>
+  `Archive "${name}"?\n\nIt disappears from new tickets, forms and column pickers. Tickets that already have a value keep it, shown read-only as an archived field. Nothing is deleted.`;
 
 const selectCls = "h-9 w-full rounded-md border bg-transparent px-2 text-sm outline-none focus:border-primary/50";
 
@@ -120,9 +124,10 @@ export function TicketSettingsClient({ config, slaDefault }: { config: SettingsC
               </div>
               {t.fields.length === 0 ? <p className="text-xs text-muted-foreground">No fields.</p> : (
                 <div className="flex flex-col gap-1">
-                  {t.fields.map((f) => <FieldRow key={f.id} f={f} onEdit={() => setDlg({ k: "field", typeId: t.id, field: f })} onDelete={() => act(() => deleteFieldAction(f.id))} />)}
+                  {t.fields.map((f) => <FieldRow key={f.id} f={f} onEdit={() => setDlg({ k: "field", typeId: t.id, field: f })} onDelete={() => { if (confirm(ARCHIVE_CONFIRM(f.name))) act(() => deleteFieldAction(f.id)); }} />)}
                 </div>
               )}
+              <ArchivedList fields={t.archivedFields} />
             </div>
           </div>
         </div>
@@ -139,9 +144,10 @@ export function TicketSettingsClient({ config, slaDefault }: { config: SettingsC
         </div>
         {config.globalFields.length === 0 ? <p className="text-xs text-muted-foreground">None.</p> : (
           <div className="flex flex-col gap-1">
-            {config.globalFields.map((f) => <FieldRow key={f.id} f={f} onEdit={() => setDlg({ k: "field", typeId: null, field: f })} onDelete={() => act(() => deleteFieldAction(f.id))} />)}
+            {config.globalFields.map((f) => <FieldRow key={f.id} f={f} onEdit={() => setDlg({ k: "field", typeId: null, field: f })} onDelete={() => { if (confirm(ARCHIVE_CONFIRM(f.name))) act(() => deleteFieldAction(f.id)); }} />)}
           </div>
         )}
+        <ArchivedList fields={config.archivedGlobalFields} />
       </div>
 
       {dlg?.k === "type" && <TypeDialog type={dlg.type} onClose={() => setDlg(null)} onSaved={() => { setDlg(null); router.refresh(); }} />}
@@ -165,7 +171,24 @@ function FieldRow({ f, onEdit, onDelete }: { f: ClientField; onEdit: () => void;
       {!f.customerVisible && <EyeOffIcon className="size-3 text-muted-foreground/60" aria-label="Hidden from customer" />}
       {f.customerEditable && <span title="Customer can edit" className="text-[0.6rem] text-emerald-600">CE</span>}
       <IconBtn sm title="Edit" onClick={onEdit}><PencilIcon className="size-3" /></IconBtn>
-      <IconBtn sm title="Delete" onClick={onDelete}><Trash2Icon className="size-3 text-destructive" /></IconBtn>
+      <IconBtn sm title="Archive (values on existing tickets are kept)" onClick={onDelete}><Trash2Icon className="size-3 text-destructive" /></IconBtn>
+    </div>
+  );
+}
+
+/** Archived fields, read-only: listed so they don't silently vanish from settings. */
+function ArchivedList({ fields }: { fields: ArchivedField[] }) {
+  if (fields.length === 0) return null;
+  return (
+    <div className="mt-1.5 flex flex-col gap-1">
+      <span className="text-[0.6rem] font-semibold uppercase tracking-wide text-muted-foreground/70">Archived ({fields.length})</span>
+      {fields.map((f) => (
+        <div key={f.id} className="flex items-center gap-1.5 rounded-md border border-dashed px-2 py-1 text-sm text-muted-foreground" title={`Archived ${f.archivedAt.slice(0, 10)} — existing values stay on tickets, read-only`}>
+          <span className="min-w-0 flex-1 truncate">{f.name}</span>
+          <span className="rounded bg-muted px-1.5 py-0.5 text-[0.6rem]">{FIELD_KIND_LABEL[f.kind as keyof typeof FIELD_KIND_LABEL] ?? f.kind}</span>
+          <span className="text-[0.6rem]">archived {f.archivedAt.slice(0, 10)}</span>
+        </div>
+      ))}
     </div>
   );
 }

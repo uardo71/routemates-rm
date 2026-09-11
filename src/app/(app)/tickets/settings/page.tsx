@@ -11,8 +11,13 @@ export default async function TicketSettingsPage() {
   const cfg = await loadTicketConfig(user.companyId, true);
   const slaDefault = await getCompanySlaDefault(user.companyId);
 
+  const archived = (typeId: string | null) => cfg.archivedFields
+    .filter((f) => f.typeId === typeId)
+    .map((f) => ({ id: f.id, name: f.name, kind: f.kind, archivedAt: f.archivedAt ?? "" }));
   const config: SettingsConfig = {
+    archivedGlobalFields: archived(null),
     types: cfg.types.map((t) => ({
+      archivedFields: archived(t.id),
       id: t.id, key: t.key, name: t.name, description: t.description, icon: t.icon, color: t.color,
       active: t.active, isDefault: t.isDefault, customerCanCreate: t.customerCanCreate, slaExempt: t.slaExempt,
       statuses: t.statuses.map((s) => ({ id: s.id, name: s.name, color: s.color, category: s.category, isInitial: s.isInitial, customerVisible: s.customerVisible, customerCanSet: s.customerCanSet })),

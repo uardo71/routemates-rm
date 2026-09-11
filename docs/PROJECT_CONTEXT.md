@@ -1816,3 +1816,29 @@ No migration. Owner's ask: attach project plans from the Portfolio, any attachme
   programme's "Overall" row appear, like any other project-level item.
 - `/api/documents/[fileName]` now serves only images/PDF inline; everything else downloads as
   octet-stream with `nosniff` (same rule as ticket attachments).
+
+### Support redesign — Phase 0.5: data-correctness fixes (2026-09-11)
+Migration `20260911220000_ticket_field_archive` (additive: `TicketFieldDef.archivedAt`, `archivedById`).
+The owner is redesigning Support in phases with strict rules (plan + file list before edits, stop
+before migrations, fix only the named items, every refusal names what and why). This phase:
+1. **Custom fields are archived, never deleted.** `deleteFieldAction` stamps `archivedAt/By`; values
+   stay. `loadTicketConfig` keeps archived fields out of `types[].fields`/`globalFields` (so out of
+   settings lists, both new-ticket forms, the ticket's editable fields, the change-type dialog and the
+   "Add column" picker) and returns them as `archivedFields` for display only: the ticket page and the
+   portal (customer-visible ones) show existing values read-only with an "archived field" tag; a saved
+   list column already using one reads "Name (archived)" (`customColumnsOf` in `serialize.ts`); Excel
+   too. Settings lists them read-only under "Archived (N)"; editing an archived field is refused.
+   `applyFieldValues` only loops live fields, so a save never touches archived values.
+2. **Workspace export pins the client by id** (`clientIds: [lockedClient.id]`).
+3. **People and clients match by account id**: `TicketRow` carries `requesterId/assigneeId/clientId`;
+   "Assigned to me" / "Raised by me" compare ids; assignee/client filters store ids. Views saved with
+   names are translated on read by pure `normalizeFilters` (filters.ts) — no DB write; a shared name
+   keeps all its accounts, a vanished name keeps matching nothing (`missing:` sentinel).
+4. **Refused assignee/priority changes are reported**: `applyWorkflowAction` returns `rejected`
+   (`WORKFLOW_REJECTION` in `lib/ticket.ts`); the ticket page toasts each. Save order unchanged.
+5. **Create keeps the restriction but says what it didn't keep**: `createTicketAction` redirects with
+   `?dropped=requester,assignee&why=team|noclient`; the ticket page shows `createDropNotices` in a
+   dismissible banner. (Due date was never dropped — the server always saved it.)
+6. **Internal tick refused → told**: `addCommentAction` returns `notice: INTERNAL_NOTE_REFUSED`; the
+   composer toasts it (portal never offers the tick).
+Tests: `src/lib/__tests__/ticket-filters.test.ts`.

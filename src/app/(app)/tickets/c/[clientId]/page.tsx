@@ -10,11 +10,11 @@ import { isOpenCategory } from "@/lib/ticket-config";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatCard } from "@/components/stat-card";
 import { InitialsAvatar } from "@/components/initials-avatar";
-import { serializeTicketRow, TICKET_ROW_SELECT } from "../../serialize";
+import { serializeTicketRow, customColumnsOf, TICKET_ROW_SELECT } from "../../serialize";
 import { TicketsClient, type ClientConfig } from "../../tickets-client";
 import { ClientTeamCard } from "../../client-team-card";
 import { ClientSwitcher } from "../../client-switcher";
-import type { TicketFocus } from "../../filters";
+import { normalizeFilters, type TicketFocus } from "../../filters";
 
 const FOCUS = new Set(["open", "breached", "unassigned", "critical", "resolved7d"]);
 function parseFocus(v: string | undefined): TicketFocus | null {
@@ -43,7 +43,7 @@ export default async function ClientWorkspacePage({ params, searchParams }: { pa
   const canEditTeam = user.role === "ADMIN";
   const ticketWhere = await visibleTicketWhere(user);
 
-  const [tickets, users, views, switcherClients, team] = await Promise.all([
+  const [tickets, users, views, switcherClients, team, companyClients] = await Promise.all([
     // Membership scoping AND this client — the OR from visibleTicketWhere is ANDed with clientId.
     prisma.ticket.findMany({ where: { ...ticketWhere, clientId: client.id }, select: TICKET_ROW_SELECT, orderBy: { createdAt: "desc" } }),
     prisma.user.findMany({ where: { companyId: user.companyId }, select: { id: true, name: true } }),
@@ -57,6 +57,8 @@ export default async function ClientWorkspacePage({ params, searchParams }: { pa
       select: { id: true, userId: true, role: true, user: { select: { name: true } } },
       orderBy: [{ role: "asc" }, { user: { name: "asc" } }],
     }),
+    // Only to translate views saved with client NAMES into ids (normalizeFilters).
+    prisma.client.findMany({ where: { companyId: user.companyId }, select: { id: true, name: true } }),
   ]);
   const candidates = canEditTeam
     ? await prisma.user.findMany({
@@ -92,17 +94,12 @@ export default async function ClientWorkspacePage({ params, searchParams }: { pa
     ? await prisma.changeRequest.count({ where: { ticketId: { in: crOpen.map((r) => r.id) }, nextStepDue: { lt: todayUtc } } })
     : 0;
 
-  const seen = new Set<string>();
-  const customColumns: { key: string; label: string }[] = [];
-  for (const t of cfg.types) for (const f of [...t.fields, ...cfg.globalFields]) {
-    if (!seen.has(f.key)) { seen.add(f.key); customColumns.push({ key: f.key, label: f.name }); }
-  }
   const config: ClientConfig = {
     types: cfg.types.map((t) => ({
       id: t.id, name: t.name, color: t.color, icon: t.icon,
       statuses: t.statuses.map((s) => ({ id: s.id, name: s.name, color: s.color, category: s.category })),
     })),
-    customColumns,
+    ...customColumnsOf(cfg),
   };
 
   return (
@@ -154,10 +151,10 @@ export default async function ClientWorkspacePage({ params, searchParams }: { pa
           rows={rows}
           config={config}
           canManage={canManage}
-          currentUserName={nameById.get(user.id) ?? ""}
+          currentUserId={user.id}
           views={views.map((v) => ({
             id: v.id, name: v.name, shared: v.shared, mine: v.ownerId === user.id,
-            filters: v.filters as Record<string, unknown>,
+            filters: normalizeFilters(v.filters, users, companyClients),
             columns: Array.isArray(v.columns) ? (v.columns as string[]) : [],
             sort: (v.sort as { key: string; dir: "asc" | "desc" } | null) ?? null,
           }))}

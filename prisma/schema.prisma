@@ -1885,6 +1885,8 @@ model TicketFieldDef {
   customerEditable Boolean         @default(false)
   order            Int             @default(0)
   active           Boolean         @default(true)
+  archivedAt       DateTime? // set by "delete": the field leaves every input list, its values stay
+  archivedById     String?   // who archived it; plain id (no FK), like the other "…by" columns
   createdAt        DateTime        @default(now())
   updatedAt        DateTime        @updatedAt
 

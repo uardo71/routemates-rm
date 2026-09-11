@@ -11,13 +11,17 @@ export type LoadedStatus = {
 export type LoadedField = {
   id: string; typeId: string | null; key: string; name: string; kind: TicketFieldKind;
   options: string[]; required: boolean; customerVisible: boolean; customerEditable: boolean; order: number;
+  /** ISO time the field was archived ("deleted"), or null for a live field. */
+  archivedAt: string | null;
 };
 export type LoadedType = {
   id: string; key: string; name: string; description: string | null; icon: string | null; color: string | null;
   order: number; active: boolean; isDefault: boolean; customerCanCreate: boolean; slaExempt: boolean;
   statuses: LoadedStatus[]; fields: LoadedField[];
 };
-export type TicketConfig = { types: LoadedType[]; globalFields: LoadedField[] };
+/** `types[].fields` and `globalFields` hold only live fields — the ones every input list offers.
+ *  `archivedFields` holds archived ones, kept solely to display values tickets already carry. */
+export type TicketConfig = { types: LoadedType[]; globalFields: LoadedField[]; archivedFields: LoadedField[] };
 
 function opts(v: unknown): string[] {
   return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
@@ -79,18 +83,21 @@ export async function loadTicketConfig(companyId: string, includeInactive = fals
       orderBy: { order: "asc" },
       include: { statuses: { orderBy: { order: "asc" } } },
     }),
-    prisma.ticketFieldDef.findMany({
-      where: { companyId, ...(includeInactive ? {} : { active: true }) },
-      orderBy: { order: "asc" },
-    }),
+    prisma.ticketFieldDef.findMany({ where: { companyId }, orderBy: { order: "asc" } }),
   ]);
   const fieldsByType = new Map<string, LoadedField[]>();
   const globalFields: LoadedField[] = [];
+  const archivedFields: LoadedField[] = [];
   for (const f of fields) {
     const lf: LoadedField = {
       id: f.id, typeId: f.typeId, key: f.key, name: f.name, kind: f.kind, options: opts(f.options),
       required: f.required, customerVisible: f.customerVisible, customerEditable: f.customerEditable, order: f.order,
+      archivedAt: f.archivedAt ? f.archivedAt.toISOString() : null,
     };
+    // An archived field never appears in an input list (settings, new-ticket forms, the ticket's
+    // editable fields, column pickers); it's kept only so existing values still display.
+    if (f.archivedAt) { archivedFields.push(lf); continue; }
+    if (!includeInactive && !f.active) continue;
     if (f.typeId) { const a = fieldsByType.get(f.typeId) ?? []; a.push(lf); fieldsByType.set(f.typeId, a); }
     else globalFields.push(lf);
   }
@@ -103,7 +110,7 @@ export async function loadTicketConfig(companyId: string, includeInactive = fals
     })),
     fields: fieldsByType.get(t.id) ?? [],
   }));
-  return { types: loadedTypes, globalFields };
+  return { types: loadedTypes, globalFields, archivedFields };
 }
 
 /** All fields that apply to a given type = the type's own fields plus company-wide global fields. */
@@ -133,5 +140,6 @@ export function customerConfig(config: TicketConfig): TicketConfig {
         fields: t.fields.filter((f) => f.customerVisible),
       })),
     globalFields: config.globalFields.filter((f) => f.customerVisible),
+    archivedFields: config.archivedFields.filter((f) => f.customerVisible),
   };
 }

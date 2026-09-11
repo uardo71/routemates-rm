@@ -3,6 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { toast } from "sonner";
 import {
   Trash2Icon, ClockIcon, SaveIcon, RotateCcwIcon, MessageSquareIcon, HistoryIcon, TimerIcon,
   CheckCircle2Icon, AlertTriangleIcon, PencilLineIcon,
@@ -57,6 +58,8 @@ type Detail = {
   respondBy: string; resolveBy: string; firstResponseAt: string; resolvedAt: string; closedAt: string; createdAt: string;
   worklogs: Worklog[]; fields: FieldVal[];
   slaExempt: boolean; files: TicketFile[];
+  /** Values of archived custom fields this ticket still carries — shown read-only, marked "archived field". */
+  archivedFields: { id: string; name: string; display: string }[];
   /** Set when the ticket is a change request: its lifecycle, record and stage history. */
   cr: CrView | null;
 };
@@ -83,15 +86,19 @@ function draftFrom(t: Detail): Draft {
 export function TicketDetailClient(props: {
   t: Detail; config: DetailConfig; canManage: boolean; involved: boolean; users: Opt[]; clients: Opt[]; projects: Opt[];
   conversation: CommentNode[]; history: HistoryEvent[];
+  /** Explanations for values the create step didn't keep (lib/ticket.ts#createDropNotices). */
+  notices: string[];
 }) {
   // Re-key on the server's version of the ticket so a refresh after Save resets the draft without
   // an effect that syncs state to props.
   return <WorkItem key={JSON.stringify(draftFrom(props.t)) + props.t.typeId + JSON.stringify(props.t.cr?.saved ?? null)} {...props} />;
 }
 
-function WorkItem({ t, config, canManage, involved, users, clients, projects, conversation, history }: {
+function WorkItem({ t, config, canManage, involved, users, clients, projects, conversation, history, notices }: {
   t: Detail; config: DetailConfig; canManage: boolean; involved: boolean; users: Opt[]; clients: Opt[]; projects: Opt[];
   conversation: CommentNode[]; history: HistoryEvent[];
+  /** Explanations for values the create step didn't keep (lib/ticket.ts#createDropNotices). */
+  notices: string[];
 }) {
   const router = useRouter();
   const [tab, setTab] = React.useState<"details" | "history" | "worklog">("details");
@@ -123,6 +130,9 @@ function WorkItem({ t, config, canManage, involved, users, clients, projects, co
       if (workflowDirty) {
         const r = await applyWorkflowAction(t.id, { statusId: d.statusId, assigneeId: canManage ? (d.assigneeId || null) : undefined, priority: canManage ? d.priority : undefined });
         if (r.error) { setErr(r.error); return; }
+        // The rest of the save still goes through; each refused change is named, with the reason.
+        // A toast (not inline state) because the page re-keys from the server after the refresh.
+        r.rejected?.forEach((m) => toast.warning(m));
       }
       if (detailsDirty && canManage) {
         const r = await updateTicketDetailsAction(t.id, {
@@ -146,7 +156,7 @@ function WorkItem({ t, config, canManage, involved, users, clients, projects, co
   const statusOf = config.statuses.find((s) => s.id === d.statusId);
   const typeTone = statusColor(t.typeColor);
   const ro = !canManage; // read-only for everything except status (workflow) and comments
-  const hasFields = t.fields.length > 0;
+  const hasFields = t.fields.length > 0 || t.archivedFields.length > 0;
 
   const resolutionSection = (
     <Section title="Resolution">
@@ -164,6 +174,14 @@ function WorkItem({ t, config, canManage, involved, users, clients, projects, co
       <Link href={t.clientId ? `/tickets/c/${t.clientId}` : "/tickets"} className="text-sm text-muted-foreground hover:underline">
         ← {t.clientName ?? "Support"}
       </Link>
+
+      {notices.length > 0 && (
+        <div role="status" className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/[0.06] px-3 py-2 text-sm">
+          <AlertTriangleIcon className="mt-0.5 size-4 shrink-0 text-amber-600" />
+          <ul className="flex-1 space-y-0.5">{notices.map((n) => <li key={n}>{n}</li>)}</ul>
+          <button type="button" onClick={() => router.replace(`/tickets/${t.id}`)} className="shrink-0 text-xs text-muted-foreground hover:text-foreground">Dismiss</button>
+        </div>
+      )}
 
       {/* ---------- Header (sticky, like the DevOps work-item bar) ---------- */}
       <div className="overflow-hidden rounded-lg border bg-card">
@@ -323,6 +341,7 @@ function WorkItem({ t, config, canManage, involved, users, clients, projects, co
                   {t.fields.map((f) => <FieldControl key={f.id} field={f} users={users} value={d.fields[f.id]} onChange={(v) => set({ fields: { ...d.fields, [f.id]: v } })} />)}
                 </div>
               )}
+              {t.archivedFields.map((f) => <ArchivedFieldValue key={f.id} name={f.name} display={f.display} />)}
             </Section>
             {resolutionSection}
           </div>}
@@ -360,6 +379,19 @@ function Fld({ label, children }: { label: string; children: React.ReactNode }) 
 function Ro({ children }: { children: React.ReactNode }) {
   const empty = children === null || children === undefined || children === "";
   return <span className={cn("text-sm", empty && "text-muted-foreground/40")}>{empty ? "—" : children}</span>;
+}
+
+/** A value of an archived custom field: read-only, clearly marked, never part of the Save draft. */
+function ArchivedFieldValue({ name, display }: { name: string; display: string }) {
+  return (
+    <div className="flex flex-col gap-1">
+      <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+        {name}
+        <span className="rounded bg-muted px-1 py-px text-[10px] font-medium uppercase tracking-wide">archived field</span>
+      </span>
+      <span className="whitespace-pre-wrap text-sm text-muted-foreground">{display}</span>
+    </div>
+  );
 }
 
 function Tab({ active, onClick, icon, label, count }: { active: boolean; onClick: () => void; icon: React.ReactNode; label: string; count?: number }) {

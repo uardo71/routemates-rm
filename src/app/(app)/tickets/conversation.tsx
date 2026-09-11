@@ -9,6 +9,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { InitialsAvatar } from "@/components/initials-avatar";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { attachmentError, isInlineImage } from "@/lib/file-types";
 
@@ -20,7 +21,8 @@ export type CommentNode = {
   attachments: Attachment[]; replies: CommentNode[];
 };
 
-type PostAction = (fd: FormData) => Promise<{ error?: string }>;
+/** `notice`: the comment was posted, but not exactly as asked (e.g. the internal tick was refused). */
+type PostAction = (fd: FormData) => Promise<{ error?: string; notice?: string }>;
 type DeleteAction = (id: string) => Promise<{ error?: string }>;
 type EditAction = (id: string, body: string) => Promise<{ error?: string }>;
 
@@ -227,7 +229,10 @@ export function Composer({ postAction, parentId, canInternal, placeholder, autoF
     start(async () => {
       const r = await postAction(fd);
       if (r?.error) setErr(r.error);
-      else { files.forEach((f) => f.preview && URL.revokeObjectURL(f.preview)); setBody(""); setFiles([]); setInternal(false); setErr(null); onDone?.(); router.refresh(); }
+      else {
+        if (r?.notice) toast.warning(r.notice);
+        files.forEach((f) => f.preview && URL.revokeObjectURL(f.preview)); setBody(""); setFiles([]); setInternal(false); setErr(null); onDone?.(); router.refresh();
+      }
     });
   }
 

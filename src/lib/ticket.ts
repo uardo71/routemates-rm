@@ -29,6 +29,31 @@ export const TICKET_ACTIVITY_LABEL: Record<TicketActivityKind, string> = {
   REOPENED: "reopened the ticket",
 };
 
+// ---------- refusals the server makes but used to swallow (each names what, and why) ----------
+
+/** The ticket page's Save: assignee and priority are changed only by this client's support team. */
+export const WORKFLOW_REJECTION = {
+  assignee: "Assignee change not saved — only managers (this client's support team) can change the assignee.",
+  priority: "Priority change not saved — only managers (this client's support team) can change priority.",
+} as const;
+
+/** Posting a comment: the "Internal note" tick is honoured for managers only. */
+export const INTERNAL_NOTE_REFUSED = "Posted as a regular comment — only managers (this client's support team) can mark notes internal.";
+
+/** Creating a ticket: the requester and assignee are set only by someone who can triage that client's
+ *  tickets (its team — or admin/PM for a ticket with no client). The create goes ahead; these say
+ *  which of the entered values were not kept. `codes` come from the redirect (?dropped=requester,assignee),
+ *  `why` is "team" (not on this client's team) or "noclient" (no client picked). Unknown codes are ignored. */
+export function createDropNotices(codes: string[], why: string | null | undefined): string[] {
+  const reason = why === "noclient"
+    ? "only admins and PMs can triage a ticket that has no client"
+    : "you're not on this client's team";
+  const out: string[] = [];
+  if (codes.includes("requester")) out.push(`Requester not saved — ${reason}, so you are recorded as the requester.`);
+  if (codes.includes("assignee")) out.push(`Assignee not saved — ${reason}, so the ticket was left unassigned.`);
+  return out;
+}
+
 // SLA response/resolution targets per priority, in calendar hours from creation.
 export const SLA_HOURS: Record<TicketPriority, { respond: number; resolve: number }> = {
   CRITICAL: { respond: 2, resolve: 8 },

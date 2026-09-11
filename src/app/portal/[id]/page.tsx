@@ -43,7 +43,13 @@ export default async function PortalTicketPage({ params }: { params: Promise<{ i
     statusName: t.statusDef.customerVisible ? t.statusDef.name : STATUS_CATEGORY_LABEL[t.statusDef.category],
     statusColor: t.statusDef.customerVisible ? t.statusDef.color : null,
     createdAt: iso(t.createdAt),
-    fields: visibleFields.map((f) => ({ name: f.name, display: display(f.kind, valueByField.get(f.id) ?? null) })).filter((f) => f.display),
+    fields: [
+      ...visibleFields.map((f) => ({ name: f.name, display: display(f.kind, valueByField.get(f.id) ?? null), archived: false })),
+      // Archived fields the customer could see: shown read-only where this ticket already has a value.
+      ...cfg.archivedFields
+        .filter((f) => f.customerVisible && valueByField.has(f.id))
+        .map((f) => ({ name: f.name, display: display(f.kind, valueByField.get(f.id) ?? null), archived: true })),
+    ].filter((f) => f.display),
     settable,
     history: history.filter((h) => CUSTOMER_HISTORY.has(h.kind)).map((h) => ({ id: h.id, kind: h.kind, authorName: h.authorName, createdAt: h.createdAt })),
   };

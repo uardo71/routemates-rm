@@ -14,7 +14,7 @@ export type PortalTicket = {
   id: string; number: string; title: string; description: string;
   typeName: string; typeColor: string | null; typeIcon: string | null;
   statusName: string; statusColor: string | null; createdAt: string;
-  fields: { name: string; display: string }[];
+  fields: { name: string; display: string; archived: boolean }[];
   settable: { id: string; name: string; color: string | null }[];
   history: HistoryItem[];
 };
@@ -64,7 +64,13 @@ export function PortalTicketClient({ t, conversation }: { t: PortalTicket; conve
         {t.fields.length > 0 && (
           <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 border-t pt-3 text-sm sm:grid-cols-3">
             {t.fields.map((f) => (
-              <div key={f.name} className="flex flex-col"><dt className="text-[0.625rem] font-semibold uppercase tracking-wide text-muted-foreground">{f.name}</dt><dd className="mt-0.5">{f.display}</dd></div>
+              <div key={`${f.name}:${f.archived}`} className="flex flex-col">
+                <dt className="text-[0.625rem] font-semibold uppercase tracking-wide text-muted-foreground">
+                  {f.name}
+                  {f.archived && <span className="ml-1.5 rounded bg-muted px-1 py-px text-[0.55rem]">archived field</span>}
+                </dt>
+                <dd className={cn("mt-0.5", f.archived && "text-muted-foreground")}>{f.display}</dd>
+              </div>
             ))}
           </dl>
         )}

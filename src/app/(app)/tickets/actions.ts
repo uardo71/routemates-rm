@@ -8,7 +8,7 @@ import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/session";
 import { canManageClientTickets } from "@/lib/permissions";
 import { nextTicketNumber } from "@/lib/numbering";
-import { TICKET_PRIORITY_LABEL } from "@/lib/ticket";
+import { TICKET_PRIORITY_LABEL, WORKFLOW_REJECTION, INTERNAL_NOTE_REFUSED } from "@/lib/ticket";
 import { slaDeadlines } from "@/lib/sla.server";
 import { isOpenCategory } from "@/lib/ticket-config";
 import { loadTicketConfig, findType, initialStatus } from "@/lib/ticket-config.server";
@@ -123,8 +123,14 @@ export async function createTicketAction(_prev: unknown, formData: FormData): Pr
   if (manage && d.assigneeId) {
     await notifyTicketUser({ ticketId: id, companyId: user.companyId, userId: d.assigneeId, actorId: user.id, actorName: await userName(user.id), kind: "ASSIGN", summary: "assigned this ticket to you" });
   }
+  // The restriction stays (requester/assignee are set only by whoever can triage this client's
+  // tickets); what changes is that a value the person entered and we didn't keep is now said out
+  // loud on the ticket they land on (lib/ticket.ts#createDropNotices), not silently ignored.
+  const dropped: string[] = [];
+  if (!manage && d.requesterId && d.requesterId !== user.id) dropped.push("requester");
+  if (!manage && d.assigneeId) dropped.push("assignee");
   revalidatePath("/tickets");
-  redirect(`/tickets/${id}`);
+  redirect(dropped.length > 0 ? `/tickets/${id}?dropped=${dropped.join(",")}&why=${d.clientId ? "team" : "noclient"}` : `/tickets/${id}`);
 }
 
 // ---------- status / assignee / priority ----------
@@ -261,7 +267,7 @@ export async function updateTicketDetailsAction(ticketId: string, patch: z.infer
 export async function applyWorkflowAction(
   ticketId: string,
   patch: { statusId?: string; assigneeId?: string | null; priority?: TicketPriority },
-): Promise<{ error?: string }> {
+): Promise<{ error?: string; rejected?: string[] }> {
   const user = await requireUser();
   const t = await ticketForAction(ticketId, user.companyId);
   if (!t) return { error: "Not found" };
@@ -287,28 +293,37 @@ export async function applyWorkflowAction(
     await notifyTicketParticipants({ ticketId, companyId: user.companyId, actorId: user.id, actorName: await userName(user.id), kind: "STATUS", summary: "changed the status" });
   }
 
-  if (manage && patch.assigneeId !== undefined && (patch.assigneeId || null) !== (t.assigneeId ?? null)) {
-    const value = patch.assigneeId || null;
-    const name = value ? (await prisma.user.findUnique({ where: { id: value }, select: { name: true } }))?.name ?? "someone" : null;
-    await prisma.ticket.update({ where: { id: ticketId }, data: { assigneeId: value } });
-    await logActivity(ticketId, user.id, "ASSIGN", name ? `assigned to ${name}` : "unassigned");
-    if (value) await notifyTicketUser({ ticketId, companyId: user.companyId, userId: value, actorId: user.id, actorName: await userName(user.id), kind: "ASSIGN", summary: "assigned this ticket to you" });
+  // Same order and same restriction as before; a refused change is now reported back (named, with
+  // the reason) instead of being dropped without a word.
+  const rejected: string[] = [];
+  if (patch.assigneeId !== undefined && (patch.assigneeId || null) !== (t.assigneeId ?? null)) {
+    if (!manage) rejected.push(WORKFLOW_REJECTION.assignee);
+    else {
+      const value = patch.assigneeId || null;
+      const name = value ? (await prisma.user.findUnique({ where: { id: value }, select: { name: true } }))?.name ?? "someone" : null;
+      await prisma.ticket.update({ where: { id: ticketId }, data: { assigneeId: value } });
+      await logActivity(ticketId, user.id, "ASSIGN", name ? `assigned to ${name}` : "unassigned");
+      if (value) await notifyTicketUser({ ticketId, companyId: user.companyId, userId: value, actorId: user.id, actorName: await userName(user.id), kind: "ASSIGN", summary: "assigned this ticket to you" });
+    }
   }
 
-  if (manage && patch.priority && patch.priority !== t.priority) {
-    const sla = await slaDeadlines(user.companyId, t.clientId, patch.priority, t.typeDef.slaExempt, t.createdAt);
-    await prisma.ticket.update({ where: { id: ticketId }, data: { priority: patch.priority, ...sla } });
-    await logActivity(ticketId, user.id, "PRIORITY", `${TICKET_PRIORITY_LABEL[t.priority]} → ${TICKET_PRIORITY_LABEL[patch.priority]}`);
+  if (patch.priority && patch.priority !== t.priority) {
+    if (!manage) rejected.push(WORKFLOW_REJECTION.priority);
+    else {
+      const sla = await slaDeadlines(user.companyId, t.clientId, patch.priority, t.typeDef.slaExempt, t.createdAt);
+      await prisma.ticket.update({ where: { id: ticketId }, data: { priority: patch.priority, ...sla } });
+      await logActivity(ticketId, user.id, "PRIORITY", `${TICKET_PRIORITY_LABEL[t.priority]} → ${TICKET_PRIORITY_LABEL[patch.priority]}`);
+    }
   }
 
   revalidatePath(`/tickets/${ticketId}`);
   revalidatePath("/tickets");
-  return {};
+  return rejected.length > 0 ? { rejected } : {};
 }
 
 // ---------- comments (with attachments + threaded replies) / worklog ----------
 
-export async function addCommentAction(ticketId: string, formData: FormData): Promise<{ error?: string }> {
+export async function addCommentAction(ticketId: string, formData: FormData): Promise<{ error?: string; notice?: string }> {
   const user = await requireUser();
   const t = await ticketForAction(ticketId, user.companyId);
   if (!t) return { error: "Not found" };
@@ -316,16 +331,18 @@ export async function addCommentAction(ticketId: string, formData: FormData): Pr
   if (!manage && !involved(t, user.id)) return { error: "Forbidden" };
 
   const files = extractFiles(formData);
+  const wantsInternal = formData.get("internal") === "1";
   const res = await postTicketComment({
     ticketId, companyId: user.companyId, authorId: user.id,
     body: String(formData.get("body") ?? ""),
     parentId: (formData.get("parentId") as string) || null,
-    internal: manage && formData.get("internal") === "1",
+    internal: manage && wantsInternal,
     files, setFirstResponse: true,
   });
   if (res.error) return { error: res.error };
   revalidatePath(`/tickets/${ticketId}`);
-  return {};
+  // Still posted — but as a regular comment, and the person is told so instead of believing it's internal.
+  return wantsInternal && !manage ? { notice: INTERNAL_NOTE_REFUSED } : {};
 }
 
 export async function updateTicketDescriptionAction(ticketId: string, description: string): Promise<{ error?: string }> {

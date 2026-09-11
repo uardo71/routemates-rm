@@ -4,38 +4,42 @@ import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/session";
 import { visibleTicketWhere } from "@/lib/permissions";
 import { loadTicketConfig } from "@/lib/ticket-config.server";
-import { serializeTicketRow, TICKET_ROW_SELECT } from "../../../(app)/tickets/serialize";
+import { serializeTicketRow, customColumnsOf, TICKET_ROW_SELECT } from "../../../(app)/tickets/serialize";
 import { NATIVE_COLUMNS, DEFAULT_COLUMNS, columnValue } from "../../../(app)/tickets/columns";
-import { filterRows, sortRows, type TicketFilters } from "../../../(app)/tickets/filters";
+import { filterRows, sortRows, normalizeFilters, type TicketFilters } from "../../../(app)/tickets/filters";
 
 export async function POST(req: NextRequest) {
   const user = await requireUser();
   const cfg = await loadTicketConfig(user.companyId);
 
-  let filters: TicketFilters = {};
+  let rawFilters: unknown = {};
   let columns: string[] = DEFAULT_COLUMNS;
   let sort: { key: string; dir: "asc" | "desc" } | null = { key: "createdAt", dir: "desc" };
   try {
     const form = await req.formData();
     const parsed = JSON.parse(String(form.get("payload") ?? "{}"));
-    if (parsed.filters) filters = parsed.filters;
+    if (parsed.filters) rawFilters = parsed.filters;
     if (Array.isArray(parsed.columns) && parsed.columns.length) columns = parsed.columns;
     if (parsed.sort !== undefined) sort = parsed.sort;
   } catch { /* fall back to defaults */ }
 
   const ticketWhere = await visibleTicketWhere(user);
 
-  const [tickets, users] = await Promise.all([
+  const [tickets, users, clients] = await Promise.all([
     prisma.ticket.findMany({ where: ticketWhere, select: TICKET_ROW_SELECT, orderBy: { createdAt: "desc" } }),
     prisma.user.findMany({ where: { companyId: user.companyId }, select: { id: true, name: true } }),
+    prisma.client.findMany({ where: { companyId: user.companyId }, select: { id: true, name: true } }),
   ]);
   const nameById = new Map(users.map((u) => [u.id, u.name]));
-  const currentUserName = nameById.get(user.id) ?? "";
-  const rows = sortRows(filterRows(tickets.map((t) => serializeTicketRow(t, cfg, (id) => nameById.get(id) ?? "—")), filters, currentUserName), sort);
+  // Clients and people are matched by id (the workspace pins its own clientId); an older payload
+  // that still carries names is translated the same way saved views are.
+  const filters: TicketFilters = normalizeFilters(rawFilters, users, clients);
+  const rows = sortRows(filterRows(tickets.map((t) => serializeTicketRow(t, cfg, (id) => nameById.get(id) ?? "—")), filters, user.id), sort);
 
-  // Column labels (native + custom field names)
+  // Column labels (native + custom field names; archived fields read "Name (archived)")
+  const { customColumns, archivedColumns } = customColumnsOf(cfg);
   const customLabels = new Map<string, string>();
-  for (const t of cfg.types) for (const f of [...t.fields, ...cfg.globalFields]) customLabels.set(`cf:${f.key}`, f.name);
+  for (const c of [...customColumns, ...archivedColumns]) customLabels.set(`cf:${c.key}`, c.label);
   const labelOf = (key: string) => NATIVE_COLUMNS.find((c) => c.key === key)?.label ?? customLabels.get(key) ?? key;
 
   const wb = new ExcelJS.Workbook();

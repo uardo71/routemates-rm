@@ -256,8 +256,9 @@ export async function createFieldAction(input: z.infer<typeof FieldSchema>): Pro
 export async function updateFieldAction(id: string, input: z.infer<typeof FieldSchema>): Promise<{ error?: string }> {
   const { user, ok } = await guard();
   if (!ok) return { error: "Forbidden" };
-  const f = await prisma.ticketFieldDef.findFirst({ where: { id, companyId: user.companyId }, select: { id: true } });
+  const f = await prisma.ticketFieldDef.findFirst({ where: { id, companyId: user.companyId }, select: { id: true, name: true, archivedAt: true } });
   if (!f) return { error: "Not found" };
+  if (f.archivedAt) return { error: `"${f.name}" is archived — it can no longer be edited.` };
   const d = FieldSchema.safeParse(input);
   if (!d.success) return { error: d.error.issues[0]?.message ?? "Invalid input" };
   if (fieldNeedsOptions(d.data.kind as TicketFieldKind) && d.data.options.length === 0) return { error: "Add at least one option." };
@@ -272,11 +273,15 @@ export async function updateFieldAction(id: string, input: z.infer<typeof FieldS
   return done();
 }
 
+/** "Deleting" a custom field archives it: the definition and every value tickets already carry stay
+ *  in the database; the field leaves every input list and shows read-only as "archived field" where
+ *  a ticket has a value. Nothing is hard-deleted. */
 export async function deleteFieldAction(id: string): Promise<{ error?: string }> {
   const { user, ok } = await guard();
   if (!ok) return { error: "Forbidden" };
-  const f = await prisma.ticketFieldDef.findFirst({ where: { id, companyId: user.companyId }, select: { id: true } });
+  const f = await prisma.ticketFieldDef.findFirst({ where: { id, companyId: user.companyId }, select: { id: true, archivedAt: true } });
   if (!f) return { error: "Not found" };
-  await prisma.ticketFieldDef.delete({ where: { id } }); // cascades values
+  if (f.archivedAt) return done();
+  await prisma.ticketFieldDef.update({ where: { id }, data: { archivedAt: new Date(), archivedById: user.id } });
   return done();
 }

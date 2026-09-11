@@ -17,6 +17,11 @@ export type TicketRow = {
   statusName: string;
   statusColor: string | null;
   statusCategory: TicketStatusCategory;
+  // Ids are what filters match on ("Assigned to me", saved views, the workspace export) — names
+  // are for display only, since two people or two clients can share a name.
+  requesterId: string;
+  assigneeId: string | null;
+  clientId: string | null;
   requesterName: string;
   assigneeName: string | null;
   clientName: string | null;
@@ -36,6 +41,7 @@ export type TicketRow = {
 
 type DbRow = {
   id: string; number: string; title: string; priority: TicketPriority;
+  requesterId: string; assigneeId: string | null; clientId: string | null;
   typeDef: { id: string; name: string; color: string | null; icon: string | null };
   statusDef: { id: string; name: string; color: string | null; category: TicketStatusCategory };
   requester: { name: string }; assignee: { name: string } | null; client: { name: string } | null; project: { name: string } | null;
@@ -58,6 +64,8 @@ export function serializeTicketRow(t: DbRow, cfg: TicketConfig, userName: (id: s
   const fieldDefs = new Map<string, { key: string; kind: TicketFieldKind }>();
   for (const ty of cfg.types) for (const f of ty.fields) fieldDefs.set(f.id, { key: f.key, kind: f.kind });
   for (const f of cfg.globalFields) fieldDefs.set(f.id, { key: f.key, kind: f.kind });
+  // Archived fields still display the values tickets already carry (read-only, "(archived)" column).
+  for (const f of cfg.archivedFields) fieldDefs.set(f.id, { key: f.key, kind: f.kind });
   const fields: Record<string, string> = {};
   for (const v of t.fieldValues) {
     const def = fieldDefs.get(v.fieldId);
@@ -67,6 +75,7 @@ export function serializeTicketRow(t: DbRow, cfg: TicketConfig, userName: (id: s
     id: t.id, number: t.number, title: t.title, priority: t.priority,
     typeId: t.typeDef.id, typeName: t.typeDef.name, typeColor: t.typeDef.color, typeIcon: t.typeDef.icon,
     statusId: t.statusDef.id, statusName: t.statusDef.name, statusColor: t.statusDef.color, statusCategory: t.statusDef.category,
+    requesterId: t.requesterId, assigneeId: t.assigneeId, clientId: t.clientId,
     requesterName: t.requester.name, assigneeName: t.assignee?.name ?? null, clientName: t.client?.name ?? null, projectName: t.project?.name ?? null,
     category: t.category ?? "", systemRef: t.systemRef ?? "", moduleRef: t.moduleRef ?? "",
     dueDate: d10(t.dueDate), respondBy: iso(t.respondBy), resolveBy: iso(t.resolveBy), firstResponseAt: iso(t.firstResponseAt), resolvedAt: iso(t.resolvedAt), createdAt: iso(t.createdAt),
@@ -76,9 +85,25 @@ export function serializeTicketRow(t: DbRow, cfg: TicketConfig, userName: (id: s
 
 export const TICKET_ROW_SELECT = {
   id: true, number: true, title: true, priority: true,
+  requesterId: true, assigneeId: true, clientId: true,
   typeDef: { select: { id: true, name: true, color: true, icon: true } },
   statusDef: { select: { id: true, name: true, color: true, category: true } },
   requester: { select: { name: true } }, assignee: { select: { name: true } }, client: { select: { name: true } }, project: { select: { name: true } },
   category: true, systemRef: true, moduleRef: true, dueDate: true, respondBy: true, resolveBy: true, firstResponseAt: true, resolvedAt: true, createdAt: true,
   fieldValues: { select: { fieldId: true, value: true } },
 } as const;
+
+/** Column pickers offer only live fields; archived ones get a label (for saved views that already
+ *  show them) but are never offered to add. Both de-duplicated by field key across types. */
+export function customColumnsOf(cfg: TicketConfig): { customColumns: { key: string; label: string }[]; archivedColumns: { key: string; label: string }[] } {
+  const seen = new Set<string>();
+  const customColumns: { key: string; label: string }[] = [];
+  for (const t of cfg.types) for (const f of [...t.fields, ...cfg.globalFields]) {
+    if (!seen.has(f.key)) { seen.add(f.key); customColumns.push({ key: f.key, label: f.name }); }
+  }
+  const archivedColumns: { key: string; label: string }[] = [];
+  for (const f of cfg.archivedFields) {
+    if (!seen.has(f.key)) { seen.add(f.key); archivedColumns.push({ key: f.key, label: `${f.name} (archived)` }); }
+  }
+  return { customColumns, archivedColumns };
+}
