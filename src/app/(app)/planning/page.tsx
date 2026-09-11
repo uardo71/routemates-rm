@@ -72,6 +72,8 @@ export default async function PlanningPage({
     prisma.project.findMany({
       where: {
         companyId: user.companyId,
+        // The project picker only offers what can be planned: active projects, and internal ones.
+        OR: [{ status: "ACTIVE" }, { isInternal: true }],
         milestones: { some: { assignments: { some: { status: { not: "CLOSED" } } } } },
       },
       orderBy: { name: "asc" },
@@ -99,10 +101,17 @@ export default async function PlanningPage({
   for (const u of allUsers) {
     resourcesMap.set(u.id, { userId: u.id, userName: u.name, role: u.role, assignments: [] });
   }
+  // A project that isn't ACTIVE (and isn't internal) can't be planned: its rows only show when they
+  // already carry plan hours in view, greyed and read-only, with the status as the tooltip.
+  const plannedIds = new Set(planEntries.map((p) => p.assignmentId));
   for (const a of assignments) {
     if (!allowedUserIds.has(a.userId)) continue; // excluded by the role filter
+    const proj = a.milestone.project;
+    const inactive = proj.isInternal || proj.status === "ACTIVE" ? null : `${proj.name} is ${proj.status.replaceAll("_", " ").toLowerCase()} — not plannable until it's active.`;
+    if (inactive && !plannedIds.has(a.id)) continue;
     const row: PlanAssignmentRow = {
       id: a.id,
+      inactive,
       label: `${a.milestone.project.name} — ${a.milestone.name}`,
       allocatedHours: a.allocatedHours ? Number(a.allocatedHours) : null,
       startDate: toDateParam(a.startDate),

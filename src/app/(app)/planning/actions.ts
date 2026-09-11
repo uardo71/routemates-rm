@@ -46,6 +46,13 @@ export async function savePlanAction(cells: PlanCell[]): Promise<{ error?: strin
     return { error: "Invalid assignment." };
   }
 
+  // Hours are planned only on ACTIVE projects (internal ones exempt); a paused or closed project's
+  // rows are read-only in the grid, and the server holds the same line.
+  for (const a of assignments) {
+    const p = a.milestone.project;
+    if (!p.isInternal && p.status !== "ACTIVE") return { error: `${p.name} is ${p.status.replaceAll("_", " ").toLowerCase()} — plan hours only on active projects.` };
+  }
+
   // Task cells: every referenced task must belong to its assignment — same milestone AND assigned
   // to the assignment's user (taskId comes from the client, so never trust it).
   const taskIds = [...new Set(parsed.data.map((c) => c.taskId).filter((t): t is string => !!t))];

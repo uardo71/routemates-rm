@@ -1,5 +1,7 @@
 "use server";
 
+import { entryBlock, entryChangeBlock } from "@/lib/project-stage";
+
 import { revalidatePath } from "next/cache";
 import { addDays } from "date-fns";
 import { z } from "zod";
@@ -215,6 +217,23 @@ export async function saveTimeGridAction(input: {
     void lineId;
   }
 
+  // The lifecycle gate: new time only on ACTIVE projects (internal ones are exempt). Judged per cell
+  // against what's already stored, so an unchanged line on a paused project never blocks saving the
+  // rest of the week, and approved time is never touched.
+  {
+    const stored = existingCards.length
+      ? await prisma.timeEntry.findMany({ where: { timeCardId: { in: existingCards.map((c) => c.id) } }, select: { timeCardId: true, date: true, taskId: true, hours: true } })
+      : [];
+    const storedHours = new Map(stored.map((e) => [`${e.timeCardId}|${e.date.toISOString().slice(0, 10)}|${e.taskId ?? ""}`, Number(e.hours)]));
+    for (const cell of cells) {
+      const project = assignmentMap.get(cell.assignmentId)?.milestone.project;
+      if (!project) continue;
+      const before = storedHours.get(`${cell.lineId}|${String(cell.date).slice(0, 10)}|${cell.taskId ?? ""}`) ?? 0;
+      const block = entryChangeBlock({ name: project.name, status: project.status, isInternal: project.isInternal, beforeHours: before, afterHours: cell.hours, alreadyApproved: false });
+      if (block) return { error: block };
+    }
+  }
+
   await prisma.$transaction(async (tx) => {
     const cellsByLine = new Map<string, TimeGridCell[]>();
     for (const cell of cells) {
@@ -318,6 +337,8 @@ export async function submitTimeCardsAction(cardIds: string[]): Promise<{ error?
     }
     const total = card.entries.reduce((s, e) => s + Number(e.hours), 0);
     if (total === 0) return { error: "One of the selected lines has no hours logged." };
+    const blocked = entryBlock({ name: card.milestone.project.name, status: card.milestone.project.status, isInternal: card.milestone.project.isInternal }, "submitting time");
+    if (blocked) return { error: blocked };
     totalsByCard.set(card.id, total);
     const isProxy = card.userId !== caller.id;
     // Any PM/Admin can submit on someone's behalf company-wide — whether it auto-approves is a

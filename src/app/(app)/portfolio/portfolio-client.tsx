@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   SearchIcon, Building2Icon, ChevronDownIcon, ChevronRightIcon,
-  ArrowUpIcon, ArrowDownIcon, ArrowUpDownIcon, FlagIcon, XIcon,
+  ArrowUpIcon, ArrowDownIcon, ArrowUpDownIcon, FlagIcon, XIcon, ListChecksIcon,
 } from "lucide-react";
 import type { RagStatus } from "@prisma/client";
 import { Input } from "@/components/ui/input";
@@ -17,6 +17,7 @@ import { cn } from "@/lib/utils";
 import { RAG_DOT, RAG_PILL } from "@/lib/delivery";
 import type { WorkspaceRow } from "@/lib/delivery-day";
 import { formatSlip } from "@/lib/plan-schedule";
+import { HYGIENE_CHECKS, hygieneCounts, type HygieneItem, type HygieneKey } from "@/lib/hygiene";
 
 // A triage table, so the worst health sorts to the top by default.
 const RAG_RANK: Record<RagStatus, number> = { RED: 0, AMBER: 1, GREEN: 2 };
@@ -79,7 +80,7 @@ function compare(a: WorkspaceRow, b: WorkspaceRow, key: SortKey): number {
   }
 }
 
-export function PortfolioClient({ workspaces, isAdmin }: { workspaces: WorkspaceRow[]; isAdmin: boolean }) {
+export function PortfolioClient({ workspaces, hygiene, isAdmin }: { workspaces: WorkspaceRow[]; hygiene: HygieneItem[]; isAdmin: boolean }) {
   const router = useRouter();
   const sp = useSearchParams();
 
@@ -97,6 +98,9 @@ export function PortfolioClient({ workspaces, isAdmin }: { workspaces: Workspace
   const [sort, setSort] = useState<SortKey>(() => (isSortKey(sp.get("sort")) ? (sp.get("sort") as SortKey) : DEFAULT_SORT));
   const [dir, setDir] = useState<Dir>(sp.get("dir") === "desc" ? "desc" : DEFAULT_DIR);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [hyg, setHyg] = useState<HygieneKey | null>(() => { const v = sp.get("hyg"); return HYGIENE_CHECKS.some((c) => c.key === v) ? (v as HygieneKey) : null; });
+  const hygCounts = useMemo(() => hygieneCounts(hygiene), [hygiene]);
+  const hygProjects = useMemo(() => (hyg ? new Set(hygiene.filter((h) => h.key === hyg).map((h) => h.projectId)) : null), [hyg, hygiene]);
 
   useEffect(() => {
     const p = new URLSearchParams();
@@ -109,9 +113,10 @@ export function PortfolioClient({ workspaces, isAdmin }: { workspaces: Workspace
     if (showDone) p.set("done", "1");
     if (sort !== DEFAULT_SORT) p.set("sort", sort);
     if (dir !== DEFAULT_DIR) p.set("dir", dir);
+    if (hyg) p.set("hyg", hyg);
     const qs = p.toString();
     window.history.replaceState(null, "", qs ? `${window.location.pathname}?${qs}` : window.location.pathname);
-  }, [q, rag, attention, due, over, group, showDone, sort, dir]);
+  }, [q, rag, attention, due, over, group, showDone, sort, dir, hyg]);
 
   // Counts over everything (not the filtered set), so the strip reads as "state of the portfolio".
   const completedCount = workspaces.filter((w) => w.completed).length;
@@ -135,6 +140,7 @@ export function PortfolioClient({ workspaces, isAdmin }: { workspaces: Workspace
       if (attention && !needsAttention(w)) return false;
       if (due && !w.statusDue) return false;
       if (over && w.overdueTasks === 0) return false;
+      if (hygProjects && !hygProjects.has(w.projectId)) return false;
       if (needle && !`${w.name} ${w.customerName} ${w.account ?? ""} ${w.ragLabel} ${w.statusLine}`.toLowerCase().includes(needle)) return false;
       return true;
     });
@@ -143,7 +149,7 @@ export function PortfolioClient({ workspaces, isAdmin }: { workspaces: Workspace
       return dir === "asc" ? c : -c;
     });
     return out;
-  }, [workspaces, q, rag, attention, due, over, showDone, sort, dir]);
+  }, [workspaces, q, rag, attention, due, over, showDone, sort, dir, hygProjects]);
 
   // Optional grouping by the client company; groups themselves order worst-health first.
   const groups = useMemo(() => {
@@ -171,8 +177,8 @@ export function PortfolioClient({ workspaces, isAdmin }: { workspaces: Workspace
   const toggleCollapse = (client: string) =>
     setCollapsed((prev) => { const n = new Set(prev); if (n.has(client)) n.delete(client); else n.add(client); return n; });
 
-  const anyFilter = q.trim() !== "" || rag.size > 0 || attention || due || over;
-  const clearFilters = () => { setQ(""); setRag(new Set()); setAttention(false); setDue(false); setOver(false); };
+  const anyFilter = q.trim() !== "" || rag.size > 0 || attention || due || over || hyg !== null;
+  const clearFilters = () => { setQ(""); setRag(new Set()); setAttention(false); setDue(false); setOver(false); setHyg(null); };
   const colCount = group ? 8 : 9;
 
   const headCls = "sticky top-0 z-10 border-b bg-muted";
@@ -195,6 +201,37 @@ export function PortfolioClient({ workspaces, isAdmin }: { workspaces: Workspace
           </button>
         </div>
       </div>
+
+      {/* data hygiene — what the project records are missing (lib/hygiene); a chip filters the table */}
+      {hygiene.length > 0 && (
+        <Card className="py-0">
+          <CardContent className="flex flex-col gap-3 px-4 py-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="inline-flex items-center gap-1.5 text-sm font-medium"><ListChecksIcon className="size-4 text-muted-foreground" /> Hygiene</span>
+              <span className="text-xs text-muted-foreground">{hygiene.length} thing{hygiene.length === 1 ? "" : "s"} incomplete — click a check to filter the table and see what fixes it.</span>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {HYGIENE_CHECKS.filter((c) => hygCounts.get(c.key)).map((c) => (
+                <Chip key={c.key} active={hyg === c.key} onClick={() => setHyg((v) => (v === c.key ? null : c.key))}>
+                  <span className={cn("size-2 rounded-full", c.severity === "WARN" ? "bg-amber-500" : "bg-slate-400")} />
+                  {c.label} <span className="font-mono">{hygCounts.get(c.key)}</span>
+                </Chip>
+              ))}
+            </div>
+            {hyg && (
+              <ul className="flex flex-col divide-y rounded-md border text-sm">
+                {hygiene.filter((h) => h.key === hyg).map((h) => (
+                  <li key={`${h.key}:${h.subjectId}`} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-1.5">
+                    <span className="font-medium">{h.projectName}</span>
+                    <span className="min-w-0 flex-1 text-xs text-muted-foreground">{h.hint}</span>
+                    <Link href={h.fixHref} className="text-xs font-medium text-primary hover:underline">Fix it</Link>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* summary strip — every chip is also a filter */}
       <div className="flex flex-wrap items-center gap-2">

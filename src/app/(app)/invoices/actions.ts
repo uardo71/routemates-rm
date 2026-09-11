@@ -5,6 +5,7 @@ import { parseISO } from "date-fns";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { relinkForInvoice } from "@/lib/invoice-time-link-db";
+import { invoiceBlock } from "@/lib/project-stage";
 import { requirePermission } from "@/lib/session";
 import { invoiceTotals, effectiveDueDate } from "@/lib/invoice";
 import { recordAudit } from "@/lib/audit";
@@ -85,6 +86,8 @@ export async function createInvoiceAction(input: CreateInvoiceInput): Promise<{ 
   if (d.projectId) {
     const project = await prisma.project.findFirst({ where: { id: d.projectId, companyId: user.companyId }, include: { company: true } });
     if (!project) return { error: "Invalid project." };
+    const blocked = invoiceBlock(project);
+    if (blocked) return { error: blocked };
     clientId = project.clientId;
     currency = currency ?? project.company.currency;
   }
@@ -263,6 +266,8 @@ export async function createTimeInvoiceAction(input: CreateTimeInvoiceInput): Pr
 
   const project = await prisma.project.findFirst({ where: { id: d.projectId, companyId: user.companyId }, include: { company: true } });
   if (!project) return { error: "Invalid project." };
+  const blocked = invoiceBlock(project);
+  if (blocked) return { error: blocked };
   if (project.billingType === "FIXED_PRICE") return { error: "Fixed-price projects are billed by amount/milestone, not by time." };
 
   // TimeEntry.date is stored at UTC midnight (new Date("yyyy-MM-dd")), so parse the period the same

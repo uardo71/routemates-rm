@@ -319,6 +319,7 @@ model Contact {
   createdAt DateTime @default(now())
 
   opportunities Opportunity[]
+  sponsoredProjects Project[] @relation("ProjectSponsor")
 
   @@index([clientId])
 }
@@ -382,6 +383,21 @@ model Project {
   uatRecordedById String? // internal user who recorded the acceptance
   uatRecordedBy   User?     @relation("ProjectUatRecordedBy", fields: [uatRecordedById], references: [id])
   uatRecordedAt   DateTime? // when it was recorded in the app
+  // Lifecycle gates (see src/lib/project-stage.ts). The client sponsor and an explicit PO waiver are
+  // readiness checks for PLANNED -> ACTIVE; UAT can be marked not applicable for the closure gate.
+  sponsorContactId String?
+  sponsor          Contact?  @relation("ProjectSponsor", fields: [sponsorContactId], references: [id], onDelete: SetNull)
+  poWaived         Boolean   @default(false)
+  poWaivedReason   String?
+  uatNotApplicable Boolean   @default(false)
+  // An admin may start or close a project with checks still failing; the reason is kept (and shown
+  // as a badge while the checks still fail). "By" ids are plain ids, like the audit log.
+  activationOverrideReason String?
+  activationOverrideAt     DateTime?
+  activationOverrideById   String?
+  closureOverrideReason    String?
+  closureOverrideAt        DateTime?
+  closureOverrideById      String?
   createdAt    DateTime           @default(now())
   updatedAt    DateTime           @updatedAt
 
@@ -465,6 +481,10 @@ model Milestone {
   reallocationsTo   MilestoneReallocation[] @relation("ReallocTo")
   leaveRequests     LeaveRequest[]
   adjustments       MilestoneAdjustment[]
+  // Explicitly written off: no more delivery or billing expected, so it doesn't block closure.
+  writtenOffAt     DateTime?
+  writtenOffById   String?
+  writtenOffReason String?
 
   @@index([projectId])
   vendorPayments VendorPayment[]

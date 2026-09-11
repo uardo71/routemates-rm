@@ -64,6 +64,8 @@ export type PlanAssignmentRow = {
   endDate: string;
   /** This person's tasks on the milestone — the ones that can be planned under this assignment. */
   tasks: PlanTaskRow[];
+  /** Set when the project isn't ACTIVE (and isn't internal): the row is greyed and read-only, with this as its tooltip. */
+  inactive?: string | null;
 };
 export type PlanResourceRow = { userId: string; userName: string; role: string; assignments: PlanAssignmentRow[] };
 export type PlanCellInit = { assignmentId: string; taskId: string | null; weekStartDate: string; hours: number };
@@ -469,9 +471,10 @@ export function PlannerGrid({
                                   <span className="w-3 shrink-0" />
                                 )}
                                 <div className="min-w-0">
-                                  <div className="truncate" title={a.label}>
+                                  <div className={cn("truncate", a.inactive && "text-muted-foreground")} title={a.inactive ?? a.label}>
                                     {a.label}
                                   </div>
+                                  {a.inactive && <div className="text-[10px] text-amber-700 dark:text-amber-400" title={a.inactive}>not active · read only</div>}
                                   {a.allocatedHours !== null && (
                                     <div className="text-xs text-muted-foreground">cap {a.allocatedHours}h</div>
                                   )}
@@ -512,7 +515,7 @@ export function PlannerGrid({
 
                               // Assignment-level editable cell — only when the week isn't already
                               // broken down by task (task cells win; edit those instead).
-                              if (canManage && windowOk && !taskMode) {
+                              if (canManage && windowOk && !taskMode && !a.inactive) {
                                 return (
                                   <td key={w.key} className={cn("p-1 relative", weekBorderClass(w.key))}>
                                     <Input
@@ -569,7 +572,7 @@ export function PlannerGrid({
                                 {weeks.map((w) => {
                                   const windowOk = weekInAssignmentWindow(effectiveA, w.key);
                                   const value = cellValue(a.id, task.id, w.key);
-                                  if (canManage && windowOk) {
+                                  if (canManage && windowOk && !a.inactive) {
                                     return (
                                       <td key={w.key} className={cn("p-1", weekBorderClass(w.key))}>
                                         <Input

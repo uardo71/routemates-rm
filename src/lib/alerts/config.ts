@@ -30,6 +30,8 @@ export type AlertsConfig = {
     golive_readiness: { enabled: boolean };
     /** Weekly per-PM digest of everything needing attention (ISO weekday, 1 = Monday). */
     delivery_digest: { enabled: boolean; weekday: number };
+    /** Weekly per-PM list of their failing data-hygiene checks (ISO weekday, 1 = Monday). */
+    hygiene_weekly: { enabled: boolean; weekday: number };
   };
 };
 
@@ -49,6 +51,7 @@ export const DEFAULT_ALERTS_CONFIG: AlertsConfig = {
     issue_overdue: { enabled: true },
     golive_readiness: { enabled: true },
     delivery_digest: { enabled: true, weekday: 1 },
+    hygiene_weekly: { enabled: true, weekday: 1 },
   },
 };
 
@@ -110,6 +113,11 @@ export const ALERT_RULE_META: Record<AlertKind, { label: string; description: st
     description: "One email per project manager listing workspaces needing a status update, overdue tasks, issues past due and go-live items in the next 14 days, with links. Once per week.",
     recipients: "each project manager, about their own projects",
   },
+  hygiene_weekly: {
+    label: "Weekly hygiene",
+    description: "One email per project manager listing the data-hygiene checks failing on their projects (missing PO, stale status, milestones past their end date…), each with a link to the field that fixes it. Projects with no manager go to the administrators. Once per week.",
+    recipients: "each project manager, about their own projects · admins for unmanaged ones",
+  },
 };
 
 /** Deep-merges a stored (possibly older/partial) config onto the defaults so every field has a value. */
@@ -137,6 +145,7 @@ export function mergeAlertsConfig(stored: unknown): AlertsConfig {
       issue_overdue: { enabled: bool(r.issue_overdue?.enabled, true) },
       golive_readiness: { enabled: bool(r.golive_readiness?.enabled, true) },
       delivery_digest: { enabled: bool(r.delivery_digest?.enabled, true), weekday: (() => { const w = num(r.delivery_digest?.weekday, 1); return w >= 1 && w <= 7 ? Math.round(w) : 1; })() },
+      hygiene_weekly: { enabled: bool(r.hygiene_weekly?.enabled, true), weekday: (() => { const w = num(r.hygiene_weekly?.weekday, 1); return w >= 1 && w <= 7 ? Math.round(w) : 1; })() },
     },
   };
 }

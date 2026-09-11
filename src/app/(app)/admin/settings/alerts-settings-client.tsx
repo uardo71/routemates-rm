@@ -120,6 +120,12 @@ export function AlertsSettingsClient({ config, emailConfigured, teamsConfigured,
               {["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"].map((d, i) => <option key={d} value={i + 1}>{d}</option>)}
             </select>
           </RuleRow>
+          <RuleRow kind="hygiene_weekly" enabled={c.rules.hygiene_weekly.enabled} onEnabled={(v) => rule("hygiene_weekly", { enabled: v })}>
+            <Label htmlFor="al-hy" className="text-xs">Send on</Label>
+            <select id="al-hy" value={c.rules.hygiene_weekly.weekday} onChange={(e) => rule("hygiene_weekly", { weekday: Number(e.target.value) })} className="h-8 rounded-md border border-input bg-background px-2 text-xs">
+              {["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"].map((d, i) => <option key={d} value={i + 1}>{d}</option>)}
+            </select>
+          </RuleRow>
 
           <div className="flex flex-wrap items-center gap-2 border-t pt-3">
             <Button size="sm" onClick={save} disabled={pending}>{pending ? "Saving…" : "Save alert settings"}</Button>

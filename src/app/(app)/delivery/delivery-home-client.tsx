@@ -18,17 +18,17 @@ import {
 
 const KIND_ICON: Record<DayItemKind, typeof FileTextIcon> = {
   UAT_SCRIPT_DUE: ClipboardCheckIcon, CUTOVER_DUE: RocketIcon, NO_STATUS: FileTextIcon, STATUS_DUE: FileTextIcon, PLAN_OVERDUE: ClipboardListIcon,
-  ISSUE_DUE: AlertCircleIcon, ISSUE_OPEN: TriangleAlertIcon, ACTION_OVERDUE: MessageSquareIcon,
+  ISSUE_DUE: AlertCircleIcon, ISSUE_OPEN: TriangleAlertIcon, ACTION_OVERDUE: MessageSquareIcon, HYGIENE: ListChecksIcon,
 };
 const GROUP_ICON: Record<DayGroupKey, typeof FileTextIcon> = {
-  golive: RocketIcon, status: FileTextIcon, issues: AlertCircleIcon, plan: ClipboardListIcon, meetings: MessageSquareIcon,
+  golive: RocketIcon, status: FileTextIcon, issues: AlertCircleIcon, plan: ClipboardListIcon, meetings: MessageSquareIcon, hygiene: ListChecksIcon,
 };
 const GROUP_LABEL: Record<DayGroupKey, string> = {
-  golive: "Go-live & UAT", status: "Status updates", issues: "Issues to handle", plan: "Plan slipping", meetings: "Meeting actions",
+  golive: "Go-live & UAT", status: "Status updates", issues: "Issues to handle", plan: "Plan slipping", meetings: "Meeting actions", hygiene: "Data hygiene",
 };
 // Which coaching guide opens when Enida clicks "How?" on a group of the day.
 const GROUP_GUIDE_CAT: Record<DayGroupKey, string> = {
-  golive: "golive", status: "status", issues: "escalation", plan: "slipping_date", meetings: "general",
+  golive: "golive", status: "status", issues: "escalation", plan: "slipping_date", meetings: "general", hygiene: "general",
 };
 const PRIO: Record<DayPriority, { dot: string; chip: string; label: string }> = {
   CRIT: { dot: "bg-rose-500", chip: "bg-rose-500/12 text-rose-600 dark:text-rose-400", label: "Overdue" },

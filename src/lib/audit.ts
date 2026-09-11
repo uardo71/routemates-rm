@@ -105,7 +105,7 @@ export async function presentAudit(rows: AuditRow[], reader: SessionUser): Promi
       id: r.id,
       at: r.at.toISOString(),
       actorId: r.actorId,
-      actorName: nameById.get(r.actorId) ?? "Deleted user",
+      actorName: nameById.get(r.actorId) ?? (r.actorId === "system" ? "System" : "Deleted user"),
       entityType: r.entityType,
       entityId: r.entityId,
       action: r.action,

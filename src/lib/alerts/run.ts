@@ -9,6 +9,7 @@ import { getAlertsConfig, getAlertsLastRun, setAlertsLastRun } from "@/lib/setti
 import { toDateParam } from "@/lib/week";
 import { evaluateAll, type Alert, type AlertData, type Recipient } from "./rules";
 import { loadDeliveryAlertData } from "./delivery-data";
+import { loadHygieneRows } from "@/lib/hygiene-data";
 
 // The daily alerts runner. Loads what the pure rules need, evaluates them, dedups through the
 // Notification ledger, fans out through notify(). Idempotent per day via an AppSetting marker, and
@@ -77,6 +78,7 @@ async function loadAlertData(companyId: string, today: string): Promise<AlertDat
     loadDeliveryAlertData(companyId, baseUrl),
   ]);
 
+  const hygiene = await loadHygieneRows(companyId, "ALL");
   const hoursBy = new Map<string, number>();
   const costBy = new Map<string, number>();
   for (const e of entries) {
@@ -119,6 +121,7 @@ async function loadAlertData(companyId: string, today: string): Promise<AlertDat
     milestones: milestones.map((m) => ({ id: m.id, name: m.name, projectName: m.project.name, projectManagerId: m.project.managerId, endDate: iso(m.endDate), status: m.status })),
     certifications: certifications.map((c) => ({ id: c.id, userId: c.userId, userName: c.user.name, name: c.name, issuer: c.issuer, expiryDate: iso(c.expiryDate) })),
     delivery,
+    hygiene,
   };
 }
 

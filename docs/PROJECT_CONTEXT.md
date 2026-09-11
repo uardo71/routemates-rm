@@ -1709,3 +1709,46 @@ No migration. 253 tests green. Build green.
   invoice billing period of the company - the same routine as `scripts/link-manual-invoice-time.ts`
   and the live create/edit hook. This is the in-app way to run the Neptune repair (still NOT applied
   on prod by the agent; a dry run shows 31 entries across July and August -> 0h unbilled).
+
+### Prompt 6 - Project lifecycle: gating, Prepare for Delivery, closure gate, hygiene worklist (2026-09-11)
+Migrations `20260911200000_project_readiness_fields` and `20260911200100_project_lifecycle_closure`.
+`ProjectStatus` is the state machine - no second stage field.
+- **Pure `src/lib/project-stage.ts` (tested)**: `TRANSITIONS` / `checkTransition` / `allowedTransitions`
+  (PLANNED -> ACTIVE|CANCELLED; ACTIVE -> ON_HOLD|COMPLETED|CANCELLED; ON_HOLD -> ACTIVE|CANCELLED;
+  COMPLETED -> ACTIVE admin only; CANCELLED -> PLANNED admin only), `entryBlock` / `entryChangeBlock`
+  (only ACTIVE takes new time; internal projects exempt; approved time never re-validated; a cell is
+  judged only when its hours change, and clearing to 0 is always allowed), `invoiceBlock` (PLANNED and
+  CANCELLED refused; ON_HOLD and COMPLETED still invoice), `readinessChecks`, `closureChecks`
+  (status fresh = within 30 days inclusive), `gateDecision` (all green, or admin + written reason).
+- **One status path**: `projects/lifecycle-actions.ts#changeProjectStatusAction` - legality, gate,
+  override fields, `recordAudit` inside the transaction. Closing cascades: every milestone's
+  `timeEntryOpen` -> false and every ACTIVE assignment -> CLOSED, one audit row each.
+  `writeOffMilestoneAction` / `undoMilestoneWriteOffAction` (`Milestone.writtenOffAt/ById/Reason`).
+  The edit form no longer sets status; new projects start PLANNED (internal ones ACTIVE).
+- **Gate wired into**: `time/actions.ts` save (per changed cell, vs stored entries) and submit,
+  both invoice create paths, `planning/actions.ts` save, and the pickers: time page (pickable only on
+  ACTIVE/internal), `/planning` + `/my-planning` (non-active rows shown greyed + read-only only when
+  they carry plan hours; tooltip = status), planner project filter. **Expenses have no project link in
+  the schema, so there is nothing to gate there** - if an expense ever gets a project, call
+  `entryBlock` in `createExpenseAction`.
+- **Readiness fields**: `Project.sponsorContactId` (FK Contact, SetNull), `poWaived` + `poWaivedReason`,
+  `activationOverrideReason/At/ById`; closure: `uatNotApplicable`, `closureOverrideReason/At/ById`.
+  Edit form gained sponsor (from the client's contacts), SoW, PO, PO waiver; every gate/hygiene fix
+  link lands on `#field-<name>` with a `target:` ring.
+- **Project page**: lifecycle buttons (legal moves only) open the Prepare for Delivery / closure dialog
+  with green/red checks, fix links, UAT-not-applicable and unbilled-acknowledge ticks, inline
+  milestone write-off, and the admin override (reason required). "Started with override" badge while
+  the readiness checks still fail; "Closed with override" on a completed project. A banner says why
+  time entry is closed. `?lifecycle=start` opens the start dialog (hygiene link).
+- **Day-one backfill** (in the closure migration): non-internal PLANNED/ON_HOLD projects with approved
+  time in the last 60 days -> ACTIVE, each logged in `AuditLog` with actor `system` (shown as
+  "System"). COMPLETED/CANCELLED are deliberately left alone. On prod the dry query found nothing to
+  change (every project with recent time was already ACTIVE; Pirelli Intercompany is COMPLETED with
+  approved time on 2026-08-17 and stays COMPLETED).
+- **Hygiene** `src/lib/hygiene.ts` (pure, tested) + `hygiene-data.ts` loader: won deal not started,
+  active no PO/waiver, active no end date, on hold with no open issue, no status ever, status older
+  than 30 days, milestone past end not complete, all assignments ended but milestone open for time
+  (milestone-level, to avoid one item per person), approved time with no budget hours, client with no
+  sponsor on any live project, active with no manager. Surfaced on `/portfolio` (Hygiene card, chip
+  per check filters the table, list with Fix links), in My Day (`HYGIENE` kind, "Data hygiene" group,
+  INFO), and the `hygiene_weekly` alert (per PM per ISO week; unmanaged projects -> admins).

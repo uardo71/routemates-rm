@@ -16,6 +16,7 @@ import type { AlertsConfig, AlertKind } from "./config";
 export type { AlertKind };
 export type RecipientAction = "invoices:manage" | "expenses:manage" | "timesheet:approve:any" | "users:manage";
 import { statusChase, overduePlanTasks, overdueRaidItems, isHighSeverity, goLiveReadiness, isoWeek, isoWeekday } from "@/lib/delivery-signals";
+import { evaluateHygiene, HYGIENE_CHECKS, type HygieneRows } from "@/lib/hygiene";
 export type Recipient = { userId: string } | { action: RecipientAction };
 
 export type Alert = {
@@ -76,6 +77,8 @@ export type AlertData = {
       endDateIso: string | null; scripts: { status: string }[]; cutoverLeaves: { status: string }[];
     }[];
   };
+  /** Rows for the data-hygiene predicates (lib/hygiene.ts). Optional so older fixtures stay valid. */
+  hygiene?: HygieneRows;
 };
 
 // ---------- date + text helpers (pure) ----------
@@ -462,6 +465,42 @@ export function deliveryDigestRule(data: AlertData, cfg: AlertsConfig["rules"]["
   return out;
 }
 
+/** Weekly hygiene: one email per PM listing the hygiene checks failing on their own projects, each
+ *  with a link to the field that fixes it. Items on projects with no manager go to the admins.
+ *  Keyed by ISO week, so a re-run in the same week never sends twice. */
+export function hygieneWeeklyRule(data: AlertData, cfg: AlertsConfig["rules"]["hygiene_weekly"], isSent: IsSent): Alert[] {
+  if (!cfg.enabled || !data.hygiene) return [];
+  if (isoWeekday(data.today) !== cfg.weekday) return [];
+  const week = isoWeek(data.today);
+  const base = data.delivery.baseUrl;
+  const items = evaluateHygiene(data.hygiene, data.today);
+  const byOwner = new Map<string, typeof items>();
+  for (const i of items) { const k = i.managerId ?? "unowned"; (byOwner.get(k) ?? byOwner.set(k, []).get(k)!).push(i); }
+  const out: Alert[] = [];
+  for (const [owner, list] of byOwner) {
+    if (isSent("hygiene_weekly", owner, week)) continue;
+    const sections = HYGIENE_CHECKS.map((c) => {
+      const rows = list.filter((i) => i.key === c.key);
+      if (rows.length === 0) return "";
+      return `<h3 style="margin:16px 0 4px;font-size:13px">${esc(c.label)} (${rows.length})</h3><ul style="margin:0;padding-left:18px">${rows.map((i) => `<li><a href="${esc(base + i.fixHref)}">${esc(i.projectName)}</a> — ${esc(i.hint)}</li>`).join("")}</ul>`;
+    }).join("");
+    const n = list.length;
+    const whose = owner === "unowned" ? "projects with no manager" : "your projects";
+    out.push({
+      kind: "hygiene_weekly", targetType: "user", targetId: owner, payloadKey: week,
+      subject: `${n} data-hygiene item${n === 1 ? "" : "s"} on ${whose} (${week})`,
+      html: page(`Data hygiene · ${week}`, [
+        `${owner === "unowned" ? "Projects with no manager" : "Your projects"} have ${n} incomplete item${n === 1 ? "" : "s"}. Each link opens the field that fixes it.`,
+        sections,
+        `<a href="${esc(base)}/portfolio">Open the Portfolio</a>`,
+      ]),
+      teamsText: `Data hygiene ${week}: ${n} item${n === 1 ? "" : "s"} on ${whose}.`,
+      recipients: owner === "unowned" ? [{ action: "users:manage" }] : [{ userId: owner }],
+    });
+  }
+  return out;
+}
+
 export const RULES: { kind: AlertKind; run: (data: AlertData, cfg: AlertsConfig, isSent: IsSent) => Alert[] }[] = [
   { kind: "project_budget", run: (d, c, s) => projectBudgetRule(d, c.rules.project_budget, s) },
   { kind: "invoice_overdue", run: (d, c, s) => invoiceOverdueRule(d, c.rules.invoice_overdue, s) },
@@ -474,6 +513,7 @@ export const RULES: { kind: AlertKind; run: (data: AlertData, cfg: AlertsConfig,
   { kind: "issue_overdue", run: (d, c, s) => issueOverdueRule(d, c.rules.issue_overdue, s) },
   { kind: "golive_readiness", run: (d, c, s) => goLiveReadinessRule(d, c.rules.golive_readiness, s) },
   { kind: "delivery_digest", run: (d, c, s) => deliveryDigestRule(d, c.rules.delivery_digest, s) },
+  { kind: "hygiene_weekly", run: (d, c, s) => hygieneWeeklyRule(d, c.rules.hygiene_weekly, s) },
 ];
 
 /** Every alert that should go out today, across all enabled rules. */

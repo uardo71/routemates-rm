@@ -15,7 +15,8 @@ export type DayItemKind =
   | "ISSUE_OPEN" // a high-severity issue is open and needs a next action
   | "ACTION_OVERDUE" // a meeting action item is overdue
   | "UAT_SCRIPT_DUE" // UAT approaching, but the customer test script isn't sent
-  | "CUTOVER_DUE"; // UAT accepted / go-live near, but the cutover isn't finished
+  | "CUTOVER_DUE" // UAT accepted / go-live near, but the cutover isn't finished
+  | "HYGIENE"; // a data-hygiene check is failing (src/lib/hygiene.ts)
 
 export type DayItem = {
   id: string;
@@ -60,7 +61,7 @@ export type WorkspaceRow = {
 };
 
 // Category grouping for the My Day path so repeated items read as one tracked group.
-export type DayGroupKey = "golive" | "status" | "issues" | "plan" | "meetings";
+export type DayGroupKey = "golive" | "status" | "issues" | "plan" | "meetings" | "hygiene";
 export const DAY_GROUP: Record<DayItemKind, { key: DayGroupKey; label: string }> = {
   UAT_SCRIPT_DUE: { key: "golive", label: "Go-live & UAT" },
   CUTOVER_DUE: { key: "golive", label: "Go-live & UAT" },
@@ -70,8 +71,9 @@ export const DAY_GROUP: Record<DayItemKind, { key: DayGroupKey; label: string }>
   ISSUE_OPEN: { key: "issues", label: "Issues to handle" },
   PLAN_OVERDUE: { key: "plan", label: "Plan slipping" },
   ACTION_OVERDUE: { key: "meetings", label: "Meeting actions" },
+  HYGIENE: { key: "hygiene", label: "Data hygiene" },
 };
-export const DAY_GROUP_ORDER: DayGroupKey[] = ["golive", "status", "issues", "plan", "meetings"];
+export const DAY_GROUP_ORDER: DayGroupKey[] = ["golive", "status", "issues", "plan", "meetings", "hygiene"];
 
 export type UpcomingItem = {
   id: string;
@@ -127,6 +129,11 @@ export const DAY_HINT: Record<DayItemKind, { cta: string; tab: string; how: stri
     cta: "Open minutes",
     tab: "minutes",
     how: "An action item from a meeting is overdue. Chase the owner, or tick it off if it's done.",
+  },
+  HYGIENE: {
+    cta: "Fix it",
+    tab: "",
+    how: "Something the project record should have is missing or out of date. The link opens the exact field — fill it in and the item disappears.",
   },
 };
 

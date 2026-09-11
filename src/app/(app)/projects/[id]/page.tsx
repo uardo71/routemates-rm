@@ -37,6 +37,9 @@ import { loadAuditFor } from "@/lib/audit";
 import { AuditHistoryCard } from "@/components/audit-history-card";
 import { TimeEntriesTable } from "./time-entries-table";
 import { UatCard, PhasePill, type UatState, type UatEventItem } from "./uat-card";
+import { LifecycleControls } from "./lifecycle-controls";
+import { loadLifecycleContext } from "@/lib/project-lifecycle-data";
+import { allowedTransitions, entryBlock } from "@/lib/project-stage";
 import { uploadProjectDocumentAction, deleteProjectDocumentAction } from "../actions";
 
 type Tone = "secondary" | "default" | "outline" | "destructive";
@@ -107,12 +110,12 @@ export default async function ProjectDetailPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ tab?: string }>;
+  searchParams: Promise<{ tab?: string; lifecycle?: string }>;
 }) {
   const { id } = await params;
   // Which tab to open on — lets drill-in pages (a milestone, an assignment) link back to the exact
   // tab you came from via `?tab=…`, instead of always dumping you on Overview.
-  const { tab } = await searchParams;
+  const { tab, lifecycle: lifecycleParam } = await searchParams;
   const activeTab = (PROJECT_TABS as readonly string[]).includes(tab ?? "") ? (tab as string) : "overview";
   const user = await requirePermission("projects:view");
 
@@ -350,6 +353,21 @@ export default async function ProjectDetailPage({
   // the whole delivery record. Money redaction is applied inside loadAuditFor.
   const history = await loadAuditFor(user, "Project", project.id);
 
+  // Lifecycle: the legal next moves for this user, the gate checks behind them, and whether time is
+  // blocked right now (project-stage.ts is the single source for all three).
+  const lc = canManage ? await loadLifecycleContext(user, project.id) : null;
+  const transitions = canManage ? allowedTransitions(project.status, user.role === "ADMIN") : [];
+  const timeBlocked = entryBlock({ name: project.name, status: project.status, isInternal: project.isInternal });
+  const startOverride = lc?.activationOverride && project.status !== "PLANNED" && lc.readiness.some((c) => !c.ok) ? lc.activationOverride : null;
+  const closeOverride = project.status === "COMPLETED" ? lc?.closureOverride ?? null : null;
+  const editField = (f: string) => `/projects/${project.id}/edit#field-${f}`;
+  const fixHrefs: Record<string, string> = {
+    manager: editField("managerId"), dates: editField("startDate"), milestones: `/projects/${project.id}?tab=milestones`,
+    assignments: `/projects/${project.id}?tab=milestones`, commercials: editField("budgetAmount"), sponsor: editField("sponsorContactId"),
+    sow: editField("sowNumber"), po: editField("poNumber"), raid: `/delivery/${project.id}?tab=raid`, status: `/delivery/${project.id}?tab=status`,
+    uat: `/projects/${project.id}?tab=uat`, wip: "/revenue/unbilled", timecards: "/approvals",
+  };
+
   return (
     <div className="flex flex-col gap-6">
       <div className="flex items-start justify-between flex-wrap gap-3">
@@ -361,6 +379,12 @@ export default async function ProjectDetailPage({
               <StatusStamp label={project.status.replaceAll("_", " ")} {...(PROJECT_STATUS_STAMP[project.status] ?? { tone: "neutral" })} />
               <Badge variant="outline">{project.billingType.replaceAll("_", " ")}</Badge>
               {project.uatStatus !== "NOT_STARTED" && <PhasePill status={project.uatStatus} />}
+              {startOverride && (
+                <span className="rounded-full border border-amber-500/50 bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-400" title={`Started with Prepare for Delivery checks failing${startOverride.byName ? ` — by ${startOverride.byName}` : ""}${startOverride.at ? ` on ${startOverride.at}` : ""}: ${startOverride.reason}`}>Started with override</span>
+              )}
+              {closeOverride && (
+                <span className="rounded-full border border-amber-500/50 bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-400" title={`Closed with closure checks failing${closeOverride.byName ? ` — by ${closeOverride.byName}` : ""}${closeOverride.at ? ` on ${closeOverride.at}` : ""}: ${closeOverride.reason}`}>Closed with override</span>
+              )}
             </div>
             <p className="text-sm text-muted-foreground mt-1">
               {project.number && <span className="font-mono text-foreground">{project.number}</span>}
@@ -371,7 +395,22 @@ export default async function ProjectDetailPage({
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {lc && transitions.length > 0 && (
+            <LifecycleControls
+              projectId={project.id}
+              projectName={project.name}
+              status={project.status}
+              isAdmin={user.role === "ADMIN"}
+              transitions={transitions}
+              readiness={lc.readiness}
+              closure={lc.closure}
+              unbilled={{ hours: lc.unbilledHours, value: lc.unbilledValue, currency: lc.currency }}
+              openMilestones={lc.openMilestones}
+              fixHrefs={fixHrefs}
+              autoOpen={lifecycleParam ?? null}
+            />
+          )}
           {project.opportunity && (
             <LinkButton href={`/opportunities/${project.opportunity.id}`} variant="outline" size="sm">
               View opportunity
@@ -384,6 +423,12 @@ export default async function ProjectDetailPage({
           )}
         </div>
       </div>
+
+      {timeBlocked && (
+        <div className="rounded-lg border border-amber-500/40 bg-amber-500/[0.07] px-4 py-2.5 text-sm">
+          <span className="font-medium">Time entry is closed.</span> {timeBlocked}
+        </div>
+      )}
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         <StatCard

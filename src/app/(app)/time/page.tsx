@@ -116,6 +116,7 @@ export default async function TimePage({
       usedHours: totalUsedByAssignment.get(a.id) ?? 0,
       pickable:
         a.status === "ACTIVE" &&
+        (a.milestone.project.isInternal || a.milestone.project.status === "ACTIVE") &&
         a.milestone.timeEntryOpen &&
         a.startDate <= weekEnd &&
         a.endDate >= weekStart,

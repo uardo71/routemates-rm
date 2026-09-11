@@ -22,7 +22,7 @@ export default async function EditProjectPage({ params }: { params: Promise<{ id
   if (!(await canManageProject(user, id))) notFound();
 
   const [clients, managers] = await Promise.all([
-    prisma.client.findMany({ where: { companyId: user.companyId }, orderBy: { name: "asc" } }),
+    prisma.client.findMany({ where: { companyId: user.companyId }, orderBy: { name: "asc" }, include: { contacts: { select: { id: true, name: true }, orderBy: { name: "asc" } } } }),
     user.role === "ADMIN"
       ? prisma.user.findMany({ where: { companyId: user.companyId, role: "PM", active: true }, orderBy: { name: "asc" } })
       : Promise.resolve(null),
@@ -48,6 +48,11 @@ export default async function EditProjectPage({ params }: { params: Promise<{ id
               name: project.name,
               clientId: project.clientId,
               status: project.status,
+              sowNumber: project.sowNumber,
+              poNumber: project.poNumber,
+              poWaived: project.poWaived,
+              poWaivedReason: project.poWaivedReason,
+              sponsorContactId: project.sponsorContactId,
               billingType: project.billingType,
               budgetAmount: project.budgetAmount?.toString() ?? null,
               budgetHours: project.budgetHours?.toString() ?? null,
@@ -56,7 +61,7 @@ export default async function EditProjectPage({ params }: { params: Promise<{ id
               managerId: project.managerId,
               isInternal: project.isInternal,
             }}
-            clients={clients.map((c) => ({ id: c.id, name: c.name }))}
+            clients={clients.map((c) => ({ id: c.id, name: c.name, contacts: c.contacts }))}
             managers={managers ? managers.map((m) => ({ id: m.id, name: m.name })) : null}
             canDelete={project._count.milestones === 0}
           />

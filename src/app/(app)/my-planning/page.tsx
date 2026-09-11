@@ -44,8 +44,13 @@ export default async function MyPlanningPage({ searchParams }: { searchParams: P
     hours: Number(p.hours),
   }));
 
-  const rows: PlanAssignmentRow[] = assignments.map((a) => ({
+  // Non-active projects show only when they carry plan hours in view — greyed, with the status as tooltip.
+  const plannedIds = new Set(planEntries.map((p) => p.assignmentId));
+  const inactiveMsg = (p: { name: string; status: string; isInternal: boolean }) =>
+    p.isInternal || p.status === "ACTIVE" ? null : `${p.name} is ${p.status.replaceAll("_", " ").toLowerCase()} — read only until it's active.`;
+  const rows: PlanAssignmentRow[] = assignments.filter((a) => !inactiveMsg(a.milestone.project) || plannedIds.has(a.id)).map((a) => ({
     id: a.id,
+    inactive: inactiveMsg(a.milestone.project),
     label: `${a.milestone.project.name} — ${a.milestone.name}`,
     allocatedHours: a.allocatedHours ? Number(a.allocatedHours) : null,
     startDate: toDateParam(a.startDate),

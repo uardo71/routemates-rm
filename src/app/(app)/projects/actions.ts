@@ -74,7 +74,8 @@ export async function createProjectAction(_prevState: string | undefined, formDa
       budgetHours: data.budgetHours,
       startDate: data.startDate ? new Date(data.startDate) : undefined,
       managerId: manager.id,
-      status: "ACTIVE",
+      // New work starts Planned and must pass Prepare for Delivery; internal projects are exempt.
+      status: data.isInternal ? "ACTIVE" : "PLANNED",
       isInternal: data.isInternal,
       parentProjectId,
       endCustomer: data.endCustomer?.trim() || null,
@@ -89,12 +90,16 @@ const UpdateProjectSchema = z.object({
   projectId: z.string().min(1),
   name: z.string().min(1, "Name is required"),
   clientId: z.string().min(1, "Client is required"),
-  status: z.enum(["PLANNED", "ACTIVE", "ON_HOLD", "COMPLETED", "CANCELLED"]),
   billingType: z.enum(["TIME_AND_MATERIALS", "FIXED_PRICE", "RETAINER"]),
   budgetAmount: z.coerce.number().positive().optional(),
   budgetHours: z.coerce.number().positive().optional(),
   startDate: z.string().optional(),
   endDate: z.string().optional(),
+  sowNumber: z.string().max(100).optional(),
+  poNumber: z.string().max(100).optional(),
+  poWaived: z.boolean(),
+  poWaivedReason: z.string().max(500).optional(),
+  sponsorContactId: z.string().optional(),
   managerId: z.string().optional(),
   isInternal: z.boolean(),
   parentProjectId: z.string().optional(),
@@ -111,7 +116,11 @@ export async function updateProjectAction(_prevState: string | undefined, formDa
     projectId,
     name: formData.get("name"),
     clientId: formData.get("clientId"),
-    status: formData.get("status"),
+    sowNumber: formData.get("sowNumber") || undefined,
+    poNumber: formData.get("poNumber") || undefined,
+    poWaived: formData.get("poWaived") === "on",
+    poWaivedReason: formData.get("poWaivedReason") || undefined,
+    sponsorContactId: (() => { const v = formData.get("sponsorContactId"); return v && v !== "NONE" ? v : undefined; })(),
     billingType: formData.get("billingType"),
     budgetAmount: formData.get("budgetAmount") || undefined,
     budgetHours: formData.get("budgetHours") || undefined,
@@ -127,6 +136,14 @@ export async function updateProjectAction(_prevState: string | undefined, formDa
 
   const client = await prisma.client.findFirst({ where: { id: data.clientId, companyId: user.companyId } });
   if (!client) return "Invalid client.";
+  if (data.poWaived && !data.poWaivedReason?.trim()) return "Give a reason for waiving the PO.";
+  // The sponsor must be one of THIS client's contacts.
+  let sponsorContactId: string | null = null;
+  if (data.sponsorContactId) {
+    const contact = await prisma.contact.findFirst({ where: { id: data.sponsorContactId, clientId: client.id } });
+    if (!contact) return "The sponsor must be one of the client's contacts.";
+    sponsorContactId = contact.id;
+  }
 
   let managerId: string | undefined;
   if (data.managerId) {
@@ -156,7 +173,6 @@ export async function updateProjectAction(_prevState: string | undefined, formDa
       data: {
         name: data.name,
         clientId: data.clientId,
-        status: data.status,
         billingType: data.billingType,
         budgetAmount: data.budgetAmount ?? null,
         budgetHours: data.budgetHours ?? null,
@@ -165,6 +181,11 @@ export async function updateProjectAction(_prevState: string | undefined, formDa
         isInternal: data.isInternal,
         parentProjectId,
         endCustomer: data.endCustomer?.trim() || null,
+        sowNumber: data.sowNumber?.trim() || null,
+        poNumber: data.poNumber?.trim() || null,
+        poWaived: data.poWaived,
+        poWaivedReason: data.poWaived ? data.poWaivedReason?.trim() || null : null,
+        sponsorContactId,
         ...(managerId ? { managerId } : {}),
       },
     });

@@ -3,6 +3,7 @@ import type { RagStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { RAG_LABEL, worstRag } from "@/lib/delivery";
 import { planSlip } from "@/lib/plan-schedule";
+import { loadHygiene } from "@/lib/hygiene-data";
 import { statusChase, overduePlanTasks, overdueRaidItems, highOpenRaidItems, overdueActions as overdueActionItems, goLiveReadiness, isPlanTaskOpen } from "@/lib/delivery-signals";
 import {
   DAY_HINT, PRIORITY_RANK,
@@ -253,8 +254,20 @@ export async function loadDeliveryHome(user: { id: string; companyId: string; ro
     }
   }
 
+  // Data hygiene: one INFO item per failing check on the caller's projects — the same module as the
+  // Portfolio worklist and the weekly hygiene email.
+  const hygiene = await loadHygiene(user.companyId, projects.map((p) => p.id), today.toISOString().slice(0, 10));
+  const projectById = new Map(projects.map((p) => [p.id, p]));
+  for (const h of hygiene) {
+    dayItems.push({
+      id: `hyg:${h.key}:${h.subjectId}`, kind: "HYGIENE", priority: "INFO", title: `${h.label} — ${h.projectName}`,
+      context: projectById.get(h.projectId)?.client.name ?? h.projectName, projectId: h.projectId, engagementId: null,
+      tab: "", cta: "Fix it", how: h.hint, href: h.fixHref,
+    });
+  }
+
   // Sort the path: priority, then a stable kind order.
-  const KIND_ORDER: DayItem["kind"][] = ["UAT_SCRIPT_DUE", "CUTOVER_DUE", "NO_STATUS", "STATUS_DUE", "ISSUE_DUE", "PLAN_OVERDUE", "ACTION_OVERDUE", "ISSUE_OPEN"];
+  const KIND_ORDER: DayItem["kind"][] = ["UAT_SCRIPT_DUE", "CUTOVER_DUE", "NO_STATUS", "STATUS_DUE", "ISSUE_DUE", "PLAN_OVERDUE", "ACTION_OVERDUE", "ISSUE_OPEN", "HYGIENE"];
   dayItems.sort((a, b) => PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority] || KIND_ORDER.indexOf(a.kind) - KIND_ORDER.indexOf(b.kind) || a.context.localeCompare(b.context));
   upcoming.sort((a, b) => a.daysAway - b.daysAway);
 
