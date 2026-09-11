@@ -1880,7 +1880,7 @@ Five migrations, each applied and committed on its own; the owner authorised the
 ### Support redesign — Phase 1: the generic stage UI (Bug runs on stages in the app) (2026-09-12)
 
 **No migration** — this is the UI and wiring over the stage rows migrations A–E already created.
-tsc + lint + build + **400 tests** green. Not clicked through (SSO-only login), but walked end to end
+tsc + lint + build + **381 tests** green. Not clicked through (SSO-only login), but walked end to end
 against real `erp_dev` data by `scripts/walkthrough-bug-stages.ts` (see below).
 
 - **Baseline first**: `src/lib/__tests__/change-request-panel-render.test.ts` (+ its snapshot) was
@@ -1939,3 +1939,25 @@ STATUS mode — the stage sets come from migrations, not the seed, so `isStageMo
 `stages.length > 0`; the portal shows a stage name only (no stepper); stage/gate settings editors,
 `resolvedSlaPolicy` surfacing, portal-ticket notifications to the client team, and archiving CR's
 statuses once nothing writes them are all still to come.
+
+### Support redesign — Phase 1 item 11: portal-raised tickets notify the client's team (2026-09-12)
+
+No migration. A ticket raised from the customer portal told nobody: on a portal ticket the requester
+IS the customer, so `notifyTicketParticipants` had no staff recipient and the queue only showed it to
+whoever happened to look.
+
+- **`ticket-notify.ts#notifyClientTeam`** — a sibling of the existing fan-out, same table, same bell,
+  no new pathway: recipients are the client's `ClientTeamMember`s whose user is still active, minus
+  the actor, written with one `createMany`. **Empty team falls back to the company's active admins**
+  (owner's call: a ticket with nobody watching defeats the feature); the return value says who was
+  told and whether the fallback fired.
+- **One call site**, at the end of `createPortalTicketAction` before the redirect, with
+  `kind: "CREATED"` / `summary: "raised a ticket from the portal"`. Staff creation is untouched, so it
+  still notifies only a new assignee. `src/lib/__tests__/ticket-notify-wiring.test.ts` asserts that
+  single call site structurally — wire it into a staff path and that test fails.
+- **`scripts/verify-portal-notify.ts`** (`NODE_PATH=scripts/shims pnpm exec tsx …`) calls the real
+  helper against real local data and cleans up after itself. Run on erp_dev: Fabio Magni (Pirelli) →
+  Enida, Iljona, Uard; Portal Tester (Tungsten) → Borana, Enida, Uard; customer never notified;
+  staff-created ticket → 0; a team-less client → the admins. 8/8 checks passed.
+- **`scripts/shims/server-only/`** — new: the shim maintenance scripts need to import server modules
+  (`report-action-owners.ts` already documented needing one; there wasn't one in the repo).

@@ -12,7 +12,7 @@ import { CR_MOVE_ONLY, isChangeRequestType } from "@/lib/change-request";
 import { startChangeRequest } from "@/lib/change-request.server";
 import { STAGE_MOVE_ONLY } from "@/lib/ticket-stages";
 import { startTicketStage } from "@/lib/ticket-stages.server";
-import { notifyTicketParticipants, userName } from "@/lib/ticket-notify";
+import { notifyClientTeam, notifyTicketParticipants, userName } from "@/lib/ticket-notify";
 import { isOpenCategory } from "@/lib/ticket-config";
 import { loadTicketConfig, findType, initialStatus, initialStage } from "@/lib/ticket-config.server";
 import { applyFieldValues, fieldRawFromForm } from "@/lib/ticket-fields";
@@ -81,6 +81,12 @@ export async function createPortalTicketAction(_prev: unknown, formData: FormDat
   } catch {
     return { error: "Could not submit the ticket. Please try again." };
   }
+  // The customer is the requester, so the participants fan-out would tell nobody. Notify the
+  // client's support team (or the admins, when that client has no team yet) that one came in.
+  await notifyClientTeam({
+    ticketId: id, companyId: u.companyId, clientId: u.clientId, actorId: u.id,
+    actorName: await userName(u.id), kind: "CREATED", summary: "raised a ticket from the portal",
+  });
   revalidatePath("/portal");
   redirect(`/portal/${id}`);
 }

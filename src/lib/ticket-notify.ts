@@ -41,3 +41,37 @@ export async function notifyTicketUser(opts: {
     data: { companyId: opts.companyId, userId: opts.userId, ticketId: opts.ticketId, actorName: opts.actorName, kind: opts.kind, summary: opts.summary },
   });
 }
+/** Notify a client's support team that a customer raised a ticket from the portal. The participants
+ *  fan-out above can't do this job: on a portal ticket the requester IS the customer, so it would
+ *  tell nobody. Falls back to the company's admins when that client has no team yet — a ticket with
+ *  nobody watching it defeats the point. Inactive members are skipped. Returns who was told, so a
+ *  caller (and the verification script) can see it. */
+export async function notifyClientTeam(opts: {
+  ticketId: string; companyId: string; clientId: string | null; actorId: string; actorName: string; kind: string; summary: string;
+}): Promise<{ recipients: string[]; viaFallback: boolean }> {
+  const team = opts.clientId
+    ? await prisma.clientTeamMember.findMany({
+        where: { clientId: opts.clientId, user: { active: true } },
+        select: { userId: true },
+      })
+    : [];
+  let ids = [...new Set(team.map((m) => m.userId))];
+  let viaFallback = false;
+  if (ids.length === 0) {
+    const admins = await prisma.user.findMany({
+      where: { companyId: opts.companyId, role: "ADMIN", active: true },
+      select: { id: true },
+    });
+    ids = admins.map((a) => a.id);
+    viaFallback = true;
+  }
+  const recipients = ids.filter((id) => id !== opts.actorId);
+  if (recipients.length === 0) return { recipients, viaFallback };
+  await prisma.ticketNotification.createMany({
+    data: recipients.map((uid) => ({
+      companyId: opts.companyId, userId: uid, ticketId: opts.ticketId,
+      actorName: opts.actorName, kind: opts.kind, summary: opts.summary,
+    })),
+  });
+  return { recipients, viaFallback };
+}
