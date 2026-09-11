@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { visibleProjectIds, type SessionUser } from "@/lib/permissions";
 import { TIME_BILLED_TYPES, type UnbilledEntry } from "@/lib/wip";
 import { effectiveBillRate } from "@/lib/revenue";
+import { netZeroEntryIds } from "@/lib/invoice-time-link";
 
 // Loads unbilled work-in-progress from the DB. Shaping/grouping helpers live in the pure
 // `@/lib/wip` module so client components can reuse them.
@@ -31,6 +32,8 @@ export async function loadUnbilledEntries(user: SessionUser, asOf: Date = new Da
       date: true,
       hours: true,
       billRate: true,
+      assignmentId: true,
+      taskId: true,
       user: { select: { name: true } },
       assignment: { select: { billRate: true } },
       milestone: {
@@ -45,7 +48,10 @@ export async function loadUnbilledEntries(user: SessionUser, asOf: Date = new Da
 
   // Compare at UTC midnight — TimeEntry.date is stored there, so a same-day entry ages 0, not -1.
   const today = Date.UTC(asOf.getUTCFullYear(), asOf.getUTCMonth(), asOf.getUTCDate());
-  return rows.map((e) => {
+  // A correction that exactly cancels hours on the same day (e.g. +4h planning copy, −4h) is not
+  // work waiting to be billed — drop the pair rather than show a phantom negative.
+  const cancelled = netZeroEntryIds(rows.map((e) => ({ id: e.id, hours: Number(e.hours), date: e.date.toISOString().slice(0, 10), milestoneId: e.milestone.id, taskId: e.taskId, assignmentId: e.assignmentId })));
+  return rows.filter((e) => !cancelled.has(e.id)).map((e) => {
     const hours = Number(e.hours);
     const rate = effectiveBillRate({
       entryBillRate: e.billRate == null ? null : Number(e.billRate),

@@ -1640,3 +1640,30 @@ Migration `20260911180000_plantask_owner_effort_baseline` (applied to erp_dev; p
 - **Portfolio**: `WorkspaceRow.slipDays` = `planSlip` of the workspace's plan; sortable "Slip" column.
 - **Status editor**: a new update's Progress % is prefilled with the plan's weighted % (the last
   report's figure only when there is no plan), with a "Suggested from the plan — weighted by …" hint.
+
+### Fix — manual invoices billed per task (Neptune / Mindsquare) looked unbilled (2026-09-11)
+No migration. Owner's report: `/revenue/unbilled` showed Neptune SME at 46h / €2,300 (July) and
+−20h / −€1,000 (August) although every hour was invoiced — Mindsquare is billed one invoice per
+task, each line named after the task ("[P019912] Systemservice …", 25.5h).
+- **Three linker defects** (`linkTimeEntriesToInvoice`): it ignored the task on the line (oldest
+  entries of the milestone, any task — P020571 time sat on the P019912 invoice); it re-ran on every
+  edit without counting what was already linked (INV-0012 held 46h on a 25.5h line); and it never
+  linked negative corrections, so +4/−4 planning pairs left the −4 behind as negative "unbilled".
+  July's four invoices predated the linker and the old backfill was never applied on prod.
+- **Pure `src/lib/invoice-time-link.ts` (tested with the real July/August data)**: `resolveLineTask`
+  (the task's `[code]` in the line description, else its name with or without the code; ambiguous ⇒
+  none), `buildUnits` (assignment × task × day, net; a later-day correction folds into the latest
+  earlier day of the same stream), `netZeroEntryIds`, `allocateUnits` (task lines take their task's
+  units while they fit → untagged units fill the period's remaining room in date order, carrying
+  over between lines so the PERIOD total is exact → lines naming no task take leftovers that fit).
+- **`src/lib/invoice-time-link-db.ts`** (not server-only, shared with the script):
+  `relinkInvoicePeriod(db, projectId, periodStart, periodEnd, { apply })` re-matches every non-void
+  invoice of the project with that exact service period; lines created from approved time
+  (milestone-tied and linked to exactly their quantity) are never touched; the rest are cleared and
+  re-matched in one transaction. `relinkForInvoice` is the live hook (invoice create + edit).
+- **Unbilled view** (`wip-data.ts`) drops entries whose unit nets to zero.
+- **Prod repair: NOT yet applied.** A dry run against prod shows 31 entries to re-link across July
+  and August, leaving both periods at 0h unbilled (July exact per period, within one day per invoice
+  — a logged day can't be split between two invoices). Apply with
+  `DATABASE_URL=<prod> pnpm exec tsx scripts/link-manual-invoice-time.ts --apply`; it saves the
+  previous links to `backups/relink-*.json` (gitignored) before writing.
