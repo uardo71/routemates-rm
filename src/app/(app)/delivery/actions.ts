@@ -19,6 +19,7 @@ import { MAX_RECEIPT_SIZE_BYTES, saveReceiptFile, deleteReceiptFile } from "@/li
 import { dateFromFileName, titleFromFileName } from "@/lib/doc-naming";
 import { approvedHoursForPeriod, type PeriodHours } from "@/lib/realization-data";
 import { recordAudit } from "@/lib/audit";
+import { completionChange } from "@/lib/actions-register";
 import { wouldCreateCycle, cascadeShift, finishDelta, type DateShift } from "@/lib/plan-schedule";
 
 // The delivery library accepts the everyday deliverable formats (PDF, images, Office, email), matched
@@ -175,11 +176,16 @@ export async function reorderEngagementAction(id: string, direction: "up" | "dow
 
 const RAG = z.enum(["GREEN", "AMBER", "RED"]);
 const ActionSchema = z.object({
+  /** Existing action being edited - its completion, age and carry link are kept. */
+  id: z.string().optional().nullable(),
   description: z.string().trim().min(1).max(500),
   owner: z.string().max(200).optional().nullable(),
   ownerUserId: z.string().optional().nullable(),
   dueDate: z.string().optional().nullable(),
   critical: z.boolean().optional(),
+  done: z.boolean().optional(),
+  /** Set on a new update's carried rows: the action (in an earlier update) this one continues. */
+  carriedFromId: z.string().optional().nullable(),
 });
 const ReportSchema = z.object({
   projectId: z.string().min(1),
@@ -221,10 +227,14 @@ function reportData(d: StatusReportInput) {
   };
 }
 
-function actionCreate(d: StatusReportInput, valid: Set<string>) {
-  return (d.actions ?? []).map((a, i) => ({
-    description: a.description.trim(), owner: a.owner?.trim() || null, ownerUserId: ownerLink(a.ownerUserId, valid), dueDate: toUtc(a.dueDate), critical: a.critical ?? false, sortOrder: i * 10,
-  }));
+function actionBase(a: z.infer<typeof ActionSchema>, i: number, valid: Set<string>) {
+  return { description: a.description.trim(), owner: a.owner?.trim() || null, ownerUserId: ownerLink(a.ownerUserId, valid), dueDate: toUtc(a.dueDate), critical: a.critical ?? false, sortOrder: i * 10 };
+}
+/** done / doneAt / doneById for a completion change; nothing when the state doesn't change. */
+function doneFields(change: "complete" | "reopen" | "none", userId: string) {
+  if (change === "complete") return { done: true, doneAt: new Date(), doneById: userId };
+  if (change === "reopen") return { done: false, doneAt: null, doneById: null };
+  return {};
 }
 const actionOwnerIds = (d: StatusReportInput) => (d.actions ?? []).map((a) => a.ownerUserId);
 
@@ -246,10 +256,23 @@ export async function createStatusReportAction(input: StatusReportInput): Promis
   if (ctx.error) return { error: ctx.error };
 
   const engagementId = await resolveEngagement(parsed.data.projectId, parsed.data.engagementId);
+  const valid = await validOwners(ctx.companyId!, actionOwnerIds(parsed.data));
+  const incoming = parsed.data.actions ?? [];
+  // Carried rows continue an action of an earlier update: they keep its age and, if it was already
+  // done, its completion - and the register then shows only this newest copy.
+  const originIds = incoming.map((a) => a.carriedFromId).filter((x): x is string => !!x);
+  const origins = new Map((originIds.length ? await prisma.statusReportAction.findMany({ where: { id: { in: originIds }, report: { projectId: parsed.data.projectId } }, select: { id: true, done: true, doneAt: true, doneById: true, createdAt: true } }) : []).map((o) => [o.id, o]));
   const created = await prisma.statusReport.create({
     data: {
       companyId: ctx.companyId!, projectId: parsed.data.projectId, authorId: ctx.userId!, engagementId,
-      ...reportData(parsed.data), actions: { create: actionCreate(parsed.data, await validOwners(ctx.companyId!, actionOwnerIds(parsed.data))) },
+      ...reportData(parsed.data),
+      actions: {
+        create: incoming.map((a, i) => {
+          const o = a.carriedFromId ? origins.get(a.carriedFromId) : undefined;
+          const completion = o && o.done && a.done !== false ? { done: true, doneAt: o.doneAt, doneById: o.doneById } : doneFields(completionChange(false, a.done), ctx.userId!);
+          return { ...actionBase(a, i, valid), ...completion, ...(o ? { carriedFromId: o.id, createdAt: o.createdAt } : {}) };
+        }),
+      },
     },
   });
   revalidatePath(`/delivery/${parsed.data.projectId}`);
@@ -266,10 +289,21 @@ export async function updateStatusReportAction(input: z.infer<typeof ReportUpdat
   const ctx = await assertManage(existing.projectId);
   if (ctx.error) return { error: ctx.error };
   const engagementId = await resolveEngagement(existing.projectId, parsed.data.engagementId);
-  await prisma.$transaction([
-    prisma.statusReportAction.deleteMany({ where: { reportId: parsed.data.id } }),
-    prisma.statusReport.update({ where: { id: parsed.data.id }, data: { ...reportData(parsed.data), engagementId, actions: { create: actionCreate(parsed.data, await validOwners(ctx.companyId!, actionOwnerIds(parsed.data))) } } }),
-  ]);
+  const valid = await validOwners(ctx.companyId!, actionOwnerIds(parsed.data));
+  // Edit IN PLACE: actions keep their id, so completion, age and carry links survive an edit.
+  const prev = new Map((await prisma.statusReportAction.findMany({ where: { reportId: parsed.data.id }, select: { id: true, done: true } })).map((p) => [p.id, p]));
+  const incoming = parsed.data.actions ?? [];
+  const keepIds = incoming.map((a) => a.id).filter((x): x is string => !!x && prev.has(x));
+  await prisma.$transaction(async (tx) => {
+    await tx.statusReportAction.deleteMany({ where: { reportId: parsed.data.id, id: { notIn: keepIds } } });
+    await tx.statusReport.update({ where: { id: parsed.data.id }, data: { ...reportData(parsed.data), engagementId } });
+    for (let i = 0; i < incoming.length; i++) {
+      const a = incoming[i];
+      const p = a.id ? prev.get(a.id) : undefined;
+      if (p) await tx.statusReportAction.update({ where: { id: p.id }, data: { ...actionBase(a, i, valid), ...doneFields(completionChange(p.done, a.done), ctx.userId!) } });
+      else await tx.statusReportAction.create({ data: { reportId: parsed.data.id, ...actionBase(a, i, valid), ...doneFields(completionChange(false, a.done), ctx.userId!) } });
+    }
+  });
   revalidatePath(`/delivery/${existing.projectId}`);
   return {};
 }
@@ -312,6 +346,12 @@ const RaidSchema = z.object({
 });
 export type RaidInput = z.infer<typeof RaidSchema>;
 
+/** Closing an issue records when and by whom; reopening clears it. */
+function raidCompletion(prevStatus: string | null, nextStatus: string, userId: string) {
+  const ch = completionChange(prevStatus === "CLOSED", nextStatus === "CLOSED");
+  return ch === "complete" ? { completedAt: new Date(), completedById: userId } : ch === "reopen" ? { completedAt: null, completedById: null } : {};
+}
+
 function raidData(d: RaidInput, valid: Set<string>) {
   return {
     type: d.type,
@@ -332,7 +372,7 @@ export async function createRaidItemAction(input: RaidInput): Promise<{ error?: 
   const ctx = await assertManage(parsed.data.projectId);
   if (ctx.error) return { error: ctx.error };
   const engagementId = await resolveEngagement(parsed.data.projectId, parsed.data.engagementId);
-  await prisma.raidItem.create({ data: { companyId: ctx.companyId!, projectId: parsed.data.projectId, createdById: ctx.userId!, engagementId, ...raidData(parsed.data, await validOwners(ctx.companyId!, [parsed.data.ownerUserId])) } });
+  await prisma.raidItem.create({ data: { companyId: ctx.companyId!, projectId: parsed.data.projectId, createdById: ctx.userId!, engagementId, ...raidData(parsed.data, await validOwners(ctx.companyId!, [parsed.data.ownerUserId])), ...raidCompletion(null, parsed.data.status, ctx.userId!) } });
   revalidatePath(`/delivery/${parsed.data.projectId}`);
   return {};
 }
@@ -341,12 +381,12 @@ const RaidUpdateSchema = RaidSchema.extend({ id: z.string().min(1) });
 export async function updateRaidItemAction(input: z.infer<typeof RaidUpdateSchema>): Promise<{ error?: string }> {
   const parsed = RaidUpdateSchema.safeParse(input);
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Invalid input." };
-  const existing = await prisma.raidItem.findUnique({ where: { id: parsed.data.id }, select: { projectId: true } });
+  const existing = await prisma.raidItem.findUnique({ where: { id: parsed.data.id }, select: { projectId: true, status: true } });
   if (!existing) return { error: "Item not found." };
   const ctx = await assertManage(existing.projectId);
   if (ctx.error) return { error: ctx.error };
   const engagementId = await resolveEngagement(existing.projectId, parsed.data.engagementId);
-  await prisma.raidItem.update({ where: { id: parsed.data.id }, data: { ...raidData(parsed.data, await validOwners(ctx.companyId!, [parsed.data.ownerUserId])), engagementId } });
+  await prisma.raidItem.update({ where: { id: parsed.data.id }, data: { ...raidData(parsed.data, await validOwners(ctx.companyId!, [parsed.data.ownerUserId])), engagementId, ...raidCompletion(existing.status, parsed.data.status, ctx.userId!) } });
   revalidatePath(`/delivery/${existing.projectId}`);
   return {};
 }
@@ -364,6 +404,8 @@ export async function deleteRaidItemAction(id: string): Promise<{ error?: string
 // ---------- meeting minutes ----------
 
 const MinutesActionSchema = z.object({
+  /** Existing action being edited - its completion and age are kept. */
+  id: z.string().optional().nullable(),
   description: z.string().trim().min(1).max(500),
   owner: z.string().max(200).optional().nullable(),
   ownerUserId: z.string().optional().nullable(),
@@ -404,8 +446,11 @@ function minutesData(d: MinutesInput) {
     agendaTopic: d.agendaTopic?.trim() || null, agendaWho: d.agendaWho?.trim() || null, agendaDuration: d.agendaDuration?.trim() || null,
   };
 }
-function minutesActionCreate(d: MinutesInput, valid: Set<string>) {
-  return (d.actions ?? []).map((a, i) => ({ description: a.description.trim(), owner: a.owner?.trim() || null, ownerUserId: ownerLink(a.ownerUserId, valid), dueDate: toUtc(a.dueDate), done: a.done ?? false, doneAt: a.done ? new Date() : null, sortOrder: i * 10 }));
+function minutesActionBase(a: z.infer<typeof MinutesActionSchema>, i: number, valid: Set<string>) {
+  return { description: a.description.trim(), owner: a.owner?.trim() || null, ownerUserId: ownerLink(a.ownerUserId, valid), dueDate: toUtc(a.dueDate), sortOrder: i * 10 };
+}
+function minutesActionCreate(d: MinutesInput, valid: Set<string>, userId: string) {
+  return (d.actions ?? []).map((a, i) => ({ ...minutesActionBase(a, i, valid), ...doneFields(completionChange(false, a.done), userId) }));
 }
 const minutesOwnerIds = (d: MinutesInput) => (d.actions ?? []).map((a) => a.ownerUserId);
 function participantsCreate(d: MinutesInput) {
@@ -419,7 +464,7 @@ export async function createMeetingAction(input: MinutesInput): Promise<{ error?
   if (ctx.error) return { error: ctx.error };
   const engagementId = await resolveEngagement(parsed.data.projectId, parsed.data.engagementId);
   const created = await prisma.meetingMinutes.create({
-    data: { companyId: ctx.companyId!, projectId: parsed.data.projectId, createdById: ctx.userId!, engagementId, ...minutesData(parsed.data), actions: { create: minutesActionCreate(parsed.data, await validOwners(ctx.companyId!, minutesOwnerIds(parsed.data))) }, participants: { create: participantsCreate(parsed.data) } },
+    data: { companyId: ctx.companyId!, projectId: parsed.data.projectId, createdById: ctx.userId!, engagementId, ...minutesData(parsed.data), actions: { create: minutesActionCreate(parsed.data, await validOwners(ctx.companyId!, minutesOwnerIds(parsed.data)), ctx.userId!) }, participants: { create: participantsCreate(parsed.data) } },
   });
   revalidatePath(`/delivery/${parsed.data.projectId}`);
   return { id: created.id };
@@ -434,11 +479,22 @@ export async function updateMeetingAction(input: z.infer<typeof MinutesUpdateSch
   const ctx = await assertManage(existing.projectId);
   if (ctx.error) return { error: ctx.error };
   const engId = await resolveEngagement(existing.projectId, parsed.data.engagementId);
-  await prisma.$transaction([
-    prisma.meetingActionItem.deleteMany({ where: { minutesId: parsed.data.id } }),
-    prisma.meetingParticipant.deleteMany({ where: { minutesId: parsed.data.id } }),
-    prisma.meetingMinutes.update({ where: { id: parsed.data.id }, data: { ...minutesData(parsed.data), engagementId: engId, actions: { create: minutesActionCreate(parsed.data, await validOwners(ctx.companyId!, minutesOwnerIds(parsed.data))) }, participants: { create: participantsCreate(parsed.data) } } }),
-  ]);
+  const valid = await validOwners(ctx.companyId!, minutesOwnerIds(parsed.data));
+  // Edit IN PLACE: actions keep their id, so a done action keeps when and by whom it was done.
+  const prev = new Map((await prisma.meetingActionItem.findMany({ where: { minutesId: parsed.data.id }, select: { id: true, done: true } })).map((p) => [p.id, p]));
+  const incoming = parsed.data.actions ?? [];
+  const keepIds = incoming.map((a) => a.id).filter((x): x is string => !!x && prev.has(x));
+  await prisma.$transaction(async (tx) => {
+    await tx.meetingActionItem.deleteMany({ where: { minutesId: parsed.data.id, id: { notIn: keepIds } } });
+    await tx.meetingParticipant.deleteMany({ where: { minutesId: parsed.data.id } });
+    await tx.meetingMinutes.update({ where: { id: parsed.data.id }, data: { ...minutesData(parsed.data), engagementId: engId, participants: { create: participantsCreate(parsed.data) } } });
+    for (let i = 0; i < incoming.length; i++) {
+      const a = incoming[i];
+      const p = a.id ? prev.get(a.id) : undefined;
+      if (p) await tx.meetingActionItem.update({ where: { id: p.id }, data: { ...minutesActionBase(a, i, valid), ...doneFields(completionChange(p.done, a.done), ctx.userId!) } });
+      else await tx.meetingActionItem.create({ data: { minutesId: parsed.data.id, ...minutesActionBase(a, i, valid), ...doneFields(completionChange(false, a.done), ctx.userId!) } });
+    }
+  });
   revalidatePath(`/delivery/${existing.projectId}`);
   return {};
 }
@@ -550,6 +606,13 @@ const PlanSchema = z.object({
 });
 export type PlanTaskInput = z.infer<typeof PlanSchema>;
 
+const planIsDone = (s: { status: string; progress?: number | null }) => s.status === "COMPLETED" || (s.progress ?? 0) >= 100;
+/** Reaching 100% / COMPLETED records when and by whom; dropping back clears it. */
+function planCompletion(prev: { status: string; progress: number } | null, next: PlanTaskInput, userId: string) {
+  const ch = completionChange(prev ? planIsDone(prev) : false, planIsDone(next));
+  return ch === "complete" ? { completedAt: new Date(), completedById: userId } : ch === "reopen" ? { completedAt: null, completedById: null } : {};
+}
+
 function planData(d: PlanTaskInput, valid: Set<string>) {
   return {
     phase: d.phase?.trim() || null,
@@ -600,7 +663,7 @@ export async function createPlanTaskAction(input: PlanTaskInput): Promise<{ erro
   if (linked.error) return { error: linked.error };
   const max = await prisma.planTask.aggregate({ where: { projectId: parsed.data.projectId }, _max: { sortOrder: true } });
   const engagementId = await resolveEngagement(parsed.data.projectId, parsed.data.engagementId);
-  await prisma.planTask.create({ data: { companyId: ctx.companyId!, projectId: parsed.data.projectId, engagementId, sortOrder: (max._max.sortOrder ?? 0) + 10, ...planData(parsed.data, await validOwners(ctx.companyId!, [parsed.data.ownerUserId])), ...linked.links! } });
+  await prisma.planTask.create({ data: { companyId: ctx.companyId!, projectId: parsed.data.projectId, engagementId, sortOrder: (max._max.sortOrder ?? 0) + 10, ...planData(parsed.data, await validOwners(ctx.companyId!, [parsed.data.ownerUserId])), ...linked.links!, ...planCompletion(null, parsed.data, ctx.userId!) } });
   revalidatePath(`/delivery/${parsed.data.projectId}`);
   return {};
 }
@@ -614,7 +677,7 @@ const PlanUpdateSchema = PlanSchema.extend({ id: z.string().min(1) });
 export async function updatePlanTaskAction(input: z.infer<typeof PlanUpdateSchema>): Promise<{ error?: string; shifted?: DateShift[]; delta?: number }> {
   const parsed = PlanUpdateSchema.safeParse(input);
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Invalid input." };
-  const existing = await prisma.planTask.findUnique({ where: { id: parsed.data.id }, select: { projectId: true, dueDate: true } });
+  const existing = await prisma.planTask.findUnique({ where: { id: parsed.data.id }, select: { projectId: true, dueDate: true, status: true, progress: true } });
   if (!existing) return { error: "Task not found." };
   const ctx = await assertManage(existing.projectId);
   if (ctx.error) return { error: ctx.error };
@@ -624,6 +687,7 @@ export async function updatePlanTaskAction(input: z.infer<typeof PlanUpdateSchem
     ...planData(parsed.data, await validOwners(ctx.companyId!, [parsed.data.ownerUserId])),
     ...linked.links!,
     engagementId: await resolveEngagement(existing.projectId, parsed.data.engagementId),
+    ...planCompletion(existing, parsed.data, ctx.userId!),
   };
   const delta = finishDelta(isoDate(existing.dueDate), isoDate(data.dueDate));
   let shifted: DateShift[] = [];

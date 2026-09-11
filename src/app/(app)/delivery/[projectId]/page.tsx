@@ -42,7 +42,7 @@ export default async function DeliveryProjectPage({ params, searchParams }: { pa
       client: { select: { name: true } },
       manager: { select: { name: true } },
       engagements: { orderBy: { sortOrder: "asc" }, select: { id: true, name: true, status: true, members: { select: { user: { select: { id: true, name: true } } } } } },
-      statusReports: { orderBy: { reportDate: "desc" }, include: { author: { select: { name: true } }, actions: { orderBy: { sortOrder: "asc" } }, documents: { select: { id: true, fileName: true, originalName: true } } } },
+      statusReports: { orderBy: { reportDate: "desc" }, include: { author: { select: { name: true } }, actions: { orderBy: { sortOrder: "asc" }, include: { carriedTo: { select: { id: true } } } }, documents: { select: { id: true, fileName: true, originalName: true } } } },
       raidItems: { orderBy: [{ status: "asc" }, { createdAt: "desc" }], include: { createdBy: { select: { name: true } } } },
       meetings: { orderBy: { date: "desc" }, include: { createdBy: { select: { name: true } }, actions: { orderBy: { sortOrder: "asc" } }, participants: { orderBy: { sortOrder: "asc" } }, documents: { select: { id: true, fileName: true, originalName: true } } } },
       documents: { orderBy: { uploadedAt: "desc" }, include: { uploadedBy: { select: { name: true } } } },
@@ -82,7 +82,7 @@ export default async function DeliveryProjectPage({ params, searchParams }: { pa
     timeFrom: m.timeFrom, timeTo: m.timeTo, location: m.location, minuteTaker: m.minuteTaker,
     agendaTopic: m.agendaTopic, agendaWho: m.agendaWho, agendaDuration: m.agendaDuration,
     participants: m.participants.map((p) => ({ name: p.name, company: p.company, role: p.role, group: p.group })),
-    actions: m.actions.map((a) => ({ description: a.description, owner: a.owner, ownerUserId: a.ownerUserId, dueDate: iso(a.dueDate), done: a.done })),
+    actions: m.actions.map((a) => ({ id: a.id, description: a.description, owner: a.owner, ownerUserId: a.ownerUserId, dueDate: iso(a.dueDate), done: a.done })),
     documents: m.documents.map((d) => ({ id: d.id, fileName: d.fileName, originalName: d.originalName })),
   }));
   const docs: LibraryDoc[] = project.documents.filter(inEng).map((d) => ({
@@ -120,7 +120,7 @@ export default async function DeliveryProjectPage({ params, searchParams }: { pa
       id: a.id, source: "MEETING" as const, title: a.description, projectId: project.id, projectName: project.name, engagementId: m.engagementId, engagementName: engNameOf(m.engagementId),
       owner: a.owner, ownerUserId: a.ownerUserId, dueDate: iso(a.dueDate), createdAt: a.createdAt.toISOString(), status: m.title, critical: false,
     }))),
-    ...project.statusReports.filter(inEng).flatMap((r) => r.actions.filter((a) => !a.done).map((a) => ({
+    ...project.statusReports.filter(inEng).flatMap((r) => r.actions.filter((a) => !a.done && a.carriedTo.length === 0).map((a) => ({
       id: a.id, source: "STATUS" as const, title: a.description, projectId: project.id, projectName: project.name, engagementId: r.engagementId, engagementName: engNameOf(r.engagementId),
       owner: a.owner, ownerUserId: a.ownerUserId, dueDate: iso(a.dueDate), createdAt: a.createdAt.toISOString(), status: `Status ${iso(r.reportDate)}`, critical: a.critical,
     }))),

@@ -1,20 +1,23 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { z } from "zod";
 import { requireUser } from "@/lib/session";
-import { completeActionAtSource } from "@/lib/actions-register-data";
-import type { ActionSource } from "@/lib/actions-register";
+import { setActionsDone } from "@/lib/actions-register-data";
 
-const SOURCES: ActionSource[] = ["PLAN", "RAID", "STATUS", "MEETING"];
+const ChangesSchema = z.object({
+  changes: z.array(z.object({ source: z.enum(["PLAN", "RAID", "STATUS", "MEETING"]), id: z.string().min(1), done: z.boolean() })).min(1).max(200),
+});
 
-/** The inline "done" tick on the register: closes the action where it lives. */
-export async function completeActionAction(input: { source: ActionSource; id: string }): Promise<{ error?: string }> {
+/** The register's Save: applies every staged tick (complete or reopen) at source, all or nothing. */
+export async function saveActionChangesAction(input: z.infer<typeof ChangesSchema>): Promise<{ error?: string; saved?: number }> {
   const user = await requireUser();
-  if (!SOURCES.includes(input.source) || !input.id) return { error: "Invalid action." };
-  const r = await completeActionAtSource(user, input.source, input.id);
-  if (r.error) return r;
+  const parsed = ChangesSchema.safeParse(input);
+  if (!parsed.success) return { error: "Invalid changes." };
+  const r = await setActionsDone(user, parsed.data.changes);
+  if (r.error) return { error: r.error };
   revalidatePath("/actions");
   revalidatePath("/delivery");
   revalidatePath("/portfolio");
-  return {};
+  return { saved: r.saved };
 }

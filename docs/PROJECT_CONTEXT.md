@@ -1667,3 +1667,31 @@ task, each line named after the task ("[P019912] Systemservice …", 25.5h).
   — a logged day can't be split between two invoices). Apply with
   `DATABASE_URL=<prod> pnpm exec tsx scripts/link-manual-invoice-time.ts --apply`; it saves the
   previous links to `backups/relink-*.json` (gitignored) before writing.
+
+### Actions register — save ticks, keep completed actions visible, completed list (2026-09-11)
+Migration `20260911190000_action_completion_tracking` (applied to erp_dev; prod via the pipeline).
+252 tests green. Build green. Not clicked through (SSO).
+- **Owner's ask**: ticking an action closed it instantly and it vanished. Now ticks are STAGED: the
+  row crosses out with an amber "unsaved" ring, a save bar (Save / Discard, plus a leave-page
+  warning) applies them all at once (`saveActionChangesAction` → `setActionsDone`, all or nothing
+  after per-item permission checks). Saved completions stay in the Open view, crossed out, for the
+  visit; unticking a completed action stages a reopen (issue → Open, status/meeting action → not
+  done, plan task → 0% / NOT_STARTED).
+- **Open / Completed / All** views (`ActionView`, `filterActions({ view, pinned })`), sortable by
+  completion time; Status column shows "Completed <date> · <who>". Scope unchanged: admins all,
+  project managers their managed projects, everyone else their own. Export honours `view` and adds
+  Completed on / Completed by.
+- **Schema**: `PlanTask.completedAt/completedById`, `RaidItem.completedAt/completedById`,
+  `StatusReportAction.doneById` + `carriedFromId` (self-FK, SetNull), `MeetingActionItem.doneById`.
+  "By" columns are plain ids (no FK) so history survives a deleted user. Backfill: completed plan
+  tasks / closed issues get `updatedAt`; carry chain linked by same text in the previous update.
+- **Every close path records who/when**: plan grid/dialog (`planCompletion`), issue dialog
+  (`raidCompletion`), register, status and minutes editors (`doneFields(completionChange(...))`).
+  `completionChange(wasDone, wantDone)` is the one pure rule (tested).
+- **Two existing bugs fixed on the way**: the status-update editor did not send `done`, and both it
+  and the minutes editor deleted + recreated every action on save — so editing a report reopened its
+  completed actions and reset their age, and minutes re-stamped `doneAt` on every save. Both editors
+  now update actions IN PLACE by id.
+- **Carried status actions appear once**: a new update's carried rows point at the action they
+  continue (`carriedFromId`, keeping its age and, if done, its completion); the register, the
+  cockpit Actions card and "my actions" count only the newest copy (`carriedTo: { none: {} }`).

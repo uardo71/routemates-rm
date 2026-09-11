@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { enrichAction, enrichAll, filterActions, sortActions, summarizeActions, daysBetween, type RegisterAction } from "@/lib/actions-register";
+import { enrichAction, enrichAll, filterActions, sortActions, summarizeActions, daysBetween, actionKey, completionChange, type RegisterAction } from "@/lib/actions-register";
 
 const TODAY = "2026-09-11";
 const base = (o: Partial<RegisterAction> = {}): RegisterAction => ({
@@ -54,6 +54,36 @@ describe("ordering, filtering, summary", () => {
     expect(sortActions(rows, "owner", "asc")[0].owner).toBeNull();
   });
   it("summarises overdue / unassigned / due this week", () => {
-    expect(summarizeActions(rows)).toEqual({ total: 7, overdue: 3, unassigned: 1, dueThisWeek: 1 });
+    expect(summarizeActions(rows)).toEqual({ total: 7, completed: 0, overdue: 3, unassigned: 1, dueThisWeek: 1 });
+  });
+});
+
+describe("completed actions stay on record", () => {
+  const rows = enrichAll([
+    base({ id: "o1", dueDate: "2026-09-05" }),
+    base({ id: "c1", done: true, completedAt: "2026-09-10T08:00:00.000Z", completedBy: "Ana", dueDate: "2026-09-01" }),
+    base({ id: "c2", done: true, completedAt: "2026-09-11T08:00:00.000Z" }),
+  ], TODAY);
+  it("a completed action is never overdue and sorts after open work", () => {
+    expect(rows.find((a) => a.id === "c1")!.isOverdue).toBe(false);
+    expect(rows.map((a) => a.id)[0]).toBe("o1");
+  });
+  it("Open hides completed unless pinned; Completed shows only completed; All shows both", () => {
+    expect(filterActions(rows, { view: "open" }).map((a) => a.id)).toEqual(["o1"]);
+    expect(filterActions(rows, { view: "open", pinned: new Set([actionKey({ source: "RAID", id: "c2" })]) }).map((a) => a.id).sort()).toEqual(["c2", "o1"]);
+    expect(filterActions(rows, { view: "completed" }).map((a) => a.id).sort()).toEqual(["c1", "c2"]);
+    expect(filterActions(rows, { view: "all" })).toHaveLength(3);
+  });
+  it("sorts completed work by completion time", () => {
+    expect(sortActions(filterActions(rows, { view: "completed" }), "completed", "desc").map((a) => a.id)).toEqual(["c2", "c1"]);
+  });
+  it("chip counts are open work only", () => {
+    expect(summarizeActions(rows)).toMatchObject({ total: 1, completed: 2, overdue: 1 });
+  });
+  it("a saved tick completes, reopens or leaves an action alone", () => {
+    expect(completionChange(false, true)).toBe("complete");
+    expect(completionChange(true, false)).toBe("reopen");
+    expect(completionChange(true, true)).toBe("none");
+    expect(completionChange(true, undefined)).toBe("none"); // not specified: keep its state
   });
 });

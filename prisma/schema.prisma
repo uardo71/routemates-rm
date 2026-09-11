@@ -1353,11 +1353,18 @@ model StatusReportAction {
   critical    Boolean      @default(false)
   done        Boolean      @default(false)
   doneAt      DateTime?
+  doneById    String? // who marked it done (plain id, no FK)
+  // Carried into a later status update: the copy points at the action it continues, so the register
+  // shows each action once (its newest copy).
+  carriedFromId String?
+  carriedFrom   StatusReportAction?  @relation("StatusActionCarry", fields: [carriedFromId], references: [id], onDelete: SetNull)
+  carriedTo     StatusReportAction[] @relation("StatusActionCarry")
   sortOrder   Int          @default(0)
   createdAt   DateTime     @default(now())
 
   @@index([reportId])
   @@index([ownerUserId])
+  @@index([carriedFromId])
 }
 
 // A RAID entry (Risk / Assumption / Issue / Dependency / Decision) — the governance backbone that
@@ -1380,6 +1387,9 @@ model RaidItem {
   ownerUser   User?         @relation("RaidOwner", fields: [ownerUserId], references: [id], onDelete: SetNull)
   dueDate     DateTime?
   response    String? // mitigation / resolution / decision detail
+  // When it was closed, and who closed it (plain id, no FK: history survives a deleted user).
+  completedAt   DateTime?
+  completedById String?
   createdById String
   createdBy   User          @relation("RaidCreatedBy", fields: [createdById], references: [id])
   createdAt   DateTime      @default(now())
@@ -1436,6 +1446,7 @@ model MeetingActionItem {
   dueDate     DateTime?
   done        Boolean        @default(false)
   doneAt      DateTime?
+  doneById    String? // who marked it done (plain id, no FK)
   createdAt   DateTime       @default(now())
   sortOrder   Int            @default(0)
 
@@ -1524,6 +1535,9 @@ model PlanTask {
   dependsOnId String?
   dependsOn   PlanTask?      @relation("PlanTaskDependency", fields: [dependsOnId], references: [id], onDelete: SetNull)
   dependents  PlanTask[]     @relation("PlanTaskDependency")
+  // When it reached 100% / COMPLETED, and who did it (plain id, no FK: history survives a deleted user).
+  completedAt   DateTime?
+  completedById String?
   createdAt   DateTime       @default(now())
   updatedAt   DateTime       @updatedAt
 

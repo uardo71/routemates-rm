@@ -14,7 +14,7 @@ import { cn } from "@/lib/utils";
 import { OwnerCombobox, type OwnerPerson } from "@/components/owner-combobox";
 import { createMeetingAction, updateMeetingAction, deleteMeetingAction } from "../actions";
 
-export type MinutesAction = { description: string; owner: string | null; ownerUserId: string | null; dueDate: string | null; done: boolean };
+export type MinutesAction = { id?: string; description: string; owner: string | null; ownerUserId: string | null; dueDate: string | null; done: boolean };
 export type MinutesParticipant = { name: string; company: string | null; role: string | null; group: string | null };
 export type MinutesRow = {
   id: string;
@@ -35,7 +35,7 @@ const todayIso = () => new Date().toISOString().slice(0, 10);
 const fmtD = (s: string) => { const [y, m, d] = s.split("-"); return `${d}/${m}/${y}`; };
 
 type DraftP = { name: string; company: string; role: string; group: string };
-type DraftA = { description: string; owner: string; ownerUserId: string | null; dueDate: string; done: boolean };
+type DraftA = { id?: string; description: string; owner: string; ownerUserId: string | null; dueDate: string; done: boolean };
 type Draft = {
   id?: string; date: string; title: string;
   timeFrom: string; timeTo: string; location: string; minuteTaker: string;
@@ -61,7 +61,7 @@ export function MinutesClient({ projectId, engagementId, items, people }: { proj
     if (!draft) return;
     if (!draft.title.trim()) return toast.error("Enter a meeting title.");
     const participants = draft.participants.filter((p) => p.name.trim()).map((p) => ({ name: p.name.trim(), company: p.company || null, role: p.role || null, group: p.group || null }));
-    const actions = draft.actions.filter((a) => a.description.trim()).map((a) => ({ description: a.description.trim(), owner: a.owner || null, ownerUserId: a.ownerUserId, dueDate: a.dueDate || null, done: a.done }));
+    const actions = draft.actions.filter((a) => a.description.trim()).map((a) => ({ description: a.description.trim(), owner: a.owner || null, ownerUserId: a.ownerUserId, dueDate: a.dueDate || null, done: a.done, id: a.id ?? null }));
     const payload = {
       projectId, engagementId, date: draft.date, title: draft.title.trim(),
       attendees: participants.map((p) => p.name).join(", ") || null, notes: draft.notes || null,
@@ -80,7 +80,7 @@ export function MinutesClient({ projectId, engagementId, items, people }: { proj
       id: m.id, date: m.date, title: m.title, timeFrom: m.timeFrom ?? "", timeTo: m.timeTo ?? "", location: m.location ?? "", minuteTaker: m.minuteTaker ?? "",
       agendaTopic: m.agendaTopic ?? "", agendaWho: m.agendaWho ?? "", agendaDuration: m.agendaDuration ?? "", notes: m.notes ?? "",
       participants: m.participants.length ? m.participants.map((p) => ({ name: p.name, company: p.company ?? "", role: p.role ?? "", group: p.group ?? "" })) : [{ name: "", company: "", role: "", group: "" }],
-      actions: m.actions.map((a) => ({ description: a.description, owner: a.owner ?? "", ownerUserId: a.ownerUserId, dueDate: a.dueDate ?? "", done: a.done })),
+      actions: m.actions.map((a) => ({ id: a.id, description: a.description, owner: a.owner ?? "", ownerUserId: a.ownerUserId, dueDate: a.dueDate ?? "", done: a.done })),
     });
   }
   function remove(id: string) {

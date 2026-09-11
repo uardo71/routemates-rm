@@ -62,7 +62,13 @@ function DeckRing({ pct, rag }: { pct: number; rag: RagStatus }) {
   );
 }
 
-type DraftAction = { description: string; owner: string; ownerUserId: string | null; dueDate: string; critical: boolean; /** rolled over from the previous report */ carried?: boolean };
+type DraftAction = {
+  description: string; owner: string; ownerUserId: string | null; dueDate: string; critical: boolean;
+  /** rolled over from the previous report */ carried?: boolean;
+  /** existing action being edited (keeps its completion and age) */ id?: string;
+  done?: boolean;
+  /** the earlier action a carried row continues */ carriedFromId?: string;
+};
 type Draft = {
   id?: string;
   reportDate: string; cadence: string; periodStart: string; periodEnd: string;
@@ -87,7 +93,7 @@ function seededDraft(latest: ReportRow | undefined, planPct: number | null): Dra
   const base = { ...emptyDraft(), progressPercent: planPct != null ? String(planPct) : "" };
   if (!latest) return base;
   const cadence = latest.cadence ?? "WEEKLY";
-  const carried = actionsToCarry(latest.actions, latest.reportDate).map((a) => ({ description: a.description, owner: a.owner ?? "", ownerUserId: a.ownerUserId, dueDate: a.dueDate ?? "", critical: a.critical, carried: true }));
+  const carried = actionsToCarry(latest.actions, latest.reportDate).map((a) => ({ description: a.description, owner: a.owner ?? "", ownerUserId: a.ownerUserId, dueDate: a.dueDate ?? "", critical: a.critical, carried: true, done: a.done, carriedFromId: a.id }));
   return {
     ...base,
     cadence,
@@ -136,7 +142,7 @@ export function StatusReportsClient({ projectId, engagementId, reports, people, 
 
   function save() {
     if (!draft) return;
-    const actions = draft.actions.filter((a) => a.description.trim()).map((a) => ({ description: a.description.trim(), owner: a.owner || null, ownerUserId: a.ownerUserId, dueDate: a.dueDate || null, critical: a.critical }));
+    const actions = draft.actions.filter((a) => a.description.trim()).map((a) => ({ description: a.description.trim(), owner: a.owner || null, ownerUserId: a.ownerUserId, dueDate: a.dueDate || null, critical: a.critical, id: a.id ?? null, done: a.done, carriedFromId: a.carriedFromId ?? null }));
     const payload = {
       projectId, engagementId, reportDate: draft.reportDate, cadence: draft.cadence as "WEEKLY" | "MONTHLY" | "ADHOC",
       periodStart: draft.periodStart || null, periodEnd: draft.periodEnd || null,
@@ -160,7 +166,7 @@ export function StatusReportsClient({ projectId, engagementId, reports, people, 
       // A dimension equal to the overall is shown as "follows overall" so it keeps following on edit.
       scheduleRag: r.scheduleRag === r.overallRag ? "" : r.scheduleRag, budgetRag: r.budgetRag === r.overallRag ? "" : r.budgetRag, scopeRag: r.scopeRag === r.overallRag ? "" : r.scopeRag,
       summary: r.summary ?? "", accomplishments: r.accomplishments ?? "", correctiveActions: r.correctiveActions ?? "", decisionsNeeded: r.decisionsNeeded ?? "", milestoneNotes: r.milestoneNotes ?? "",
-      actions: r.actions.length ? r.actions.map((a) => ({ description: a.description, owner: a.owner ?? "", ownerUserId: a.ownerUserId, dueDate: a.dueDate ?? "", critical: a.critical })) : [{ description: "", owner: "", ownerUserId: null, dueDate: "", critical: false }],
+      actions: r.actions.length ? r.actions.map((a) => ({ id: a.id, done: a.done, description: a.description, owner: a.owner ?? "", ownerUserId: a.ownerUserId, dueDate: a.dueDate ?? "", critical: a.critical })) : [{ description: "", owner: "", ownerUserId: null, dueDate: "", critical: false }],
     });
   }
   function markSent(id: string) {
@@ -361,6 +367,7 @@ export function StatusReportsClient({ projectId, engagementId, reports, people, 
                   <div key={i} className={cn("grid grid-cols-[1fr_120px_130px_auto_auto] gap-2 items-center", a.carried && "rounded-md border border-dashed border-sky-300 bg-sky-500/[0.05] p-1")}>
                     <div className="flex items-center gap-1.5">
                       {a.carried && <span className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-medium text-sky-700 dark:text-sky-400" title="Carried over from the previous update"><RotateCcwIcon className="size-3" /> carried</span>}
+                      {a.done && <span className="inline-flex shrink-0 items-center rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-400" title="Already completed — it stays completed when you save">✓ done</span>}
                       <Input placeholder="Action" value={a.description} onChange={(e) => setAction(i, { description: e.target.value })} />
                     </div>
                     <OwnerCombobox value={{ owner: a.owner, ownerUserId: a.ownerUserId }} people={people} onChange={(v) => setAction(i, v)} placeholder="Owner" />
