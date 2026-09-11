@@ -63,7 +63,9 @@ export async function createTicketTypeAction(input: z.infer<typeof TypeSchema>):
   await prisma.ticketTypeDef.create({
     data: {
       companyId: user.companyId, key, name: d.data.name, icon: d.data.icon || "ticket", color: d.data.color || "sky",
-      description: d.data.description || null, customerCanCreate: d.data.customerCanCreate, slaExempt: d.data.slaExempt, order,
+      description: d.data.description || null, customerCanCreate: d.data.customerCanCreate,
+      // slaApplicable is what the code reads; slaExempt is kept in step so the two never disagree.
+      slaExempt: d.data.slaExempt, slaApplicable: !d.data.slaExempt, order,
       statuses: {
         create: [
           { companyId: user.companyId, key: "open", name: "Open", color: "violet", category: "OPEN", order: 0, isInitial: true },
@@ -88,7 +90,8 @@ export async function updateTicketTypeAction(id: string, input: z.infer<typeof T
     where: { id },
     data: {
       name: d.data.name, icon: d.data.icon || "ticket", color: d.data.color || "sky",
-      description: d.data.description || null, customerCanCreate: d.data.customerCanCreate, slaExempt: d.data.slaExempt,
+      description: d.data.description || null, customerCanCreate: d.data.customerCanCreate,
+      slaExempt: d.data.slaExempt, slaApplicable: !d.data.slaExempt,
       ...(typeof input.active === "boolean" ? { active: input.active } : {}),
     },
   });

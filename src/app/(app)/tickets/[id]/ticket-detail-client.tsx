@@ -31,6 +31,7 @@ import {
 import { saveChangeRequestAction } from "../cr-actions";
 import { formatDuration, isCrTerminal, nextStepState, type CrDraft } from "@/lib/change-request";
 import { ChangeRequestLifecycle, CrRecordSection, type CrView } from "./change-request-panel";
+import { TicketStageLifecycle, TicketStageFields, type StageView, type StageFieldVal } from "./stage-panel";
 import { TicketFiles, type TicketFile } from "./ticket-files";
 
 // Laid out like an Azure DevOps work item: a sticky header (type eyebrow, title, assignee, state
@@ -62,6 +63,10 @@ type Detail = {
   archivedFields: { id: string; name: string; display: string }[];
   /** Set when the ticket is a change request: its lifecycle, record and stage history. */
   cr: CrView | null;
+  /** Set when the ticket's type runs on stages (and isn't the change request): its lifecycle. */
+  stage: StageView | null;
+  /** That type's stage-scoped fields, grouped under their stage. Part of the same draft and Save. */
+  stageFields: StageFieldVal[];
 };
 
 const selectCls = "h-8 w-full rounded-md border bg-transparent px-2 text-sm outline-none focus:border-primary/50 disabled:border-transparent disabled:px-0 disabled:opacity-100";
@@ -79,7 +84,8 @@ function draftFrom(t: Detail): Draft {
     title: t.title, description: t.description, statusId: t.statusId, assigneeId: t.assigneeId ?? "", priority: t.priority,
     clientId: t.clientId ?? "", projectId: t.projectId ?? "", category: t.category, systemRef: t.systemRef, moduleRef: t.moduleRef,
     dueDate: t.dueDate, resolution: t.resolution,
-    fields: Object.fromEntries(t.fields.map((f) => [f.id, f.value])),
+    // The general panel's fields and, for a STAGE-mode type, its stage-scoped ones: one draft, one Save.
+    fields: Object.fromEntries([...t.fields, ...t.stageFields].map((f) => [f.id, f.value])),
   };
 }
 
@@ -91,7 +97,7 @@ export function TicketDetailClient(props: {
 }) {
   // Re-key on the server's version of the ticket so a refresh after Save resets the draft without
   // an effect that syncs state to props.
-  return <WorkItem key={JSON.stringify(draftFrom(props.t)) + props.t.typeId + JSON.stringify(props.t.cr?.saved ?? null)} {...props} />;
+  return <WorkItem key={JSON.stringify(draftFrom(props.t)) + props.t.typeId + JSON.stringify(props.t.cr?.saved ?? null) + (props.t.stage?.stageKey ?? "")} {...props} />;
 }
 
 function WorkItem({ t, config, canManage, involved, users, clients, projects, conversation, history, notices }: {
@@ -221,7 +227,7 @@ function WorkItem({ t, config, canManage, involved, users, clients, projects, co
                 )}
               </div>
               <span className="inline-flex items-center gap-1 text-sm text-muted-foreground"><MessageSquareIcon className="size-4" /> {commentCount} Comment{commentCount === 1 ? "" : "s"}</span>
-              {t.cr ? <CrPill cr={t.cr} nextDue={crd?.nextStepDue ?? ""} /> : <LiveSla t={t} />}
+              {t.cr ? <CrPill cr={t.cr} nextDue={crd?.nextStepDue ?? ""} /> : t.stage ? <StagePill t={t} stage={t.stage} /> : <LiveSla t={t} />}
 
               <div className="ml-auto flex items-center gap-2">
                 {err && <span className="text-sm text-destructive">{err}</span>}
@@ -242,11 +248,13 @@ function WorkItem({ t, config, canManage, involved, users, clients, projects, co
             {/* state strip: State / Priority  |  Client / Project */}
             <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3 border-t pt-3">
             <div className="grid min-w-[320px] flex-1 grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-4">
-              <Strip label={t.cr ? "Stage" : "State"}>
+              <Strip label={t.cr || t.stage ? "Stage" : "State"}>
                 <div className="flex items-center gap-2">
                   <StatusDot color={statusOf?.color ?? t.statusColor} />
                   {t.cr ? (
                     <span className="flex h-8 items-center text-sm" title="A change request moves from the Lifecycle panel below">{t.statusName}</span>
+                  ) : t.stage ? (
+                    <span className="flex h-8 items-center text-sm" title="This ticket moves from the Lifecycle panel below">{stageName(t.stage) ?? t.statusName}</span>
                   ) : (
                     <select value={d.statusId} onChange={(e) => set({ statusId: e.target.value })} className="h-8 flex-1 rounded-md border border-border/60 bg-background px-2 text-sm focus:border-primary/50" aria-label="State">
                       {config.statuses.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
@@ -290,6 +298,9 @@ function WorkItem({ t, config, canManage, involved, users, clients, projects, co
       </div>
 
       {/* ---------- Body ---------- */}
+      {tab === "details" && t.stage && (
+        <TicketStageLifecycle ticketId={t.id} view={t.stage} editable={canContribute} canManage={canManage} dirty={dirty} />
+      )}
       {tab === "details" && t.cr && crd && (
         <ChangeRequestLifecycle
           ticketId={t.id} cr={t.cr} draft={crd} set={setCr} editable={canContribute} canManage={canManage} dirty={dirty}
@@ -327,7 +338,12 @@ function WorkItem({ t, config, canManage, involved, users, clients, projects, co
             </Section>
             {t.cr && crd
               ? <CrRecordSection draft={crd} set={setCr} editable={canContribute} loggedMinutes={t.cr.loggedMinutes} stage={t.cr.stage} />
-              : <SlaSection t={t} />}
+              : t.stage
+                ? <TicketStageFields
+                    typeName={t.typeName} stages={t.stage.stages} stageKey={t.stage.stageKey}
+                    fields={t.stageFields} values={d.fields} editable={!ro} users={users}
+                    onChange={(id, v) => set({ fields: { ...d.fields, [id]: v } })} />
+                : <SlaSection t={t} />}
             {!hasFields && resolutionSection}
           </div>
 
@@ -408,6 +424,22 @@ function LiveSla({ t }: { t: Detail }) {
   const s = slaState(t);
   if (!s.show) return null;
   return <span className={cn("inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-xs", s.tone)}>{s.label}</span>;
+}
+
+/** The stage a STAGE-mode ticket is in, as the header strip shows it. */
+function stageName(stage: StageView): string | null {
+  return stage.stages.find((s) => s.key === stage.stageKey)?.name ?? null;
+}
+
+function StagePill({ t, stage }: { t: Detail; stage: StageView }) {
+  const current = stage.stages.find((s) => s.key === stage.stageKey) ?? null;
+  const spent = current ? stage.timeInStage[current.key] : undefined;
+  const live = !!current && !current.isTerminal;
+  return (
+    <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-border bg-muted/40 px-2 py-0.5 text-xs text-muted-foreground">
+      {current?.name ?? stage.statusName}{live && spent ? ` · ${formatDuration(spent)}` : ""}{t.slaExempt ? " · no SLA" : ""}
+    </span>
+  );
 }
 
 /** A change request has no SLA clock; the header shows its stage, time in it, and an overdue next step. */

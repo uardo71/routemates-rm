@@ -1,13 +1,18 @@
 import "server-only";
 import { Prisma } from "@prisma/client";
-import type { TicketStatusCategory, TicketFieldKind } from "@prisma/client";
+import type { TicketStatusCategory, TicketFieldKind, TicketLifecycleMode } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { DEFAULT_TICKET_CONFIG } from "@/lib/ticket-config";
+import { startingStage, type StageDef } from "@/lib/ticket-stages";
 
 export type LoadedStatus = {
   id: string; key: string; name: string; color: string | null; category: TicketStatusCategory;
   order: number; isInitial: boolean; customerVisible: boolean; customerCanSet: boolean;
+  /** ISO time the status was archived (its type moved to STAGE mode), or null for a live status. */
+  archivedAt: string | null;
 };
+/** A stage of a STAGE-mode type, with its gates and the DB ids the actions write against. */
+export type LoadedStage = StageDef & { id: string; gateIdByKey: Record<string, string> };
 export type LoadedField = {
   id: string; typeId: string | null; key: string; name: string; kind: TicketFieldKind;
   options: string[]; required: boolean; customerVisible: boolean; customerEditable: boolean; order: number;
@@ -19,7 +24,16 @@ export type LoadedField = {
 export type LoadedType = {
   id: string; key: string; name: string; description: string | null; icon: string | null; color: string | null;
   order: number; active: boolean; isDefault: boolean; customerCanCreate: boolean; slaExempt: boolean;
+  /** STATUS = the status list is the lifecycle; STAGE = `stages` is, and statuses are archived. */
+  lifecycleMode: TicketLifecycleMode;
+  /** Whether response/resolution targets apply. The flag the code reads (legacy `slaExempt` is not). */
+  slaApplicable: boolean;
+  /** Live statuses only — the ones every status list offers. */
   statuses: LoadedStatus[];
+  /** Archived statuses, kept solely to display the status a ticket already carries. */
+  archivedStatuses: LoadedStatus[];
+  /** The type's stages, in order. Empty for a STATUS-mode type. */
+  stages: LoadedStage[];
   /** The general Details panel's fields. Stage-scoped ones are kept apart, in `stageFields`. */
   fields: LoadedField[];
   stageFields: LoadedField[];
@@ -56,7 +70,10 @@ async function seedTicketConfig(companyId: string): Promise<void> {
         data: {
           companyId, key: t.key, name: t.name, description: t.description ?? null,
           icon: t.icon, color: t.color, order: ti, active: true,
-          isDefault: t.isDefault ?? false, customerCanCreate: t.customerCanCreate ?? true, slaExempt: t.slaExempt ?? false,
+          isDefault: t.isDefault ?? false, customerCanCreate: t.customerCanCreate ?? true,
+          // slaApplicable is the flag the code reads; slaExempt is kept in step so the legacy column
+          // never contradicts it (see the objection recorded on TicketTypeDef in the schema).
+          slaExempt: t.slaExempt ?? false, slaApplicable: !(t.slaExempt ?? false),
         },
       });
       await tx.ticketStatusDef.createMany({
@@ -86,7 +103,10 @@ export async function loadTicketConfig(companyId: string, includeInactive = fals
     prisma.ticketTypeDef.findMany({
       where: { companyId, ...(includeInactive ? {} : { active: true }) },
       orderBy: { order: "asc" },
-      include: { statuses: { orderBy: { order: "asc" } } },
+      include: {
+        statuses: { orderBy: { order: "asc" } },
+        stages: { orderBy: { order: "asc" }, include: { gates: { orderBy: { order: "asc" } } } },
+      },
     }),
     prisma.ticketFieldDef.findMany({ where: { companyId }, orderBy: { order: "asc" } }),
   ]);
@@ -110,12 +130,24 @@ export async function loadTicketConfig(companyId: string, includeInactive = fals
     if (f.typeId) { const a = fieldsByType.get(f.typeId) ?? []; a.push(lf); fieldsByType.set(f.typeId, a); }
     else globalFields.push(lf);
   }
+  const status = (s: (typeof types)[number]["statuses"][number]): LoadedStatus => ({
+    id: s.id, key: s.key, name: s.name, color: s.color, category: s.category, order: s.order,
+    isInitial: s.isInitial, customerVisible: s.customerVisible, customerCanSet: s.customerCanSet,
+    archivedAt: s.archivedAt ? s.archivedAt.toISOString() : null,
+  });
   const loadedTypes: LoadedType[] = types.map((t) => ({
     id: t.id, key: t.key, name: t.name, description: t.description, icon: t.icon, color: t.color,
     order: t.order, active: t.active, isDefault: t.isDefault, customerCanCreate: t.customerCanCreate, slaExempt: t.slaExempt,
-    statuses: t.statuses.map((s) => ({
-      id: s.id, key: s.key, name: s.name, color: s.color, category: s.category, order: s.order,
-      isInitial: s.isInitial, customerVisible: s.customerVisible, customerCanSet: s.customerCanSet,
+    lifecycleMode: t.lifecycleMode, slaApplicable: t.slaApplicable,
+    // An archived status never appears in a status list (the State select, the board, filters); it is
+    // kept only so a ticket that still carries it can display it. Same pattern as archived fields.
+    statuses: t.statuses.filter((s) => !s.archivedAt).map(status),
+    archivedStatuses: t.statuses.filter((s) => s.archivedAt).map(status),
+    stages: t.stages.map((s) => ({
+      id: s.id, key: s.key, name: s.name, description: s.description, order: s.order,
+      isStarting: s.isStarting, isTerminal: s.isTerminal,
+      gates: s.gates.map((g) => ({ key: g.key, label: g.label, description: g.description })),
+      gateIdByKey: Object.fromEntries(s.gates.map((g) => [g.key, g.id])),
     })),
     fields: fieldsByType.get(t.id) ?? [],
     stageFields: stageFieldsByType.get(t.id) ?? [],
@@ -132,8 +164,20 @@ export function fieldsForType(config: TicketConfig, typeId: string): LoadedField
 export function findType(config: TicketConfig, typeId: string): LoadedType | undefined {
   return config.types.find((t) => t.id === typeId);
 }
+/** The status a new ticket of this type starts in. A STAGE-mode type has no live statuses left — its
+ *  lifecycle is `stages` — but Ticket.statusId is required, so the archived list still supplies one.
+ *  That is what keeps the type reversible: the ticket carries a status the old list would recognise. */
 export function initialStatus(type: LoadedType): LoadedStatus | undefined {
-  return type.statuses.find((s) => s.isInitial) ?? type.statuses[0];
+  const pick = (list: LoadedStatus[]) => list.find((s) => s.isInitial) ?? list[0];
+  return pick(type.statuses) ?? pick(type.archivedStatuses);
+}
+/** Does this type run on stages rather than statuses? */
+export function isStageMode(type: Pick<LoadedType, "lifecycleMode" | "stages">): boolean {
+  return type.lifecycleMode === "STAGE" && type.stages.length > 0;
+}
+/** The stage a new ticket of a STAGE-mode type starts in (null for a STATUS-mode type). */
+export function initialStage(type: LoadedType): LoadedStage | null {
+  return isStageMode(type) ? (startingStage(type.stages) as LoadedStage | null) : null;
 }
 export function defaultType(config: TicketConfig): LoadedType | undefined {
   return config.types.find((t) => t.isDefault) ?? config.types[0];
@@ -147,6 +191,7 @@ export function customerConfig(config: TicketConfig): TicketConfig {
       .map((t) => ({
         ...t,
         statuses: t.statuses.filter((s) => s.customerVisible),
+        archivedStatuses: t.archivedStatuses.filter((s) => s.customerVisible),
         fields: t.fields.filter((f) => f.customerVisible),
         stageFields: t.stageFields.filter((f) => f.customerVisible),
       })),

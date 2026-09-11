@@ -11,14 +11,16 @@ import { nextTicketNumber } from "@/lib/numbering";
 import { TICKET_PRIORITY_LABEL, WORKFLOW_REJECTION, INTERNAL_NOTE_REFUSED } from "@/lib/ticket";
 import { slaDeadlines } from "@/lib/sla.server";
 import { isOpenCategory } from "@/lib/ticket-config";
-import { loadTicketConfig, findType, initialStatus } from "@/lib/ticket-config.server";
-import { applyFieldValues, fieldRawFromForm } from "@/lib/ticket-fields";
+import { loadTicketConfig, findType, initialStatus, initialStage } from "@/lib/ticket-config.server";
+import { applyFieldValues, applyValuesForFields, fieldRawFromForm } from "@/lib/ticket-fields";
 import { extractFiles } from "@/lib/ticket-attachments";
 import { postTicketComment, editCommentBody, softDeleteComment } from "@/lib/ticket-comments";
 import { notifyTicketParticipants, notifyTicketUser, userName } from "@/lib/ticket-notify";
 import { deleteReceiptFile } from "@/lib/receipt-storage";
 import { CR_MOVE_ONLY, isChangeRequestType } from "@/lib/change-request";
 import { startChangeRequest } from "@/lib/change-request.server";
+import { STAGE_MOVE_ONLY } from "@/lib/ticket-stages";
+import { startTicketStage } from "@/lib/ticket-stages.server";
 
 function utcDate(s: string | null | undefined): Date | null {
   if (!s) return null;
@@ -31,8 +33,8 @@ async function ticketForAction(ticketId: string, companyId: string) {
     where: { id: ticketId, companyId },
     select: {
       id: true, requesterId: true, assigneeId: true, createdById: true, priority: true, clientId: true,
-      typeId: true, statusId: true, firstResponseAt: true, createdAt: true,
-      typeDef: { select: { key: true, slaExempt: true } },
+      typeId: true, statusId: true, stageId: true, firstResponseAt: true, createdAt: true,
+      typeDef: { select: { key: true, slaApplicable: true, lifecycleMode: true } },
       statusDef: { select: { name: true, category: true } },
     },
   });
@@ -89,10 +91,13 @@ export async function createTicketAction(_prev: unknown, formData: FormData): Pr
   if (!type) return { error: "Unknown ticket type" };
   const initial = initialStatus(type);
   if (!initial) return { error: "This type has no statuses configured" };
+  // A STAGE-mode type's lifecycle is its stages; it still carries a status (the archived list's
+  // initial one) because Ticket.statusId is required, and that is what keeps the type reversible.
+  const stage = initialStage(type);
   const rawFields = fieldRawFromForm(formData, cfg, d.typeId);
 
   const now = new Date();
-  const sla = await slaDeadlines(user.companyId, d.clientId || null, d.priority, type.slaExempt, now);
+  const sla = await slaDeadlines(user.companyId, d.clientId || null, d.priority, !type.slaApplicable, now);
   let id: string;
   try {
     const created = await prisma.$transaction(async (tx) => {
@@ -100,7 +105,7 @@ export async function createTicketAction(_prev: unknown, formData: FormData): Pr
       const ticket = await tx.ticket.create({
         data: {
           companyId: user.companyId, number, title: d.title, description: d.description || null,
-          typeId: type.id, priority: d.priority, statusId: initial.id,
+          typeId: type.id, priority: d.priority, statusId: initial.id, stageId: stage?.id ?? null,
           requesterId: manage && d.requesterId ? d.requesterId : user.id,
           assigneeId: manage ? d.assigneeId || null : null,
           createdById: user.id,
@@ -114,6 +119,7 @@ export async function createTicketAction(_prev: unknown, formData: FormData): Pr
       });
       await applyFieldValues(tx, ticket.id, type.id, rawFields, cfg);
       if (isChangeRequestType(type.key)) await startChangeRequest(tx, ticket.id, initial.key, user.id);
+      else if (stage) await startTicketStage(tx, ticket.id, stage.key, user.id);
       return ticket;
     });
     id = created.id;
@@ -142,6 +148,7 @@ export async function setTicketStatusAction(ticketId: string, statusId: string):
   if (!involved(t, user.id) && !(await canManageClientTickets(user, t.clientId))) return { error: "Forbidden" };
   if (t.statusId === statusId) return {};
   if (isChangeRequestType(t.typeDef.key)) return { error: CR_MOVE_ONLY };
+  if (t.typeDef.lifecycleMode === "STAGE") return { error: STAGE_MOVE_ONLY };
   const target = await prisma.ticketStatusDef.findFirst({
     where: { id: statusId, typeId: t.typeId, companyId: user.companyId },
     select: { name: true, category: true },
@@ -189,7 +196,7 @@ export async function setTicketPriorityAction(ticketId: string, priority: Ticket
   if (!t) return { error: "Not found" };
   if (!(await canManageClientTickets(user, t.clientId))) return { error: "Forbidden" };
   if (t.priority === priority) return {};
-  const sla = await slaDeadlines(user.companyId, t.clientId, priority, t.typeDef.slaExempt, t.createdAt);
+  const sla = await slaDeadlines(user.companyId, t.clientId, priority, !t.typeDef.slaApplicable, t.createdAt);
   await prisma.ticket.update({ where: { id: ticketId }, data: { priority, ...sla } });
   await logActivity(ticketId, user.id, "PRIORITY", `${TICKET_PRIORITY_LABEL[t.priority]} → ${TICKET_PRIORITY_LABEL[priority]}`);
   revalidatePath(`/tickets/${ticketId}`);
@@ -233,25 +240,36 @@ export async function updateTicketDetailsAction(ticketId: string, patch: z.infer
     dueDate: utcDate(d.dueDate), resolution: d.resolution || null,
   };
   let initKey: string | null = null;
+  let newStage: { id: string; key: string } | null = null;
   if (typeChanged) {
     const init = initialStatus(newType);
     if (!init) return { error: "Target type has no statuses" };
     data.statusId = init.id;
     initKey = init.key;
+    // Onto the new type's starting stage, or off stages entirely for a STATUS-mode type.
+    newStage = initialStage(newType);
+    data.stageId = newStage?.id ?? null;
   }
   // A different client or type re-applies the SLA from the created date — or clears it for a type
   // without SLA (change requests).
   const newClientId = d.clientId || null;
   if (typeChanged || newClientId !== (t.clientId ?? null)) {
-    Object.assign(data, await slaDeadlines(user.companyId, newClientId, t.priority, newType.slaExempt, t.createdAt));
+    Object.assign(data, await slaDeadlines(user.companyId, newClientId, t.priority, !newType.slaApplicable, t.createdAt));
   }
   try {
     await prisma.$transaction(async (tx) => {
       await tx.ticket.update({ where: { id: ticketId }, data });
-      if (d.fields) await applyFieldValues(tx, ticketId, d.typeId, d.fields, cfg);
+      if (d.fields) {
+        await applyFieldValues(tx, ticketId, d.typeId, d.fields, cfg);
+        // A STAGE-mode type's stage-scoped fields ride the same draft and the same Save. Only ids
+        // the client actually sent are written, so this can never touch a field it wasn't given.
+        const staged = findType(cfg, d.typeId)?.stageFields ?? [];
+        if (staged.length > 0) await applyValuesForFields(tx, ticketId, staged, d.fields);
+      }
       if (typeChanged) {
         await tx.ticketComment.create({ data: { ticketId, authorId: user.id, kind: "STATUS", body: `type changed to ${newType.name}`, internal: false } });
         if (isChangeRequestType(newType.key) && initKey) await startChangeRequest(tx, ticketId, initKey, user.id);
+        else if (newStage) await startTicketStage(tx, ticketId, newStage.key, user.id);
       }
     });
   } catch {
@@ -278,6 +296,7 @@ export async function applyWorkflowAction(
   // status is its lifecycle stage and only moves through moveChangeRequestAction.
   if (patch.statusId && patch.statusId !== t.statusId) {
     if (isChangeRequestType(t.typeDef.key)) return { error: CR_MOVE_ONLY };
+    if (t.typeDef.lifecycleMode === "STAGE") return { error: STAGE_MOVE_ONLY };
     const target = await prisma.ticketStatusDef.findFirst({ where: { id: patch.statusId, typeId: t.typeId, companyId: user.companyId }, select: { name: true, category: true } });
     if (!target) return { error: "That status is not valid for this ticket's type" };
     const now = new Date();
@@ -310,7 +329,7 @@ export async function applyWorkflowAction(
   if (patch.priority && patch.priority !== t.priority) {
     if (!manage) rejected.push(WORKFLOW_REJECTION.priority);
     else {
-      const sla = await slaDeadlines(user.companyId, t.clientId, patch.priority, t.typeDef.slaExempt, t.createdAt);
+      const sla = await slaDeadlines(user.companyId, t.clientId, patch.priority, !t.typeDef.slaApplicable, t.createdAt);
       await prisma.ticket.update({ where: { id: ticketId }, data: { priority: patch.priority, ...sla } });
       await logActivity(ticketId, user.id, "PRIORITY", `${TICKET_PRIORITY_LABEL[t.priority]} → ${TICKET_PRIORITY_LABEL[patch.priority]}`);
     }

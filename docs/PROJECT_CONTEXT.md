@@ -1876,3 +1876,66 @@ Five migrations, each applied and committed on its own; the owner authorised the
 - Still to come in Phase 1: the generic stage panel/stepper/gate checklist UI (STAGE types other than
   CR have no stage UI yet), resolvedSlaPolicy surfacing, portal-ticket notifications to the client
   team, settings editors for stages/gates, and archiving CR's statuses once nothing writes them.
+
+### Support redesign — Phase 1: the generic stage UI (Bug runs on stages in the app) (2026-09-12)
+
+**No migration** — this is the UI and wiring over the stage rows migrations A–E already created.
+tsc + lint + build + **400 tests** green. Not clicked through (SSO-only login), but walked end to end
+against real `erp_dev` data by `scripts/walkthrough-bug-stages.ts` (see below).
+
+- **Baseline first**: `src/lib/__tests__/change-request-panel-render.test.ts` (+ its snapshot) was
+  committed on its own, BEFORE the refactor, capturing the Change request panel's markup exactly as it
+  rendered. After the extraction it still passes — the panel's HTML is byte-identical. It stays as the
+  regression guard on that panel; re-run it after touching anything under `tickets/[id]`.
+- **`src/lib/ticket-stages.ts` (pure, tested — 19 cases)**: the DB-driven sibling of
+  `change-request.ts`. `sortStages` (order, ties by key), `startingStage`, `nextStage`,
+  `earlierStages`, `closeTarget` (the terminal stage as an early escape — **null when the terminal
+  stage is already the next one**, because then closing IS the gated forward move), `reopenTarget`
+  (the last open stage before a terminal one), `stageMoveKind` (FORWARD one at a time / BACK to any
+  earlier / CLOSE into a terminal from anywhere / REOPEN), `gateChecks` (a gate is green only when
+  someone ticked it), `decideStageMove` (forward needs every gate ticked or the support team's written
+  override; back, close and reopen each need a reason; close and reopen are the team's call),
+  `stageTimes`, `STAGE_MOVE_ONLY`.
+- **The stage-move ledger is `ChangeRequestStageEvent`** for every STAGE-mode type. Its name is
+  historical — no column on it is change-request-specific — and reusing it keeps one history table and
+  needs no migration. Renaming it needs one, so it waits for the next authorised migration.
+- **`loadTicketConfig`** now loads each type's `stages` (with gates and their ids), and exposes
+  `lifecycleMode` + `slaApplicable`. **Archived statuses are split out** (`statuses` = live,
+  `archivedStatuses` = retired) exactly like archived fields, so a retired list leaves every status
+  dropdown, board column and filter. `initialStatus` falls back to the archived list: a STAGE-mode
+  ticket still needs a `statusId` (the column is required), and carrying one the old list recognises is
+  what keeps the type reversible. New: `isStageMode`, `initialStage`.
+- **`slaApplicable` is now the flag the code reads** (create, priority change, type change, portal
+  create). The legacy `slaExempt` is still written in step by the settings form so the two can't
+  disagree.
+- **`tickets/stage-actions.ts`**: `moveTicketStageAction` (rules → `Ticket.stageId` + a stage event +
+  an activity comment + participant notification, one transaction) and `setGateCheckAction` (tick or
+  untick a gate of the ticket's **current** stage only). A move into/out of a terminal stage also
+  **keeps the legacy status in step with the open/closed sense** (`statusForStage`), so everything that
+  counts tickets by status category — lists, the client overview, SLA — still reads a stage ticket right.
+- **Direct status setting is refused for a STAGE-mode type** (`setTicketStatusAction`,
+  `applyWorkflowAction`, `setPortalStatusAction`) with `STAGE_MOVE_ONLY`, mirroring `CR_MOVE_ONLY`.
+- **`tickets/[id]/stage-lifecycle.tsx`** is the extracted panel both lifecycles draw: stepper with
+  time in stage, the current stage's purpose/steps, the checks to move on, an optional sidebar, stage
+  history and the move dialog. It renders; it does not decide. `CheckList` gained an optional
+  `onToggle` — hand-ticked gates render as buttons, computed checks render exactly as before.
+  `change-request-panel.tsx` is now a model-builder over it (its own rules unchanged);
+  `tickets/[id]/stage-panel.tsx` is the generic one, plus `TicketStageFields` — the stage-scoped
+  fields grouped under their stage, riding the ticket's own draft and Save (that is why Bug's
+  Severity / Environment / Steps, moved onto Triage by migration B, are reachable again).
+- **Create paths**: a new ticket of a STAGE-mode type gets `stageId` = the starting stage and a START
+  event — staff (`createTicketAction`) and portal (`createPortalTicketAction`) alike; changing a
+  ticket's type moves it onto the new type's starting stage, or off stages entirely.
+- **Settings** shows a STAGE-mode type's stages and gates **read-only** (the stage/gate editors are
+  still to come) plus its retired statuses, so the Workflow column isn't simply blank for Bug.
+- **`scripts/walkthrough-bug-stages.ts`** (`--apply` to write): reads Bug's real stages and gates,
+  drives them through the pure rules and makes exactly the writes the actions make. Run live on
+  `erp_dev`: 30/30 checks pass. It left **TKT-00000005 "[walkthrough] Stage-mode Bug"** alive, in
+  Triage, both gates ticked, with a real stage history — open it to click the UI. Re-running reuses
+  that ticket rather than piling up.
+
+**Known gaps (unchanged or new, all deliberate)**: a company seeded fresh today still gets Bug in
+STATUS mode — the stage sets come from migrations, not the seed, so `isStageMode` requires
+`stages.length > 0`; the portal shows a stage name only (no stepper); stage/gate settings editors,
+`resolvedSlaPolicy` surfacing, portal-ticket notifications to the client team, and archiving CR's
+statuses once nothing writes them are all still to come.

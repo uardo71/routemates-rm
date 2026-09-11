@@ -2,13 +2,15 @@ import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/session";
 import { canManageClientTickets } from "@/lib/permissions";
-import { loadTicketConfig, fieldsForType } from "@/lib/ticket-config.server";
+import { loadTicketConfig, fieldsForType, isStageMode } from "@/lib/ticket-config.server";
 import { buildThread, COMMENT_INCLUDE } from "@/lib/ticket-thread";
 import { asCrStage, isChangeRequestType, timeInStages, type CrStageKey } from "@/lib/change-request";
 import { crDraftFrom } from "@/lib/change-request.server";
+import { stageTimes, type StageDef } from "@/lib/ticket-stages";
 import { createDropNotices } from "@/lib/ticket";
 import { TicketDetailClient, type DetailConfig } from "./ticket-detail-client";
 import type { CrView } from "./change-request-panel";
+import type { StageView, StageFieldVal } from "./stage-panel";
 import type { TicketFile } from "./ticket-files";
 
 export const metadata = { title: "Ticket" };
@@ -28,8 +30,10 @@ export default async function TicketDetailPage({ params, searchParams }: {
   const t = await prisma.ticket.findFirst({
     where: { id, companyId: user.companyId },
     include: {
-      typeDef: { select: { id: true, key: true, name: true, color: true, icon: true, slaExempt: true } },
+      typeDef: { select: { id: true, key: true, name: true, color: true, icon: true, slaApplicable: true, lifecycleMode: true } },
       statusDef: { select: { id: true, key: true, name: true, color: true, category: true } },
+      stageDef: { select: { key: true, name: true } },
+      gateChecks: { select: { gate: { select: { key: true } } } },
       requester: { select: { name: true } },
       assignee: { select: { name: true } },
       client: { select: { name: true } },
@@ -108,6 +112,39 @@ export default async function TicketDetailPage({ params, searchParams }: {
     };
   }
 
+  // A STAGE-mode type (Bug, and any type an administrator puts on stages). The change request keeps
+  // its own view above: its checks read a record, and Rejected sits outside the stage list.
+  let stage: StageView | null = null;
+  let stageFields: StageFieldVal[] = [];
+  if (type && !isChangeRequestType(t.typeDef.key) && isStageMode(type)) {
+    const people = new Map((await prisma.user.findMany({ where: { companyId: user.companyId }, select: { id: true, name: true } })).map((u) => [u.id, u.name]));
+    const now = new Date();
+    const stages: StageDef[] = type.stages.map((st) => ({
+      key: st.key, name: st.name, description: st.description, order: st.order,
+      isStarting: st.isStarting, isTerminal: st.isTerminal, gates: st.gates,
+    }));
+    const events = t.crStageEvents.map((e) => ({
+      id: e.id, fromKey: e.fromKey, toKey: e.toKey, move: e.move, note: e.note ?? "", overrideReason: e.overrideReason ?? "",
+      byName: people.get(e.byId) ?? "Deleted user", at: iso(e.at),
+    }));
+    // A ticket that predates its type's stages has no events; it has been in its stage since it was raised.
+    const timeline = events.length > 0 ? events : [{ toKey: t.stageDef?.key ?? "", at: iso(t.createdAt) }];
+    stage = {
+      stages, stageKey: t.stageDef?.key ?? null, statusName: t.statusDef.name, typeName: t.typeDef.name,
+      ticked: t.gateChecks.map((g) => g.gate.key),
+      events, timeInStage: stageTimes(stages, timeline, now.toISOString()),
+      stageSince: timeline[timeline.length - 1].at,
+    };
+    const stageKeyById = new Map(type.stages.flatMap((st) => type.stageFields.filter((f) => f.stageId === st.id).map((f) => [f.id, st.key] as const)));
+    stageFields = type.stageFields
+      .filter((f) => stageKeyById.has(f.id))
+      .map((f) => ({
+        ...pubField(f), stageKey: stageKeyById.get(f.id)!,
+        value: valueByField.get(f.id) ?? null,
+        display: displayValue(f, valueByField.get(f.id) ?? null, nameById),
+      }));
+  }
+
   return (
     <TicketDetailClient
       canManage={manage}
@@ -121,7 +158,7 @@ export default async function TicketDetailPage({ params, searchParams }: {
       notices={notices}
       t={{
         id: t.id, number: t.number, title: t.title, description: t.description ?? "",
-        typeId: t.typeId, typeName: t.typeDef.name, typeColor: t.typeDef.color, typeIcon: t.typeDef.icon, slaExempt: t.typeDef.slaExempt,
+        typeId: t.typeId, typeName: t.typeDef.name, typeColor: t.typeDef.color, typeIcon: t.typeDef.icon, slaExempt: !t.typeDef.slaApplicable,
         priority: t.priority,
         statusId: t.statusId, statusName: t.statusDef.name, statusColor: t.statusDef.color, statusCategory: t.statusDef.category,
         requesterName: t.requester.name, assigneeId: t.assigneeId, assigneeName: t.assignee?.name ?? null,
@@ -138,6 +175,8 @@ export default async function TicketDetailPage({ params, searchParams }: {
           .filter((f) => f.display !== ""),
         files,
         cr,
+        stage,
+        stageFields,
       }}
     />
   );

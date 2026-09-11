@@ -29,7 +29,9 @@ import {
 type ClientStatus = { id: string; name: string; color: string | null; category: TicketStatusCategory; isInitial: boolean; customerVisible: boolean; customerCanSet: boolean };
 type ClientField = { id: string; name: string; kind: string; options: string[]; required: boolean; customerVisible: boolean; customerEditable: boolean };
 type ArchivedField = { id: string; name: string; kind: string; archivedAt: string };
-type ClientType = { id: string; key: string; name: string; description: string | null; icon: string | null; color: string | null; active: boolean; isDefault: boolean; customerCanCreate: boolean; slaExempt: boolean; statuses: ClientStatus[]; fields: ClientField[]; archivedFields: ArchivedField[] };
+type ClientStage = { id: string; name: string; isStarting: boolean; isTerminal: boolean; gates: string[] };
+type ArchivedStatus = { id: string; name: string; archivedAt: string };
+type ClientType = { id: string; key: string; name: string; description: string | null; icon: string | null; color: string | null; active: boolean; isDefault: boolean; customerCanCreate: boolean; slaExempt: boolean; lifecycleMode: string; stages: ClientStage[]; archivedStatuses: ArchivedStatus[]; statuses: ClientStatus[]; fields: ClientField[]; archivedFields: ArchivedField[] };
 export type SettingsConfig = { types: ClientType[]; globalFields: ClientField[]; archivedGlobalFields: ArchivedField[] };
 
 const ARCHIVE_CONFIRM = (name: string) =>
@@ -93,8 +95,11 @@ export function TicketSettingsClient({ config, slaDefault }: { config: SettingsC
             <div>
               <div className="mb-1.5 flex items-center justify-between">
                 <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Workflow</span>
-                <button onClick={() => setDlg({ k: "status", typeId: t.id })} className="text-xs text-primary hover:underline">+ Status</button>
+                {t.lifecycleMode === "STAGE" && t.stages.length > 0
+                  ? <span className="rounded bg-muted px-1.5 py-0.5 text-[0.6rem] uppercase tracking-wide text-muted-foreground">stages</span>
+                  : <button onClick={() => setDlg({ k: "status", typeId: t.id })} className="text-xs text-primary hover:underline">+ Status</button>}
               </div>
+              {t.lifecycleMode === "STAGE" && t.stages.length > 0 && <StageList stages={t.stages} />}
               <div className="flex flex-col gap-1">
                 {t.statuses.map((s, si) => (
                   <div key={s.id} className="flex items-center gap-1.5 rounded-md border px-2 py-1 text-sm">
@@ -114,6 +119,7 @@ export function TicketSettingsClient({ config, slaDefault }: { config: SettingsC
                   </div>
                 ))}
               </div>
+              <ArchivedStatusList statuses={t.archivedStatuses} />
             </div>
 
             {/* Fields */}
@@ -172,6 +178,43 @@ function FieldRow({ f, onEdit, onDelete }: { f: ClientField; onEdit: () => void;
       {f.customerEditable && <span title="Customer can edit" className="text-[0.6rem] text-emerald-600">CE</span>}
       <IconBtn sm title="Edit" onClick={onEdit}><PencilIcon className="size-3" /></IconBtn>
       <IconBtn sm title="Archive (values on existing tickets are kept)" onClick={onDelete}><Trash2Icon className="size-3 text-destructive" /></IconBtn>
+    </div>
+  );
+}
+
+/** A STAGE-mode type's stages and their gates. Read-only until the stage editors are built. */
+function StageList({ stages }: { stages: ClientStage[] }) {
+  return (
+    <div className="mb-1.5 flex flex-col gap-1">
+      {stages.map((st, i) => (
+        <div key={st.id} className="flex flex-col gap-0.5 rounded-md border px-2 py-1 text-sm">
+          <div className="flex items-center gap-1.5">
+            <span className="w-4 shrink-0 text-[0.6rem] tabular-nums text-muted-foreground/70">{i + 1}</span>
+            <span className="min-w-0 flex-1 truncate">{st.name}</span>
+            {st.isStarting && <StarIcon className="size-3 text-amber-500" aria-label="Starting stage" />}
+            {st.isTerminal && <span className="text-[0.6rem] uppercase text-muted-foreground/70">end</span>}
+          </div>
+          {st.gates.length > 0 && (
+            <span className="pl-5 text-[0.65rem] text-muted-foreground">{st.gates.join(" · ")}</span>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Statuses retired when the type moved to stages. Kept so a ticket still showing one is explained. */
+function ArchivedStatusList({ statuses }: { statuses: ArchivedStatus[] }) {
+  if (statuses.length === 0) return null;
+  return (
+    <div className="mt-1.5 flex flex-col gap-1">
+      <span className="text-[0.6rem] font-semibold uppercase tracking-wide text-muted-foreground/70">Retired statuses ({statuses.length})</span>
+      {statuses.map((s) => (
+        <div key={s.id} className="flex items-center gap-1.5 rounded-md border border-dashed px-2 py-1 text-sm text-muted-foreground" title={`Retired ${s.archivedAt.slice(0, 10)} — a ticket still in this status keeps showing it, read-only`}>
+          <span className="min-w-0 flex-1 truncate">{s.name}</span>
+          <span className="text-[0.6rem]">retired {s.archivedAt.slice(0, 10)}</span>
+        </div>
+      ))}
     </div>
   );
 }

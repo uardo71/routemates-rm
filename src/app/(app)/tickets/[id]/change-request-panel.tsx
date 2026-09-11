@@ -1,28 +1,23 @@
 "use client";
 
 import * as React from "react";
-import { useRouter } from "next/navigation";
-import { toast } from "sonner";
-import { CheckIcon, XIcon, CheckCircle2Icon, XCircleIcon, ShieldAlertIcon, ArrowRightIcon, Undo2Icon, BanIcon, RotateCcwIcon } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import {
-  CR_FLOW, CR_STAGES, asCrStage, crRecordFromDraft, exitChecks, formatDuration, isCrTerminal, nextStage, nextStepState, parseHours,
+  CR_FLOW, CR_STAGES, asCrStage, crRecordFromDraft, exitChecks, isCrTerminal, nextStage, nextStepState, parseHours,
   type CrDraft, type CrStageKey,
 } from "@/lib/change-request";
-import type { GateCheck } from "@/lib/project-stage";
+import { StageLifecycle, type StageEvent } from "./stage-lifecycle";
 import { moveChangeRequestAction } from "../cr-actions";
 
-// The change-request lifecycle on the ticket: where it is (stepper with time spent in each stage),
-// what this stage is for and what gets it done, what must be true to move on, the next step with
-// its owner and due date, and every move so far. The record the checks read is edited in
-// CrRecordSection and saved with the ticket's Save button.
+// The change request's lifecycle: its rules (src/lib/change-request.ts) turned into the model the
+// shared panel draws (./stage-lifecycle.tsx). What is particular to a change request and stays here:
+// its checks read the record rather than a hand-ticked gate, Rejected is a terminal state outside the
+// flow, and the next step — which applies at any stage — is edited in the panel's sidebar and saved
+// with the ticket's Save button, alongside the record in CrRecordSection.
 
-export type CrEvent = { id: string; fromKey: string | null; toKey: string; move: string; note: string; overrideReason: string; byName: string; at: string };
+export type CrEvent = StageEvent;
 export type CrView = {
   stage: CrStageKey | null;
   statusName: string;
@@ -37,145 +32,45 @@ export type CrView = {
 type Opt = { id: string; name: string };
 
 const stageLabel = (k: string | null) => { const s = asCrStage(k); return s ? CR_STAGES[s].label : k ?? "—"; };
-const fmtDT = (s: string) => (s ? s.slice(0, 16).replace("T", " ") : "—");
 
 export function ChangeRequestLifecycle({ ticketId, cr, draft, set, editable, canManage, dirty, assigneeId, resolution, users }: {
   ticketId: string; cr: CrView; draft: CrDraft; set: (p: Partial<CrDraft>) => void;
   editable: boolean; canManage: boolean; dirty: boolean; assigneeId: string; resolution: string; users: Opt[];
 }) {
-  const [dialog, setDialog] = React.useState<"forward" | "back" | "reject" | "reopen" | null>(null);
   const stage = cr.stage;
   const record = crRecordFromDraft(draft, { assigneeId: assigneeId || null, resolution: resolution || null, evidence: cr.evidence });
   const checks = stage ? exitChecks(stage, record) : [];
   const next = stage ? nextStage(stage) : null;
   const rejectedFrom = stage === "rejected" ? [...cr.events].reverse().find((e) => e.toKey === "rejected")?.fromKey ?? null : null;
   const curIdx = (CR_FLOW as readonly string[]).indexOf(stage === "rejected" ? rejectedFrom ?? "" : stage ?? "");
-  const since = stage ? cr.timeInStage[stage] : undefined;
   const def = stage ? CR_STAGES[stage] : null;
 
   return (
-    <section className="flex flex-col gap-4 rounded-lg border bg-card p-4">
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="text-sm font-semibold">Lifecycle</h2>
-        <span className="text-xs text-muted-foreground">No SLA — a change request is tracked by stage, time in stage and its next step.</span>
-      </div>
-
-      {/* stepper */}
-      <div className="overflow-x-auto pb-1">
-        <ol className="flex min-w-max items-start">
-          {CR_FLOW.map((k, i) => {
-            const state = stage === "closed" || i < curIdx ? "done" : i === curIdx ? (stage === "rejected" ? "stopped" : "current") : "todo";
-            const spent = cr.timeInStage[k];
-            return (
-              <li key={k} className="flex items-start">
-                <div className="flex w-24 flex-col items-center gap-1 text-center sm:w-28">
-                  <span className={cn(
-                    "flex size-7 items-center justify-center rounded-full border-2 text-xs font-semibold tabular-nums",
-                    state === "done" && "border-emerald-500 bg-emerald-500 text-white",
-                    state === "current" && "border-primary bg-primary/10 text-primary ring-4 ring-primary/15",
-                    state === "stopped" && "border-rose-500 bg-rose-500/10 text-rose-600 dark:text-rose-400",
-                    state === "todo" && "border-border text-muted-foreground",
-                  )}>
-                    {state === "done" ? <CheckIcon className="size-4" /> : state === "stopped" ? <XIcon className="size-3.5" /> : i + 1}
-                  </span>
-                  <span className={cn("text-xs leading-tight", state === "current" ? "font-semibold text-foreground" : "text-muted-foreground")}>{CR_STAGES[k].label}</span>
-                  <span className="text-[11px] tabular-nums text-muted-foreground">{spent ? formatDuration(spent) : k === "closed" ? "" : "—"}</span>
-                </div>
-                {i < CR_FLOW.length - 1 && <span className={cn("mt-3.5 h-0.5 w-5 shrink-0 sm:w-8", stage === "closed" || i < curIdx ? "bg-emerald-500" : "bg-border")} />}
-              </li>
-            );
-          })}
-        </ol>
-      </div>
-
-      {!stage ? (
-        <p className="rounded-md border border-amber-500/40 bg-amber-500/[0.06] p-3 text-sm">
-          This ticket is in &ldquo;{cr.statusName}&rdquo;, which isn&apos;t a lifecycle stage. An administrator can check the change-request type in ticket settings.
-        </p>
-      ) : (
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
-          {/* current stage */}
-          <div className="flex flex-col gap-3 rounded-md border p-3">
-            <div className="flex flex-wrap items-baseline justify-between gap-2">
-              <div className="text-sm">
-                <span className={cn("font-semibold", stage === "rejected" && "text-rose-600 dark:text-rose-400", stage === "closed" && "text-emerald-700 dark:text-emerald-400")}>
-                  {isCrTerminal(stage) ? def!.label : `Now: ${def!.label}`}
-                </span>
-                {!isCrTerminal(stage) && <span className="text-muted-foreground"> · for {since ? formatDuration(since) : "<1h"} (since {cr.stageSince.slice(0, 10)})</span>}
-              </div>
-              {!isCrTerminal(stage) && <span className="text-xs text-muted-foreground">Driven by {def!.owner}</span>}
-            </div>
-            <p className="text-sm text-muted-foreground">{def!.purpose}</p>
-
-            {def!.steps.length > 0 && (
-              <div className="flex flex-col gap-1">
-                <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">What gets it done</span>
-                <ul className="flex flex-col gap-1 text-sm">
-                  {def!.steps.map((s) => <li key={s} className="flex gap-2"><span className="mt-2 size-1 shrink-0 rounded-full bg-muted-foreground/60" />{s}</li>)}
-                </ul>
-              </div>
-            )}
-
-            {next && checks.length > 0 && (
-              <div className="flex flex-col gap-1">
-                <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">To move to {CR_STAGES[next].label}</span>
-                <CheckList checks={checks} />
-              </div>
-            )}
-
-            <div className="flex flex-wrap items-center gap-2 border-t pt-3">
-              {next && (
-                <Button size="sm" className="gap-1.5" disabled={!editable || dirty} onClick={() => setDialog("forward")}>
-                  Move to {CR_STAGES[next].label} <ArrowRightIcon className="size-4" />
-                </Button>
-              )}
-              {!isCrTerminal(stage) && curIdx > 0 && (
-                <Button size="sm" variant="outline" className="gap-1.5" disabled={!editable || dirty} onClick={() => setDialog("back")}><Undo2Icon className="size-4" /> Send back</Button>
-              )}
-              {!isCrTerminal(stage) && canManage && (
-                <Button size="sm" variant="ghost" className="gap-1.5 text-destructive hover:bg-destructive/10 hover:text-destructive" disabled={dirty} onClick={() => setDialog("reject")}><BanIcon className="size-4" /> Reject</Button>
-              )}
-              {isCrTerminal(stage) && canManage && (
-                <Button size="sm" variant="outline" className="gap-1.5" disabled={dirty} onClick={() => setDialog("reopen")}>
-                  <RotateCcwIcon className="size-4" /> Reopen into {stage === "closed" ? "Closing" : "Evaluation"}
-                </Button>
-              )}
-              {dirty && <span className="text-xs text-amber-700 dark:text-amber-400">Save your changes before moving the stage.</span>}
-              {!editable && <span className="text-xs text-muted-foreground">Only the client&apos;s support team and the people on this ticket can move it.</span>}
-            </div>
-          </div>
-
-          {/* next step + history */}
-          <div className="flex flex-col gap-3">
-            <NextStep draft={draft} set={set} editable={editable} users={users} todayIso={cr.todayIso} closed={isCrTerminal(stage)} />
-            <div className="flex flex-col gap-2 rounded-md border p-3">
-              <span className="text-sm font-semibold">Stage history</span>
-              <StageHistory events={cr.events} />
-            </div>
-          </div>
-        </div>
-      )}
-
-      {dialog && stage && (
-        <MoveDialog ticketId={ticketId} mode={dialog} stage={stage} next={next} checks={checks} canManage={canManage} onClose={() => setDialog(null)} />
-      )}
-    </section>
-  );
-}
-
-function CheckList({ checks }: { checks: GateCheck[] }) {
-  return (
-    <ul className="flex flex-col divide-y rounded-md border">
-      {checks.map((c) => (
-        <li key={c.key} className="flex items-start gap-2 px-2.5 py-1.5 text-sm">
-          {c.ok ? <CheckCircle2Icon className="mt-0.5 size-4 shrink-0 text-emerald-600" /> : <XCircleIcon className="mt-0.5 size-4 shrink-0 text-rose-600" />}
-          <div className="min-w-0">
-            <div className={cn(c.ok && "text-muted-foreground")}>{c.label}</div>
-            {!c.ok && <div className="text-xs text-muted-foreground">{c.hint}</div>}
-          </div>
-        </li>
-      ))}
-    </ul>
+    <StageLifecycle
+      ticketId={ticketId}
+      note="No SLA — a change request is tracked by stage, time in stage and its next step."
+      flow={CR_FLOW.map((k) => ({ key: k, label: CR_STAGES[k].label, terminal: isCrTerminal(k) }))}
+      timeInStage={cr.timeInStage}
+      current={stage && def ? {
+        key: stage, label: def.label, owner: def.owner, purpose: def.purpose, steps: def.steps,
+        terminal: isCrTerminal(stage), stopped: stage === "rejected", index: curIdx,
+      } : null}
+      offFlowNotice={<>This ticket is in &ldquo;{cr.statusName}&rdquo;, which isn&apos;t a lifecycle stage. An administrator can check the change-request type in ticket settings.</>}
+      stageSince={cr.stageSince}
+      checks={checks}
+      next={next ? { key: next, label: CR_STAGES[next].label } : null}
+      backOptions={curIdx > 0 ? CR_FLOW.slice(0, curIdx).map((k) => ({ key: k, label: CR_STAGES[k].label })) : []}
+      close={{ key: "rejected", label: "Reject", title: "Reject the change request", noteLabel: "Why is it rejected?" }}
+      reopen={stage && isCrTerminal(stage)
+        ? (stage === "closed" ? { key: "closing", label: "Closing" } : { key: "evaluation", label: "Evaluation" })
+        : null}
+      editable={editable} canManage={canManage} dirty={dirty}
+      notEditableNotice={<>Only the client&apos;s support team and the people on this ticket can move it.</>}
+      sidebar={<NextStep draft={draft} set={set} editable={editable} users={users} todayIso={cr.todayIso} closed={!!stage && isCrTerminal(stage)} />}
+      events={cr.events}
+      labelOf={stageLabel}
+      move={(input) => moveChangeRequestAction(ticketId, input)}
+    />
   );
 }
 
@@ -209,100 +104,6 @@ function NextStep({ draft, set, editable, users, todayIso, closed }: {
         <p className="text-sm text-muted-foreground">No next step recorded.</p>
       )}
     </div>
-  );
-}
-
-function StageHistory({ events }: { events: CrEvent[] }) {
-  if (events.length === 0) return <p className="text-sm text-muted-foreground">No moves yet.</p>;
-  const text = (e: CrEvent) => {
-    switch (e.move) {
-      case "START": return `Started in ${stageLabel(e.toKey)}`;
-      case "BACK": return `Sent back to ${stageLabel(e.toKey)}`;
-      case "REJECT": return "Rejected";
-      case "REOPEN": return `Reopened into ${stageLabel(e.toKey)}`;
-      default: return `${stageLabel(e.fromKey)} → ${stageLabel(e.toKey)}`;
-    }
-  };
-  const dot = (m: string) => (m === "BACK" ? "bg-amber-500" : m === "REJECT" ? "bg-rose-500" : m === "REOPEN" ? "bg-sky-500" : "bg-emerald-500");
-  return (
-    <ol className="flex max-h-72 flex-col gap-2 overflow-y-auto pr-1">
-      {[...events].reverse().map((e) => (
-        <li key={e.id} className="flex gap-2 text-xs">
-          <span className={cn("mt-1 size-1.5 shrink-0 rounded-full", dot(e.move))} />
-          <div className="min-w-0">
-            <div><span className="font-medium text-foreground">{text(e)}</span> <span className="text-muted-foreground">· {e.byName} · {fmtDT(e.at)}</span></div>
-            {e.note && <div className="whitespace-pre-wrap text-muted-foreground">&ldquo;{e.note}&rdquo;</div>}
-            {e.overrideReason && <div className="text-amber-700 dark:text-amber-400">Checks overridden: {e.overrideReason}</div>}
-          </div>
-        </li>
-      ))}
-    </ol>
-  );
-}
-
-function MoveDialog({ ticketId, mode, stage, next, checks, canManage, onClose }: {
-  ticketId: string; mode: "forward" | "back" | "reject" | "reopen"; stage: CrStageKey; next: CrStageKey | null;
-  checks: GateCheck[]; canManage: boolean; onClose: () => void;
-}) {
-  const router = useRouter();
-  const [pending, start] = React.useTransition();
-  const earlier = CR_FLOW.slice(0, Math.max(0, (CR_FLOW as readonly string[]).indexOf(stage)));
-  const [backTo, setBackTo] = React.useState<string>(earlier[earlier.length - 1] ?? "evaluation");
-  const [note, setNote] = React.useState("");
-  const [override, setOverride] = React.useState("");
-  const failing = mode === "forward" ? checks.filter((c) => !c.ok) : [];
-  const needsOverride = failing.length > 0;
-  const to = mode === "forward" ? next! : mode === "back" ? backTo : mode === "reject" ? "rejected" : stage === "closed" ? "closing" : "evaluation";
-  const needsNote = mode !== "forward";
-  const title = mode === "forward" ? `Move to ${CR_STAGES[next!].label}` : mode === "back" ? "Send back" : mode === "reject" ? "Reject the change request" : `Reopen into ${stageLabel(to)}`;
-  const blocked = pending || (needsNote && note.trim().length < 3) || (needsOverride && (!canManage || override.trim().length === 0));
-
-  function submit() {
-    start(async () => {
-      const r = await moveChangeRequestAction(ticketId, { to, note, overrideReason: needsOverride ? override : undefined });
-      if (r.error) { toast.error(r.error); return; }
-      toast.success(`Moved to ${stageLabel(to)}.`);
-      onClose();
-      router.refresh();
-    });
-  }
-
-  return (
-    <Dialog open disablePointerDismissal onOpenChange={(v) => !v && !pending && onClose()}>
-      <DialogContent className="sm:max-w-lg max-h-[85vh] flex flex-col overflow-hidden">
-        <DialogHeader><DialogTitle>{title}</DialogTitle></DialogHeader>
-        <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pr-1 text-sm">
-          <p className="text-muted-foreground">{stageLabel(stage)} <ArrowRightIcon className="inline size-3.5" /> {stageLabel(to)}</p>
-          {mode === "forward" && checks.length > 0 && <CheckList checks={checks} />}
-          {mode === "back" && (
-            <div className="flex flex-col gap-1">
-              <Label htmlFor="cr-back">Back to</Label>
-              <select id="cr-back" value={backTo} onChange={(e) => setBackTo(e.target.value)} className="h-8 rounded-md border bg-background px-2 text-sm">
-                {earlier.map((k) => <option key={k} value={k}>{CR_STAGES[k].label}</option>)}
-              </select>
-            </div>
-          )}
-          {needsOverride && (canManage ? (
-            <div className="flex flex-col gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/[0.06] p-3">
-              <Label htmlFor="cr-override" className="inline-flex items-center gap-1.5"><ShieldAlertIcon className="size-4 text-amber-600" /> Go ahead anyway</Label>
-              <Textarea id="cr-override" value={override} onChange={(e) => setOverride(e.target.value)} rows={2} maxLength={1000} placeholder="Why move on with checks not met? (required, kept in the stage history)" />
-            </div>
-          ) : (
-            <p className="rounded-md border border-rose-500/30 bg-rose-500/[0.05] p-3 text-xs">Fix the red items first — or ask someone on the client&apos;s support team, who can go ahead with a reason.</p>
-          ))}
-          <div className="flex flex-col gap-1">
-            <Label htmlFor="cr-note">{mode === "back" ? "What has to be redone?" : mode === "reject" ? "Why is it rejected?" : mode === "reopen" ? "Why is it reopened?" : "Note for the history (optional)"}</Label>
-            <Textarea id="cr-note" value={note} onChange={(e) => setNote(e.target.value)} rows={3} maxLength={2000} />
-          </div>
-        </div>
-        <DialogFooter className="gap-2">
-          <Button size="sm" variant="outline" onClick={onClose} disabled={pending}>Cancel</Button>
-          <Button size="sm" onClick={submit} disabled={blocked} className={cn(mode === "reject" && "bg-destructive text-white hover:bg-destructive/90")}>
-            {pending ? "Saving…" : needsOverride ? `${title} anyway` : title}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   );
 }
 

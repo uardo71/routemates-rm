@@ -10,9 +10,11 @@ import { nextTicketNumber } from "@/lib/numbering";
 import { slaDeadlines } from "@/lib/sla.server";
 import { CR_MOVE_ONLY, isChangeRequestType } from "@/lib/change-request";
 import { startChangeRequest } from "@/lib/change-request.server";
+import { STAGE_MOVE_ONLY } from "@/lib/ticket-stages";
+import { startTicketStage } from "@/lib/ticket-stages.server";
 import { notifyTicketParticipants, userName } from "@/lib/ticket-notify";
 import { isOpenCategory } from "@/lib/ticket-config";
-import { loadTicketConfig, findType, initialStatus } from "@/lib/ticket-config.server";
+import { loadTicketConfig, findType, initialStatus, initialStage } from "@/lib/ticket-config.server";
 import { applyFieldValues, fieldRawFromForm } from "@/lib/ticket-fields";
 import { extractFiles } from "@/lib/ticket-attachments";
 import { postTicketComment, editCommentBody, softDeleteComment } from "@/lib/ticket-comments";
@@ -22,7 +24,7 @@ import { deleteReceiptFile } from "@/lib/receipt-storage";
 async function portalTicket(ticketId: string, companyId: string, clientId: string) {
   return prisma.ticket.findFirst({
     where: { id: ticketId, companyId, clientId },
-    select: { id: true, typeId: true, statusId: true, firstResponseAt: true, typeDef: { select: { key: true } }, statusDef: { select: { category: true, name: true } } },
+    select: { id: true, typeId: true, statusId: true, firstResponseAt: true, typeDef: { select: { key: true, lifecycleMode: true } }, statusDef: { select: { category: true, name: true } } },
   });
 }
 
@@ -49,10 +51,13 @@ export async function createPortalTicketAction(_prev: unknown, formData: FormDat
   if (!type || !type.customerCanCreate) return { error: "You can't raise that type of ticket." };
   const initial = initialStatus(type);
   if (!initial) return { error: "This type isn't available right now." };
+  // A STAGE-mode type starts on its starting stage; it keeps a status too (Ticket.statusId is
+  // required), taken from the archived list the type reverts to.
+  const stage = initialStage(type);
   const rawFields = fieldRawFromForm(formData, cfg, d.typeId);
 
   const now = new Date();
-  const sla = await slaDeadlines(u.companyId, u.clientId, d.priority, type.slaExempt, now);
+  const sla = await slaDeadlines(u.companyId, u.clientId, d.priority, !type.slaApplicable, now);
   let id: string;
   try {
     const created = await prisma.$transaction(async (tx) => {
@@ -60,7 +65,7 @@ export async function createPortalTicketAction(_prev: unknown, formData: FormDat
       const ticket = await tx.ticket.create({
         data: {
           companyId: u.companyId, number, title: d.title, description: d.description || null,
-          typeId: type.id, priority: d.priority, statusId: initial.id,
+          typeId: type.id, priority: d.priority, statusId: initial.id, stageId: stage?.id ?? null,
           requesterId: u.id, createdById: u.id, clientId: u.clientId,
           respondBy: sla.respondBy, resolveBy: sla.resolveBy,
           comments: { create: { authorId: u.id, kind: "CREATED", body: "raised the ticket", internal: false } },
@@ -69,6 +74,7 @@ export async function createPortalTicketAction(_prev: unknown, formData: FormDat
       });
       await applyFieldValues(tx, ticket.id, type.id, rawFields, cfg, "creatable");
       if (isChangeRequestType(type.key)) await startChangeRequest(tx, ticket.id, initial.key, u.id);
+      else if (stage) await startTicketStage(tx, ticket.id, stage.key, u.id);
       return ticket;
     });
     id = created.id;
@@ -144,6 +150,7 @@ export async function setPortalStatusAction(ticketId: string, statusId: string):
   if (!t) return { error: "Not found" };
   if (t.statusId === statusId) return {};
   if (isChangeRequestType(t.typeDef.key)) return { error: CR_MOVE_ONLY };
+  if (t.typeDef.lifecycleMode === "STAGE") return { error: STAGE_MOVE_ONLY };
   const target = await prisma.ticketStatusDef.findFirst({
     where: { id: statusId, typeId: t.typeId, companyId: u.companyId, customerVisible: true, customerCanSet: true },
     select: { name: true, category: true },
