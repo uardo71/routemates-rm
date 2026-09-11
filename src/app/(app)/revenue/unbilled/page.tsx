@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/session";
+import { can } from "@/lib/permissions";
 import { loadUnbilledEntries } from "@/lib/wip-data";
 import { UnbilledClient } from "./unbilled-client";
 
@@ -12,5 +13,5 @@ export default async function UnbilledPage() {
     prisma.company.findUnique({ where: { id: user.companyId }, select: { currency: true } }),
   ]);
 
-  return <UnbilledClient entries={entries} currency={company?.currency ?? "EUR"} />;
+  return <UnbilledClient entries={entries} currency={company?.currency ?? "EUR"} canRematch={can(user, "invoices:manage")} />;
 }

@@ -49,8 +49,18 @@ export async function loadUnbilledEntries(user: SessionUser, asOf: Date = new Da
   // Compare at UTC midnight — TimeEntry.date is stored there, so a same-day entry ages 0, not -1.
   const today = Date.UTC(asOf.getUTCFullYear(), asOf.getUTCMonth(), asOf.getUTCDate());
   // A correction that exactly cancels hours on the same day (e.g. +4h planning copy, −4h) is not
-  // work waiting to be billed — drop the pair rather than show a phantom negative.
-  const cancelled = netZeroEntryIds(rows.map((e) => ({ id: e.id, hours: Number(e.hours), date: e.date.toISOString().slice(0, 10), milestoneId: e.milestone.id, taskId: e.taskId, assignmentId: e.assignmentId })));
+  // work waiting to be billed — drop the pair rather than show a phantom negative. The netting must
+  // see EVERY approved entry of those assignments, invoiced or not: judged on the unbilled ones
+  // alone, a correction whose positive half sits on an invoice looks orphaned and gets folded back
+  // into unrelated earlier days — which hid 20h of Neptune's July work behind August's corrections.
+  const assignmentIds = [...new Set(rows.map((e) => e.assignmentId))];
+  const context = assignmentIds.length
+    ? await prisma.timeEntry.findMany({
+        where: { assignmentId: { in: assignmentIds }, timeCard: { status: "APPROVED" } },
+        select: { id: true, hours: true, date: true, milestoneId: true, taskId: true, assignmentId: true },
+      })
+    : [];
+  const cancelled = netZeroEntryIds(context.map((e) => ({ id: e.id, hours: Number(e.hours), date: e.date.toISOString().slice(0, 10), milestoneId: e.milestoneId, taskId: e.taskId, assignmentId: e.assignmentId })));
   return rows.filter((e) => !cancelled.has(e.id)).map((e) => {
     const hours = Number(e.hours);
     const rate = effectiveBillRate({

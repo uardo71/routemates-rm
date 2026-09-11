@@ -119,3 +119,17 @@ describe("allocating a billing period", () => {
     expect(r.links.size).toBe(0);
   });
 });
+
+describe("the unbilled view nets corrections against ALL approved time", () => {
+  it("an invoiced +4h and its unbilled -4h cancel each other; unbilled July days are untouched", () => {
+    const july = ["27", "28", "29", "30", "31"].map((d) => e(`2026-07-${d}`, 4));
+    const augPlus = ["03", "04", "05", "06", "07"].map((d) => e(`2026-08-${d}`, 4)); // on an invoice
+    const augMinus = ["03", "04", "05", "06", "07"].map((d) => e(`2026-08-${d}`, -4)); // not invoiced
+    const all = netZeroEntryIds([...july, ...augPlus, ...augMinus]);
+    for (const x of augMinus) expect(all.has(x.id)).toBe(true);
+    for (const x of july) expect(all.has(x.id)).toBe(false);
+    // The old bug: judged on the unbilled entries alone, the August corrections fold back into July.
+    const unbilledOnly = netZeroEntryIds([...july, ...augMinus]);
+    expect(july.some((x) => unbilledOnly.has(x.id))).toBe(true);
+  });
+});

@@ -12,6 +12,7 @@ import { StatCard } from "@/components/stat-card";
 import { formatMoney, formatNumber } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { groupUnbilled, summarizeAge, type UnbilledEntry } from "@/lib/wip";
+import { RematchButton } from "./rematch-button";
 
 const BUCKET_TONE: Record<string, string> = {
   "0-30": "text-muted-foreground",
@@ -23,7 +24,7 @@ const BUCKET_TONE: Record<string, string> = {
 /** Rows older than this are the ones this view exists to surface. */
 const STALE_DAYS = 90;
 
-export function UnbilledClient({ entries, currency }: { entries: UnbilledEntry[]; currency: string }) {
+export function UnbilledClient({ entries, currency, canRematch }: { entries: UnbilledEntry[]; currency: string; canRematch: boolean }) {
   const [client, setClient] = useState("ALL");
   const [projectId, setProjectId] = useState("ALL");
   const [month, setMonth] = useState("");
@@ -89,9 +90,12 @@ export function UnbilledClient({ entries, currency }: { entries: UnbilledEntry[]
             Revenue report as earned minus invoiced instead.
           </p>
         </div>
-        <a href={exportUrl}>
-          <Button size="sm" variant="outline"><DownloadIcon className="size-3.5" /> Export XLSX</Button>
-        </a>
+        <div className="flex items-center gap-2">
+          {canRematch && <RematchButton />}
+          <a href={exportUrl}>
+            <Button size="sm" variant="outline"><DownloadIcon className="size-3.5" /> Export XLSX</Button>
+          </a>
+        </div>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">

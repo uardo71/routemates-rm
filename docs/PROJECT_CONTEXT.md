@@ -1695,3 +1695,17 @@ Migration `20260911190000_action_completion_tracking` (applied to erp_dev; prod 
 - **Carried status actions appear once**: a new update's carried rows point at the action they
   continue (`carriedFromId`, keeping its age and, if done, its completion); the register, the
   cockpit Actions card and "my actions" count only the newest copy (`carriedTo: { none: {} }`).
+
+### Fix - unbilled view hid July behind August's corrections; "Re-match with invoices" button (2026-09-11)
+No migration. 253 tests green. Build green.
+- **Bug in the netting shipped with the Neptune fix**: `wip-data.ts` cancelled corrections using the
+  UNBILLED entries only. Neptune's August +4h planning copies sit (wrongly, old linker) on an invoice,
+  so their -4h corrections looked orphaned and `buildUnits` folded them back into Indri's last July
+  days - the page showed July at 26h/14 entries instead of 46h/20. The netting now loads every
+  APPROVED entry of the same assignments (invoiced or not) before deciding what cancels. Tested with
+  the real July/August shape.
+- **`/revenue/unbilled` -> "Re-match with invoices"** (`invoices:manage` only, `rematch-button.tsx` +
+  `revenue/unbilled/actions.ts`): previews, then applies, `relinkInvoicePeriod` for every manual-
+  invoice billing period of the company - the same routine as `scripts/link-manual-invoice-time.ts`
+  and the live create/edit hook. This is the in-app way to run the Neptune repair (still NOT applied
+  on prod by the agent; a dry run shows 31 entries across July and August -> 0h unbilled).
