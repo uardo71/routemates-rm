@@ -1815,6 +1815,13 @@ enum TicketFieldKind {
   USER
 }
 
+// How a ticket type tracks work. STATUS is the original model: a flat status list plus SLA targets.
+// STAGE is an ordered stage list with a gate checklist per stage and no SLA (change requests, bugs).
+enum TicketLifecycleMode {
+  STATUS
+  STAGE
+}
+
 // ---------- Ticketing configuration (per company, admin-managed) ----------
 
 // A ticket "type"/category (Incident, Bug, Change request, Task, …). Each owns its own workflow
@@ -1832,11 +1839,17 @@ model TicketTypeDef {
   active            Boolean  @default(true)
   isDefault         Boolean  @default(false) // pre-selected type on new tickets
   customerCanCreate Boolean  @default(true) // customers may open this type from the portal
-  slaExempt         Boolean  @default(false) // no respond/resolve targets (change requests: tracked by stage)
+  slaExempt         Boolean  @default(false) // LEGACY, no longer read — superseded by slaApplicable
+  lifecycleMode     TicketLifecycleMode @default(STATUS)
+  // Objection, recorded per the owner's rule 1: this duplicates `slaExempt` above, which already
+  // states the same thing explicitly (nothing was ever inferred from missing data). Implemented as
+  // asked: slaApplicable is the field the code reads; slaExempt stays only so the change is reversible.
+  slaApplicable     Boolean  @default(true)
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
   statuses TicketStatusDef[]
+  stages   TicketStageDef[]
   fields   TicketFieldDef[]
   tickets  Ticket[]
 
@@ -1859,6 +1872,10 @@ model TicketStatusDef {
   isInitial       Boolean              @default(false) // starting status for a new ticket of this type
   customerVisible Boolean              @default(true) // shown to portal users
   customerCanSet  Boolean              @default(false) // portal users may move a ticket into this status
+  // Set when the type moved to STAGE mode: the status list is retired, tickets keep their status and
+  // show it read-only. Same archive pattern as custom fields — nothing is deleted.
+  archivedAt      DateTime?
+  archivedById    String?
   createdAt       DateTime             @default(now())
   updatedAt       DateTime             @updatedAt
 
@@ -1876,6 +1893,9 @@ model TicketFieldDef {
   company          Company         @relation(fields: [companyId], references: [id])
   typeId           String?
   type             TicketTypeDef?  @relation(fields: [typeId], references: [id], onDelete: Cascade)
+  // Set = the field belongs to that stage's panel (STAGE-mode types); null = the general Details panel.
+  stageId          String?
+  stage            TicketStageDef? @relation(fields: [stageId], references: [id], onDelete: SetNull)
   key              String
   name             String
   kind             TicketFieldKind @default(TEXT)
@@ -1906,6 +1926,68 @@ model TicketFieldValue {
 
   @@unique([ticketId, fieldId])
   @@index([fieldId])
+}
+
+// ---------- Stage mode (an ordered stage list with gate checklists, per type) ----------
+
+// One stage of a STAGE-mode type's lifecycle. Mirrors TicketStatusDef: per type, ordered, with the
+// same settings guards (a stage in use can't be deleted; exactly one starting and one terminal
+// stage). `key` is a stable slug, never editable — seeds and the change-request logic resolve by it.
+model TicketStageDef {
+  id          String   @id @default(cuid())
+  companyId   String // plain id (no FK), like the audit log's — tenant scoping only
+  typeId      String
+  type        TicketTypeDef @relation(fields: [typeId], references: [id], onDelete: Cascade)
+  key         String
+  name        String
+  description String?
+  order       Int      @default(0)
+  isStarting  Boolean  @default(false)
+  isTerminal  Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  gates   TicketStageGate[]
+  fields  TicketFieldDef[]
+  tickets Ticket[]
+
+  @@unique([typeId, key])
+  @@index([companyId])
+  @@index([typeId])
+}
+
+// A checklist item that has to be met before a ticket leaves the stage.
+model TicketStageGate {
+  id          String   @id @default(cuid())
+  companyId   String
+  stageId     String
+  stage       TicketStageDef @relation(fields: [stageId], references: [id], onDelete: Cascade)
+  key         String
+  label       String
+  description String?
+  order       Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  checks TicketGateCheck[]
+
+  @@unique([stageId, key])
+  @@index([companyId])
+  @@index([stageId])
+}
+
+// One ticket's progress against one gate. Absent = not met.
+model TicketGateCheck {
+  id          String   @id @default(cuid())
+  ticketId    String
+  ticket      Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  gateId      String
+  gate        TicketStageGate @relation(fields: [gateId], references: [id], onDelete: Cascade)
+  checkedAt   DateTime @default(now())
+  checkedById String // plain id (no FK) so history survives a deleted user
+
+  @@unique([ticketId, gateId])
+  @@index([gateId])
 }
 
 // A saved view: filter + column layout + sort, owned by a user, optionally shared company-wide.
@@ -1988,6 +2070,10 @@ model Ticket {
   priority        TicketPriority  @default(MEDIUM)
   statusId        String
   statusDef       TicketStatusDef @relation(fields: [statusId], references: [id])
+  // STAGE-mode types only: where the ticket sits in its type's stage list. STATUS-mode tickets leave
+  // it null and keep using statusId; a ticket that switched mode keeps both, so it is recoverable.
+  stageId         String?
+  stageDef        TicketStageDef? @relation(fields: [stageId], references: [id], onDelete: SetNull)
   requesterId     String
   requester       User           @relation("TicketRequester", fields: [requesterId], references: [id])
   assigneeId      String?
@@ -2019,6 +2105,7 @@ model Ticket {
   notifications TicketNotification[]
   changeRequest ChangeRequest?
   crStageEvents ChangeRequestStageEvent[]
+  gateChecks    TicketGateCheck[]
 
   @@unique([companyId, number])
   @@index([companyId, statusId])
