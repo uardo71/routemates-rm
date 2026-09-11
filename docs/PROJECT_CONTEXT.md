@@ -1752,3 +1752,11 @@ Migrations `20260911200000_project_readiness_fields` and `20260911200100_project
   sponsor on any live project, active with no manager. Surfaced on `/portfolio` (Hygiene card, chip
   per check filters the table, list with Fix links), in My Day (`HYGIENE` kind, "Data hygiene" group,
   INFO), and the `hygiene_weekly` alert (per PM per ISO week; unmanaged projects -> admins).
+
+### Fix - audit history showed raw ids for linked records (2026-09-11)
+No migration. The History card showed `sponsor contact id — → cmsq4lbh…` after setting a sponsor.
+`audit-diff.ts` now knows which fields point at another record (`REFERENCE_FIELDS`: sponsor, manager,
+owner, client, project, milestone, task, end customer, opportunity, invoice, the "…by" user fields)
+and labels them by what they are; `presentAudit` resolves the ids to names (company-scoped, projects
+and opportunities as "number name", a vanished record as "(deleted)") when the history is READ, so
+old entries read right too. Rebuilt summaries keep their note (`summaryTail`, legacy wording aware).

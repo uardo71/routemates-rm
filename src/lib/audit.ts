@@ -2,7 +2,7 @@ import "server-only";
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { can, type SessionUser } from "@/lib/permissions";
-import { diffFields, redactDiff, summarize, hasMoneyChange, type AuditAction, type AuditDiff, type AuditPayload } from "@/lib/audit-diff";
+import { diffFields, redactDiff, summarize, hasMoneyChange, type AuditAction, type AuditDiff, type AuditPayload, referenceIds, resolveReferences, hasReferences, summaryTail, type ReferenceKind } from "@/lib/audit-diff";
 
 // Server half of the audit log. `recordAudit` takes the caller's transaction client so the log
 // row commits — or rolls back — together with the change it describes. Rows are never updated or
@@ -97,10 +97,16 @@ export async function presentAudit(rows: AuditRow[], reader: SessionUser): Promi
   const actorIds = [...new Set(rows.map((r) => r.actorId))];
   const users = actorIds.length ? await prisma.user.findMany({ where: { id: { in: actorIds } }, select: { id: true, name: true } }) : [];
   const nameById = new Map(users.map((u) => [u.id, u.name]));
-  return rows.map((r) => {
-    const payload = parsePayload(r.diff);
+  const payloads = rows.map((r) => parsePayload(r.diff));
+  // Fields that point at another record (sponsor, manager, client…) read as that record's name.
+  const refNames = await loadReferenceNames(referenceIds(payloads.map((p) => p.fields)), reader.companyId);
+  return rows.map((r, i) => {
+    const payload = payloads[i];
     const redacted = !canSeeMoney && hasMoneyChange(payload.fields);
-    const fields = canSeeMoney ? payload.fields : redactDiff(payload.fields);
+    const fields = resolveReferences(canSeeMoney ? payload.fields : redactDiff(payload.fields), refNames);
+    // The stored summary carries real amounts and raw ids: rebuild it from what this reader sees,
+    // keeping the note it was written with.
+    const tail = redacted || hasReferences(payload.fields) ? summaryTail(r.summary, { entityType: r.entityType, action: r.action, label: payload.label, diff: payload.fields }) : null;
     return {
       id: r.id,
       at: r.at.toISOString(),
@@ -111,11 +117,34 @@ export async function presentAudit(rows: AuditRow[], reader: SessionUser): Promi
       action: r.action,
       label: payload.label ?? null,
       // The stored summary carries real amounts; rebuild it from the redacted diff for this reader.
-      summary: redacted ? summarize({ entityType: r.entityType, action: r.action, label: payload.label, diff: fields }) : r.summary,
+      summary: tail !== null
+        ? summarize({ entityType: r.entityType, action: r.action, label: payload.label, diff: fields }) + tail
+        : redacted ? summarize({ entityType: r.entityType, action: r.action, label: payload.label, diff: fields }) : r.summary,
       fields,
       redacted,
     };
   });
+}
+
+/** Names for referenced ids, company-scoped. Projects and opportunities read "number name". */
+async function loadReferenceNames(ids: Map<ReferenceKind, Set<string>>, companyId: string): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const list = (k: ReferenceKind) => [...(ids.get(k) ?? [])];
+  const put = (rows: { id: string; name: string | null }[]) => { for (const r of rows) if (r.name) out.set(r.id, r.name); };
+  const numbered = (number: string | null, name: string) => (number ? `${number} ${name}` : name);
+  const jobs: Promise<void>[] = [];
+  if (list("user").length) jobs.push(prisma.user.findMany({ where: { id: { in: list("user") }, companyId }, select: { id: true, name: true } }).then(put));
+  if (list("contact").length) jobs.push(prisma.contact.findMany({ where: { id: { in: list("contact") }, client: { companyId } }, select: { id: true, name: true } }).then(put));
+  if (list("client").length) jobs.push(prisma.client.findMany({ where: { id: { in: list("client") }, companyId }, select: { id: true, name: true } }).then(put));
+  if (list("project").length) jobs.push(prisma.project.findMany({ where: { id: { in: list("project") }, companyId }, select: { id: true, name: true, number: true } }).then((rs) => put(rs.map((r) => ({ id: r.id, name: numbered(r.number, r.name) })))));
+  if (list("milestone").length) jobs.push(prisma.milestone.findMany({ where: { id: { in: list("milestone") }, project: { companyId } }, select: { id: true, name: true } }).then(put));
+  if (list("opportunity").length) jobs.push(prisma.opportunity.findMany({ where: { id: { in: list("opportunity") }, companyId }, select: { id: true, name: true, number: true } }).then((rs) => put(rs.map((r) => ({ id: r.id, name: numbered(r.number, r.name) })))));
+  if (list("task").length) jobs.push(prisma.task.findMany({ where: { id: { in: list("task") }, milestone: { project: { companyId } } }, select: { id: true, name: true } }).then(put));
+  if (list("engagement").length) jobs.push(prisma.engagement.findMany({ where: { id: { in: list("engagement") }, project: { companyId } }, select: { id: true, name: true } }).then(put));
+  if (list("planTask").length) jobs.push(prisma.planTask.findMany({ where: { id: { in: list("planTask") }, companyId }, select: { id: true, name: true } }).then(put));
+  if (list("invoice").length) jobs.push(prisma.invoice.findMany({ where: { id: { in: list("invoice") }, companyId }, select: { id: true, invoiceNumber: true } }).then((rs) => put(rs.map((r) => ({ id: r.id, name: r.invoiceNumber })))));
+  await Promise.all(jobs);
+  return out;
 }
 
 const ROW_SELECT = { id: true, at: true, actorId: true, entityType: true, entityId: true, action: true, summary: true, diff: true } as const;

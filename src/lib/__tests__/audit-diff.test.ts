@@ -9,6 +9,9 @@ import {
   fieldLabel,
   hasMoneyChange,
   REDACTED,
+  referenceIds,
+  resolveReferences,
+  summaryTail,
 } from "@/lib/audit-diff";
 
 // A stand-in for Prisma's Decimal: the diff must never depend on the class, only on toNumber().
@@ -141,5 +144,31 @@ describe("formatting helpers", () => {
   it("turns camelCase into words", () => {
     expect(fieldLabel("recognitionDate")).toBe("recognition date");
     expect(fieldLabel("status")).toBe("status");
+  });
+});
+
+describe("fields that point at another record", () => {
+  it("are labelled by what they point at, not by their id column", () => {
+    expect(fieldLabel("sponsorContactId")).toBe("sponsor");
+    expect(fieldLabel("managerId")).toBe("manager");
+    expect(fieldLabel("invoiceLineId")).toBe("invoice line");
+    expect(fieldLabel("recognitionDate")).toBe("recognition date");
+  });
+  it("collect their ids by kind and show names instead; a record that's gone reads (deleted)", () => {
+    const diff = { sponsorContactId: { from: null, to: "c1" }, managerId: { from: "u1", to: "u2" }, status: { from: "PLANNED", to: "ACTIVE" } };
+    const ids = referenceIds([diff]);
+    expect([...ids.get("contact")!]).toEqual(["c1"]);
+    expect([...ids.get("user")!].sort()).toEqual(["u1", "u2"]);
+    const r = resolveReferences(diff, new Map([["c1", "Mario Rossi"], ["u1", "Enida Selita"]]));
+    expect(r.sponsorContactId).toEqual({ from: null, to: "Mario Rossi" });
+    expect(r.managerId).toEqual({ from: "Enida Selita", to: "(deleted)" });
+    expect(r.status).toEqual({ from: "PLANNED", to: "ACTIVE" });
+  });
+  it("keep a summary's note when it is rebuilt, whichever label style wrote it", () => {
+    const input = { entityType: "Project", action: "update", label: "PR-1", diff: { sponsorContactId: { from: null, to: "c1" } } };
+    expect(summaryTail("Project PR-1: sponsor contact id — → c1 — set by the PM", input)).toBe(" — set by the PM");
+    expect(summaryTail(summarize({ ...input, note: "why" }), input)).toBe(" — why");
+    expect(summaryTail(summarize(input), input)).toBe("");
+    expect(summaryTail("something else entirely", input)).toBeNull();
   });
 });
