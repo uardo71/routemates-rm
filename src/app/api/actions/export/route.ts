@@ -15,7 +15,7 @@ export async function GET(req: NextRequest) {
   const todayIso = format(new Date(), "yyyy-MM-dd");
   const viewParam = sp.get("view");
   const view: ActionView = viewParam === "completed" || viewParam === "all" ? viewParam : "open";
-  const all = await loadActions(user, { projectIds: scope.projectIds, mineOnly: scope.mineOnly, todayIso, include: view });
+  const all = await loadActions(user, { projectIds: scope.projectIds, mineOnly: scope.mineOnly, todayIso, include: view, tickets: true });
   const source = sp.get("source");
   const rows = filterActions(all, {
     view,
@@ -23,7 +23,7 @@ export async function GET(req: NextRequest) {
     unassigned: sp.get("unassigned") === "1",
     overdue: sp.get("overdue") === "1",
     projectId: sp.get("project"),
-    source: source && ["PLAN", "RAID", "STATUS", "MEETING"].includes(source) ? (source as ActionSource) : null,
+    source: source && ["PLAN", "RAID", "STATUS", "MEETING", "TICKET"].includes(source) ? (source as ActionSource) : null,
     q: sp.get("q"),
   });
 
@@ -32,6 +32,7 @@ export async function GET(req: NextRequest) {
   ws.columns = [
     { header: "Source", key: "source", width: 16 },
     { header: "Action", key: "title", width: 60 },
+    { header: "Client", key: "client", width: 24 },
     { header: "Project", key: "project", width: 28 },
     { header: "End customer", key: "engagement", width: 22 },
     { header: "Owner", key: "owner", width: 22 },
@@ -48,13 +49,13 @@ export async function GET(req: NextRequest) {
   ws.views = [{ state: "frozen", ySplit: 1 }];
   for (const a of rows) {
     ws.addRow({
-      source: ACTION_SOURCE_LABEL[a.source], title: a.title, project: a.projectName, engagement: a.engagementName ?? "",
+      source: ACTION_SOURCE_LABEL[a.source], title: a.ref ? `${a.ref} ${a.title}` : a.title, client: a.clientName ?? "", project: a.projectName, engagement: a.engagementName ?? "",
       owner: a.owner ?? "", due: a.dueDate ?? "", late: a.isOverdue ? a.overdueDays : "", age: a.ageDays, status: a.done ? "Completed" : a.status,
       critical: a.critical ? "Yes" : "", raised: a.createdAt.slice(0, 10),
       completedOn: a.done && a.completedAt ? a.completedAt.slice(0, 10) : "", completedBy: a.done ? a.completedBy ?? "" : "",
     });
   }
-  ws.autoFilter = { from: "A1", to: "M1" };
+  ws.autoFilter = { from: "A1", to: "N1" };
   const buffer = await wb.xlsx.writeBuffer();
   return new NextResponse(buffer as ArrayBuffer, {
     headers: {

@@ -3,7 +3,7 @@ import { BackLink } from "@/components/back-link";
 import { notFound } from "next/navigation";
 import { format, differenceInCalendarDays } from "date-fns";
 import { TriangleAlertIcon, CalendarIcon, MessageSquareIcon, DiamondIcon, RocketIcon, ClipboardCheckIcon, CheckCircle2Icon, ListChecksIcon } from "lucide-react";
-import { enrichAll, ACTION_SOURCE_LABEL, type RegisterAction } from "@/lib/actions-register";
+import { actionHref, enrichAll, ACTION_SOURCE_LABEL, type RegisterAction } from "@/lib/actions-register";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { InitialsAvatar } from "@/components/initials-avatar";
 import { LinkButton } from "@/components/link-button";
@@ -40,7 +40,7 @@ export default async function DeliveryProjectPage({ params, searchParams }: { pa
   const project = await prisma.project.findFirst({
     where: { id: projectId, companyId: user.companyId },
     include: {
-      client: { select: { name: true } },
+      client: { select: { id: true, name: true } },
       manager: { select: { name: true } },
       engagements: { orderBy: { sortOrder: "asc" }, select: { id: true, name: true, status: true, members: { select: { user: { select: { id: true, name: true } } } } } },
       statusReports: { orderBy: { reportDate: "desc" }, include: { author: { select: { name: true } }, actions: { orderBy: { sortOrder: "asc" }, include: { carriedTo: { select: { id: true } } } }, documents: { select: { id: true, fileName: true, originalName: true } } } },
@@ -112,22 +112,23 @@ export default async function DeliveryProjectPage({ params, searchParams }: { pa
 
   // Every open action in scope, worst-overdue first — the Overview's "Actions" card.
   const engNameOf = (id: string | null) => (id ? project.engagements.find((e) => e.id === id)?.name ?? null : null);
+  const cardClient = { clientId: project.client.id, clientName: project.client.name };
   const scopeActions: RegisterAction[] = [
     ...project.raidItems.filter(inEng).filter((r) => r.status !== "CLOSED").map((r) => ({
-      id: r.id, source: "RAID" as const, title: r.title, projectId: project.id, projectName: project.name, engagementId: r.engagementId, engagementName: engNameOf(r.engagementId),
-      owner: r.owner, ownerUserId: r.ownerUserId, dueDate: iso(r.dueDate), createdAt: r.createdAt.toISOString(), status: r.status === "IN_PROGRESS" ? "In progress" : "Open", critical: r.severity === "HIGH" || r.severity === "CRITICAL",
+      id: r.id, source: "RAID" as const, title: r.title, projectId: project.id, projectName: project.name, engagementId: r.engagementId, engagementName: engNameOf(r.engagementId), ...cardClient,
+      owner: r.owner, ownerUserId: r.ownerUserId, dueDate: iso(r.dueDate), createdAt: r.createdAt.toISOString(), status: r.status === "IN_PROGRESS" ? "In progress" : "Open", critical: r.severity === "HIGH" || r.severity === "CRITICAL", href: actionHref("RAID", project.id, r.engagementId),
     })),
     ...project.meetings.filter(inEng).flatMap((m) => m.actions.filter((a) => !a.done).map((a) => ({
-      id: a.id, source: "MEETING" as const, title: a.description, projectId: project.id, projectName: project.name, engagementId: m.engagementId, engagementName: engNameOf(m.engagementId),
-      owner: a.owner, ownerUserId: a.ownerUserId, dueDate: iso(a.dueDate), createdAt: a.createdAt.toISOString(), status: m.title, critical: false,
+      id: a.id, source: "MEETING" as const, title: a.description, projectId: project.id, projectName: project.name, engagementId: m.engagementId, engagementName: engNameOf(m.engagementId), ...cardClient,
+      owner: a.owner, ownerUserId: a.ownerUserId, dueDate: iso(a.dueDate), createdAt: a.createdAt.toISOString(), status: m.title, critical: false, href: actionHref("MEETING", project.id, m.engagementId),
     }))),
     ...project.statusReports.filter(inEng).flatMap((r) => r.actions.filter((a) => !a.done && a.carriedTo.length === 0).map((a) => ({
-      id: a.id, source: "STATUS" as const, title: a.description, projectId: project.id, projectName: project.name, engagementId: r.engagementId, engagementName: engNameOf(r.engagementId),
-      owner: a.owner, ownerUserId: a.ownerUserId, dueDate: iso(a.dueDate), createdAt: a.createdAt.toISOString(), status: `Status ${iso(r.reportDate)}`, critical: a.critical,
+      id: a.id, source: "STATUS" as const, title: a.description, projectId: project.id, projectName: project.name, engagementId: r.engagementId, engagementName: engNameOf(r.engagementId), ...cardClient,
+      owner: a.owner, ownerUserId: a.ownerUserId, dueDate: iso(a.dueDate), createdAt: a.createdAt.toISOString(), status: `Status ${iso(r.reportDate)}`, critical: a.critical, href: actionHref("STATUS", project.id, r.engagementId),
     }))),
     ...project.planTasks.filter(inEng).filter((t) => !t.isMilestone && t.status !== "COMPLETED" && t.progress < 100).map((t) => ({
-      id: t.id, source: "PLAN" as const, title: t.name, projectId: project.id, projectName: project.name, engagementId: t.engagementId, engagementName: engNameOf(t.engagementId),
-      owner: t.owner, ownerUserId: t.ownerUserId, dueDate: iso(t.dueDate), createdAt: t.createdAt.toISOString(), status: t.status === "BLOCKED" ? "Blocked" : `${t.progress}%`, critical: t.status === "BLOCKED",
+      id: t.id, source: "PLAN" as const, title: t.name, projectId: project.id, projectName: project.name, engagementId: t.engagementId, engagementName: engNameOf(t.engagementId), ...cardClient,
+      owner: t.owner, ownerUserId: t.ownerUserId, dueDate: iso(t.dueDate), createdAt: t.createdAt.toISOString(), status: t.status === "BLOCKED" ? "Blocked" : `${t.progress}%`, critical: t.status === "BLOCKED", href: actionHref("PLAN", project.id, t.engagementId), progress: t.progress,
     })),
   ];
   const openActions = enrichAll(scopeActions, new Date().toISOString().slice(0, 10));

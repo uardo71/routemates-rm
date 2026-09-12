@@ -2128,3 +2128,58 @@ No migration. tsc + lint + build + 414 tests green. Follows the BackLink work fr
   and "← Projects" on `/projects` is nonsense. Also left alone: `/profile` and `/help` (reached from
   the account menu), and the "← Prev" WEEK PAGINATION on the planner, availability, time,
   my-planning and scheduled-vs-actuals — those arrows move a date range, they are not navigation.
+
+### Actions register redesigned, and Support tickets are its fifth source (2026-09-13)
+
+No migration. tsc + lint + build + **428 tests** green (14 new), plus a real-data verification script
+(19/19) that borrows and restores live tickets.
+
+**The SLA verdict moved into the pure lib, it was not copied.** `slaBadgeState` (and
+`SLA_AT_RISK_MS`, `SlaBadgeKind`, `SlaBadgeState`, the labels) now live in `src/lib/sla.ts`;
+`tickets/sla.tsx` keeps the `SlaBadge` component and RE-EXPORTS the verdict, so every screen that
+imported it from there is untouched. The server needed the same answer, and there must be exactly
+one: the register and the ticket page can never disagree about "breached". Its input is a structural
+`SlaClock` rather than `Pick<TicketRow, …>`, which is what lets a Prisma row use it server-side.
+
+**A ticket reaches the register only when it needs a person now** (`loadTicketActions`):
+assigned, not DONE/CANCELLED, and either its SLA verdict is `breached`/`at_risk` (STATUS-mode) or it
+sits on a stage with a gate nobody has ticked (STAGE-mode — that unticked gate IS what the assignee
+is being waited on for). Visibility is the shipped `visibleTicketWhere`, not a new rule.
+
+**Tickets are opt-in at the loader** (`loadActions({ tickets: true })`, default false). Only
+`/actions` and its XLSX export pass it, so **My Day and the cockpit Actions card are byte-for-byte
+what they were** — they are project-scoped and were shipped without tickets.
+
+**A ticket can never be completed from this list**, and that is enforced three times over: the row
+renders "Open ticket →" instead of a checkbox (`completableHere` is false for every ticket, done or
+not), the client filters tickets out of the save payload, the server action's zod enum has no
+`TICKET` member, and `setActionsDone` returns an error if one ever reaches it. Its stage gates and
+Save flow are what resolve it.
+
+**Grouping is CLIENT first** (`groupByClient`, pure + tested), engagement/project second. Project was
+the old primary grouping and it misled: the same generic project name sits under several unrelated
+accounts. A client with nothing open sinks below one that has; inside a client the worst sub-group
+leads. A ticket groups under its own client like every other source, with "Support" as its
+sub-heading when it carries no project.
+
+**"Needs attention"** is `needsAttention = overdue || critical || urgent`, across every client and
+source, above the grouped list. `urgent` is a new, separate flag from `critical` on purpose:
+`critical` still drives the CRITICAL badge, while `urgent` is what a breached or gate-waiting ticket
+sets so it lands in the strip without pretending to be a CRITICAL severity item. An **at-risk**
+ticket is listed but NOT in the strip — at risk is not yet late.
+
+**The overloaded "Status" column was split per type** (`StateCell`): a plan task draws a real
+progress bar + %, an issue shows its state, a status/meeting action shows where it came from, and a
+ticket shows the Support `SlaBadge` or its stage pill with the number of gates waiting. Severity is
+a real CRITICAL badge, not inline text. Type pills use only existing tokens (`danger-soft`,
+`warning-soft`, `success-soft`, `accent`, `primary/10`) — no new design tokens.
+
+**Completion rules**: routine work (non-critical status action, plan task, meeting action AND
+non-critical issue) still completes with one staged tick and Save, unchanged. A CRITICAL item of any
+source, and every ticket, shows "Resolve →" / "Open ticket →" instead.
+
+**Deliberate calls, flagged**: a non-critical RAID item KEEPS its tick (the brief listed the routine
+types without RAID, but removing a shipped capability would have been the larger change — critical
+RAID items already lose it); an at-risk ticket is listed but not in the attention strip; a ticket
+with no project groups under "Support" inside its client; sorting is fixed worst-first inside groups
+(the old sortable column headers went with the table, filters and views all stayed).

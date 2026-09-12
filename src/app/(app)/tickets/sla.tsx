@@ -1,71 +1,17 @@
 "use client";
 
 import { cn } from "@/lib/utils";
-import { isOpenCategory } from "@/lib/ticket-config";
-import type { TicketRow } from "./serialize";
+import { SLA_BADGE_LABEL, slaBadgeState, type SlaBadgeKind, type SlaBadgeState } from "@/lib/sla";
 
-function rel(ms: number): string {
-  const h = Math.round(ms / 3_600_000);
-  if (h < 24) return `in ${Math.max(1, h)}h`;
-  return `in ${Math.round(h / 24)}d`;
-}
-
-// ---------------------------------------------------------------------------------------------
 // SlaBadge — the one SLA chip every screen draws (header, list, board).
 //
-// Four states and no more: On track · At risk · Breached · No SLA. The numbers behind them are the
-// ticket's own stored respondBy/resolveBy, which sla.server.ts wrote from the resolved policy
-// (client override > company policy > built-in default) — this component resolves nothing itself.
-// ---------------------------------------------------------------------------------------------
+// Four states and no more: On track · At risk · Breached · No SLA. The verdict itself now lives in
+// the pure `@/lib/sla`, because the SERVER needs the same answer (the actions register asks whether
+// a ticket is urgent). This file keeps the drawing and re-exports the verdict, so every screen that
+// already imported it from here is unaffected.
 
-/** How close to a target counts as "at risk" — the threshold the amber pill already used. */
-export const SLA_AT_RISK_MS = 4 * 3_600_000;
-
-export type SlaBadgeKind = "on_track" | "at_risk" | "breached" | "none";
-
-export type SlaBadgeState = {
-  kind: SlaBadgeKind;
-  /** False wherever the app draws nothing today: a type with no SLA, a clock that has stopped
-   *  (resolved/cancelled), or a ticket carrying no target at all. `kind` still says which. */
-  show: boolean;
-  /** "On track" · "At risk" · "Breached" · "No SLA". */
-  label: string;
-  /** The clock in words — "respond in 3h", "resolve overdue by 2h". Empty when there is no clock. */
-  detail: string;
-};
-
-const SLA_BADGE_LABEL: Record<SlaBadgeKind, string> = {
-  on_track: "On track",
-  at_risk: "At risk",
-  breached: "Breached",
-  none: "No SLA",
-};
-
-const NO_SLA: SlaBadgeState = { kind: "none", show: false, label: SLA_BADGE_LABEL.none, detail: "" };
-
-function overdueBy(ms: number): string {
-  const h = Math.round(ms / 3_600_000);
-  return h < 24 ? `overdue by ${Math.max(1, h)}h` : `overdue by ${Math.round(h / 24)}d`;
-}
-
-/** Which of the four states a ticket is in. `now` is injectable so the boundaries can be tested. */
-export function slaBadgeState(
-  r: Pick<TicketRow, "statusCategory" | "firstResponseAt" | "respondBy" | "resolveBy" | "slaApplicable">,
-  now: number = Date.now(),
-): SlaBadgeState {
-  if (!r.slaApplicable) return NO_SLA;
-  // The clock stops when the ticket leaves an open status; a closed ticket is not "on track".
-  if (!isOpenCategory(r.statusCategory)) return NO_SLA;
-  const responded = !!r.firstResponseAt;
-  const targetIso = responded ? r.resolveBy : r.respondBy;
-  if (!targetIso) return NO_SLA;
-
-  const kind = responded ? "resolve" : "respond";
-  const left = new Date(targetIso).getTime() - now;
-  if (left <= 0) return { kind: "breached", show: true, label: SLA_BADGE_LABEL.breached, detail: `${kind} ${overdueBy(-left)}` };
-  const at = left < SLA_AT_RISK_MS ? "at_risk" : "on_track";
-  return { kind: at, show: true, label: SLA_BADGE_LABEL[at], detail: `${kind} ${rel(left)}` };
-}
+export { SLA_AT_RISK_MS, SLA_BADGE_LABEL, slaBadgeState } from "@/lib/sla";
+export type { SlaBadgeKind, SlaBadgeState, SlaClock } from "@/lib/sla";
 
 const SLA_BADGE_TONE: Record<SlaBadgeKind, string> = {
   on_track: "bg-success-soft text-success",
@@ -95,3 +41,17 @@ export function SlaBadge({ state, showNone = false, detail = true, className }: 
     </span>
   );
 }
+
+/** The same chip from a bare verdict — for lists that carry the kind and label but not a ticket row. */
+export function SlaKindBadge({ kind, label, detail, className }: { kind: SlaBadgeKind; label?: string; detail?: string; className?: string }) {
+  return (
+    <SlaBadge
+      state={{ kind, show: kind !== "none", label: label ?? SLA_BADGE_LABEL[kind], detail: detail ?? "" }}
+      showNone
+      className={className}
+    />
+  );
+}
+
+// Kept so `slaBadgeState` stays reachable from this module's own consumers without a second import.
+export const slaVerdict = slaBadgeState;

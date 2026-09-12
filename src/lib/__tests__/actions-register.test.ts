@@ -4,6 +4,7 @@ import { enrichAction, enrichAll, filterActions, sortActions, summarizeActions, 
 const TODAY = "2026-09-11";
 const base = (o: Partial<RegisterAction> = {}): RegisterAction => ({
   id: "a1", source: "RAID", title: "Fix the interface", projectId: "p1", projectName: "AFW", engagementId: null, engagementName: null,
+  clientId: "c1", clientName: "Acme", href: "/delivery/p1?tab=raid",
   owner: "Ana", ownerUserId: "u-ana", dueDate: "2026-09-15", createdAt: "2026-09-01T10:00:00.000Z", status: "Open", critical: false, ...o,
 });
 

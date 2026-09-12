@@ -1,8 +1,10 @@
 import "server-only";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { can, canManageProject, type SessionUser } from "@/lib/permissions";
-import { enrichAll, completionChange, type ActionSource, type EnrichedAction, type RegisterAction } from "@/lib/actions-register";
+import { can, canManageProject, visibleTicketWhere, type SessionUser } from "@/lib/permissions";
+import { actionHref, enrichAll, completionChange, type ActionSource, type EnrichedAction, type RegisterAction } from "@/lib/actions-register";
+import { slaBadgeState } from "@/lib/sla";
+import { isOpenCategory } from "@/lib/ticket-config";
 
 // Server half of the actions register: loads actions (open, completed or both) from the four sources
 // into one shape, and completes or reopens them "at source" so the originating screen agrees.
@@ -21,14 +23,19 @@ export async function actionScope(user: SessionUser): Promise<{ projectIds: stri
 
 export type ActionLoad = "open" | "completed" | "all";
 
-export async function loadActions(user: SessionUser, opts: { projectIds?: string[] | "ALL"; mineOnly?: boolean; todayIso: string; include?: ActionLoad }): Promise<EnrichedAction[]> {
+export async function loadActions(user: SessionUser, opts: {
+  projectIds?: string[] | "ALL"; mineOnly?: boolean; todayIso: string; include?: ActionLoad;
+  /** Support tickets that need a person NOW. Off by default, so the cockpit card and My Day - which
+   *  are project-scoped and were shipped without tickets - are untouched. */
+  tickets?: boolean;
+}): Promise<EnrichedAction[]> {
   const include = opts.include ?? "open";
   const wantOpen = include !== "completed";
   const wantDone = include !== "open";
   const scope = opts.projectIds ?? "ALL";
   const projectWhere = { companyId: user.companyId, isInternal: false, ...(scope === "ALL" ? {} : { id: { in: scope } }) };
   const owner = opts.mineOnly ? { ownerUserId: user.id } : {};
-  const projectSel = { select: { id: true, name: true, engagements: { select: { id: true, name: true } } } };
+  const projectSel = { select: { id: true, name: true, client: { select: { id: true, name: true } }, engagements: { select: { id: true, name: true } } } };
 
   const planState: Prisma.PlanTaskWhereInput = wantOpen && wantDone ? {} : wantOpen
     ? { status: { not: "COMPLETED" }, progress: { lt: 100 } }
@@ -62,12 +69,14 @@ export async function loadActions(user: SessionUser, opts: { projectIds?: string
   const who = (id: string | null) => (id ? names.get(id) ?? null : null);
 
   const engName = (p: { engagements: { id: string; name: string }[] }, id: string | null) => (id ? p.engagements.find((e) => e.id === id)?.name ?? null : null);
+  const client = (p: { client: { id: string; name: string } | null }) => ({ clientId: p.client?.id ?? null, clientName: p.client?.name ?? null });
   const rows: RegisterAction[] = [
     ...plan.map((t) => {
       const done = t.status === "COMPLETED" || t.progress >= 100;
       return {
         id: t.id, source: "PLAN" as ActionSource, title: t.name, projectId: t.projectId, projectName: t.project.name,
-        engagementId: t.engagementId, engagementName: engName(t.project, t.engagementId),
+        engagementId: t.engagementId, engagementName: engName(t.project, t.engagementId), ...client(t.project),
+        href: actionHref("PLAN", t.projectId, t.engagementId), progress: t.progress,
         owner: t.owner, ownerUserId: t.ownerUserId, dueDate: iso(t.dueDate), createdAt: t.createdAt.toISOString(),
         status: done ? "Completed" : t.status === "BLOCKED" ? "Blocked" : `${t.progress}%`, critical: !done && t.status === "BLOCKED",
         done, completedAt: done ? (t.completedAt ?? t.updatedAt).toISOString() : null, completedBy: done ? who(t.completedById) : null,
@@ -77,7 +86,8 @@ export async function loadActions(user: SessionUser, opts: { projectIds?: string
       const done = r.status === "CLOSED";
       return {
         id: r.id, source: "RAID" as ActionSource, title: r.title, projectId: r.projectId, projectName: r.project.name,
-        engagementId: r.engagementId, engagementName: engName(r.project, r.engagementId),
+        engagementId: r.engagementId, engagementName: engName(r.project, r.engagementId), ...client(r.project),
+        href: actionHref("RAID", r.projectId, r.engagementId),
         owner: r.owner, ownerUserId: r.ownerUserId, dueDate: iso(r.dueDate), createdAt: r.createdAt.toISOString(),
         status: done ? "Closed" : r.status === "IN_PROGRESS" ? "In progress" : "Open", critical: r.severity === "HIGH" || r.severity === "CRITICAL",
         done, completedAt: done ? (r.completedAt ?? r.updatedAt).toISOString() : null, completedBy: done ? who(r.completedById) : null,
@@ -85,20 +95,117 @@ export async function loadActions(user: SessionUser, opts: { projectIds?: string
     }),
     ...status.map((a) => ({
       id: a.id, source: "STATUS" as ActionSource, title: a.description, projectId: a.report.projectId, projectName: a.report.project.name,
-      engagementId: a.report.engagementId, engagementName: engName(a.report.project, a.report.engagementId),
+      engagementId: a.report.engagementId, engagementName: engName(a.report.project, a.report.engagementId), ...client(a.report.project),
+      href: actionHref("STATUS", a.report.projectId, a.report.engagementId),
       owner: a.owner, ownerUserId: a.ownerUserId, dueDate: iso(a.dueDate), createdAt: a.createdAt.toISOString(),
       status: `Status ${iso(a.report.reportDate)}`, critical: a.critical,
       done: a.done, completedAt: a.done ? (a.doneAt ?? a.createdAt).toISOString() : null, completedBy: a.done ? who(a.doneById) : null,
     })),
     ...meeting.map((a) => ({
       id: a.id, source: "MEETING" as ActionSource, title: a.description, projectId: a.minutes.projectId, projectName: a.minutes.project.name,
-      engagementId: a.minutes.engagementId, engagementName: engName(a.minutes.project, a.minutes.engagementId),
+      engagementId: a.minutes.engagementId, engagementName: engName(a.minutes.project, a.minutes.engagementId), ...client(a.minutes.project),
+      href: actionHref("MEETING", a.minutes.projectId, a.minutes.engagementId),
       owner: a.owner, ownerUserId: a.ownerUserId, dueDate: iso(a.dueDate), createdAt: a.createdAt.toISOString(),
       status: a.minutes.title, critical: false,
       done: a.done, completedAt: a.done ? (a.doneAt ?? a.createdAt).toISOString() : null, completedBy: a.done ? who(a.doneById) : null,
     })),
   ];
+  if (opts.tickets) rows.push(...(await loadTicketActions(user, { mineOnly: !!opts.mineOnly })));
   return enrichAll(rows, opts.todayIso);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Support tickets as a fifth source.
+//
+// A ticket earns a place here only when it is assigned to somebody AND needs them now:
+//   * a STATUS-mode type (Incident, Question, Task...) whose SLA is BREACHED or AT RISK - the
+//     verdict comes from `slaBadgeState`, the very function the Support badge draws, so this list
+//     and the ticket page can never disagree;
+//   * a STAGE-mode type (Change request, Bug) sitting in a stage with a gate nobody has ticked -
+//     that gate is what the assignee is being waited on for.
+// Visibility is the shipped ticket rule (`visibleTicketWhere`), not a new one. Tickets are never
+// completable from here: the row links out to the ticket, whose own stage/gate rules govern it.
+// ---------------------------------------------------------------------------------------------
+async function loadTicketActions(user: SessionUser, opts: { mineOnly: boolean }): Promise<RegisterAction[]> {
+  const visible = await visibleTicketWhere(user);
+  const tickets = await prisma.ticket.findMany({
+    where: {
+      AND: [
+        visible,
+        { assigneeId: opts.mineOnly ? user.id : { not: null } },
+        { statusDef: { category: { notIn: ["DONE", "CANCELLED"] } } },
+      ],
+    },
+    select: {
+      id: true, number: true, title: true, priority: true, dueDate: true, createdAt: true,
+      assigneeId: true, assignee: { select: { name: true } },
+      clientId: true, client: { select: { id: true, name: true } },
+      projectId: true, project: { select: { name: true } },
+      firstResponseAt: true, respondBy: true, resolveBy: true,
+      statusDef: { select: { category: true } },
+      typeDef: { select: { name: true, slaApplicable: true } },
+      stageDef: { select: { key: true, name: true, gates: { select: { key: true } } } },
+      gateChecks: { select: { gate: { select: { key: true } } } },
+    },
+  });
+
+  const now = Date.now();
+  const rows: RegisterAction[] = [];
+  for (const t of tickets) {
+    if (!t.assigneeId) continue;
+    if (!isOpenCategory(t.statusDef.category)) continue;
+
+    const base = {
+      id: t.id, source: "TICKET" as ActionSource, title: t.title,
+      // A ticket groups under its own client, like every other source. Its project is the
+      // sub-heading when it has one; Support tickets often have none.
+      projectId: t.projectId ?? "",
+      projectName: t.project?.name ?? "Support",
+      engagementId: null, engagementName: null,
+      clientId: t.client?.id ?? null, clientName: t.client?.name ?? null,
+      href: actionHref("TICKET", t.projectId ?? "", null, t.id),
+      owner: t.assignee?.name ?? null, ownerUserId: t.assigneeId,
+      dueDate: t.dueDate ? t.dueDate.toISOString().slice(0, 10) : null,
+      createdAt: t.createdAt.toISOString(),
+      critical: t.priority === "CRITICAL",
+      done: false, completedAt: null, completedBy: null,
+      ref: t.number,
+    };
+
+    if (t.stageDef) {
+      // STAGE-mode: what is this person being waited on for?
+      const ticked = new Set(t.gateChecks.map((g) => g.gate.key));
+      const waiting = t.stageDef.gates.filter((g) => !ticked.has(g.key)).length;
+      if (waiting === 0) continue;
+      rows.push({
+        ...base,
+        status: `${t.stageDef.name} · ${waiting} gate${waiting === 1 ? "" : "s"} to tick`,
+        stageName: t.stageDef.name, gatesWaiting: waiting, urgent: true,
+      });
+      continue;
+    }
+
+    // STATUS-mode: the SLA verdict, computed by the Support badge's own function.
+    const sla = slaBadgeState(
+      {
+        statusCategory: t.statusDef.category,
+        firstResponseAt: t.firstResponseAt ? t.firstResponseAt.toISOString() : "",
+        respondBy: t.respondBy ? t.respondBy.toISOString() : "",
+        resolveBy: t.resolveBy ? t.resolveBy.toISOString() : "",
+        slaApplicable: t.typeDef.slaApplicable,
+      },
+      now,
+    );
+    if (sla.kind !== "breached" && sla.kind !== "at_risk") continue;
+    rows.push({
+      ...base,
+      status: `${sla.label}${sla.detail ? ` · ${sla.detail}` : ""}`,
+      slaKind: sla.kind, slaDetail: sla.detail,
+      // Breached needs a human now; at risk is on the list but not in the attention strip.
+      urgent: sla.kind === "breached",
+    });
+  }
+  return rows;
 }
 
 /** Open actions only — kept for callers that never show completed work. */
@@ -127,6 +234,10 @@ export async function setActionsDone(user: SessionUser, changes: ActionChange[])
   let missing = 0;
 
   for (const c of changes) {
+    // A ticket is never closed from the register. Its stage gates, SLA and Save flow decide that on
+    // the ticket itself; letting this list flip it would walk straight past them. The server action
+    // already refuses the value at its schema - this is the second lock, on the library itself.
+    if (c.source === "TICKET") return { error: "A support ticket is resolved on the ticket itself, not from this list.", saved: 0 };
     if (c.source === "PLAN") {
       const t = await prisma.planTask.findFirst({ where: { id: c.id, project: company }, select: { projectId: true, ownerUserId: true, status: true, progress: true } });
       if (!t) { missing++; continue; }

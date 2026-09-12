@@ -14,7 +14,7 @@ export default async function ActionsPage() {
   const scope = await actionScope(user);
   const todayIso = format(new Date(), "yyyy-MM-dd");
   const [actions, projects] = await Promise.all([
-    loadActions(user, { projectIds: scope.projectIds, mineOnly: scope.mineOnly, todayIso, include: "all" }),
+    loadActions(user, { projectIds: scope.projectIds, mineOnly: scope.mineOnly, todayIso, include: "all", tickets: true }),
     prisma.project.findMany({
       where: { companyId: user.companyId, isInternal: false, ...(scope.projectIds === "ALL" ? {} : { id: { in: scope.projectIds } }) },
       select: { id: true, name: true },
