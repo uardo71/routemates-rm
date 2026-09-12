@@ -58,7 +58,7 @@ type Detail = {
   category: string; systemRef: string; moduleRef: string; dueDate: string; resolution: string;
   respondBy: string; resolveBy: string; firstResponseAt: string; resolvedAt: string; closedAt: string; createdAt: string;
   worklogs: Worklog[]; fields: FieldVal[];
-  slaExempt: boolean; files: TicketFile[];
+  slaExempt: boolean; slaSourceLabel: string | null; files: TicketFile[];
   /** Values of archived custom fields this ticket still carries — shown read-only, marked "archived field". */
   archivedFields: { id: string; name: string; display: string }[];
   /** Set when the ticket is a change request: its lifecycle, record and stage history. */
@@ -227,7 +227,7 @@ function WorkItem({ t, config, canManage, involved, users, clients, projects, co
                 )}
               </div>
               <span className="inline-flex items-center gap-1 text-sm text-muted-foreground"><MessageSquareIcon className="size-4" /> {commentCount} Comment{commentCount === 1 ? "" : "s"}</span>
-              {t.cr ? <CrPill cr={t.cr} nextDue={crd?.nextStepDue ?? ""} /> : t.stage ? <StagePill t={t} stage={t.stage} /> : <LiveSla t={t} />}
+              {t.cr ? <CrPill cr={t.cr} nextDue={crd?.nextStepDue ?? ""} /> : t.stage ? <StagePill t={t} stage={t.stage} /> : t.slaExempt ? null : <LiveSla t={t} />}
 
               <div className="ml-auto flex items-center gap-2">
                 {err && <span className="text-sm text-destructive">{err}</span>}
@@ -343,7 +343,7 @@ function WorkItem({ t, config, canManage, involved, users, clients, projects, co
                     typeName={t.typeName} stages={t.stage.stages} stageKey={t.stage.stageKey}
                     fields={t.stageFields} values={d.fields} editable={!ro} users={users}
                     onChange={(id, v) => set({ fields: { ...d.fields, [id]: v } })} />
-                : <SlaSection t={t} />}
+                : t.slaExempt ? null : <SlaSection t={t} />}
             {!hasFields && resolutionSection}
           </div>
 
@@ -421,7 +421,8 @@ function Tab({ active, onClick, icon, label, count }: { active: boolean; onClick
 function LiveSla({ t }: { t: Detail }) {
   const [, tick] = React.useState(0);
   React.useEffect(() => { const id = setInterval(() => tick((n) => n + 1), 30_000); return () => clearInterval(id); }, []);
-  const s = slaState(t);
+  // Detail carries the flag as slaExempt; the row helper wants it the positive way round.
+  const s = slaState({ ...t, slaApplicable: !t.slaExempt });
   if (!s.show) return null;
   return <span className={cn("inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-xs", s.tone)}>{s.label}</span>;
 }
@@ -517,13 +518,16 @@ function SlaSection({ t }: { t: Detail }) {
   const closed = t.statusCategory === "DONE" || t.statusCategory === "CANCELLED";
   return (
     <section className="flex flex-col gap-3">
-      <div className="flex items-center justify-between border-b pb-1.5">
+      <div className="flex flex-wrap items-center justify-between gap-x-2 border-b pb-1.5">
         <h2 className="text-sm font-semibold">SLA</h2>
-        {target && <span className="font-mono text-xs text-muted-foreground">{target}</span>}
+        <span className="flex items-center gap-2">
+          {target && <span className="font-mono text-xs text-muted-foreground">{target}</span>}
+          {t.slaSourceLabel && <span className="rounded-full bg-muted px-1.5 py-0.5 text-[0.65rem] text-muted-foreground" title="Client override beats the company policy, which beats the built-in default">{t.slaSourceLabel}</span>}
+        </span>
       </div>
       <SlaTrack label="Respond" start={t.createdAt} target={t.respondBy} doneAt={t.firstResponseAt} now={now} stopped={closed && !t.firstResponseAt} />
       <SlaTrack label="Resolve" start={t.createdAt} target={t.resolveBy} doneAt={t.resolvedAt} now={now} stopped={closed && !t.resolvedAt} />
-      {!t.respondBy && !t.resolveBy && <p className="text-sm text-muted-foreground">{t.slaExempt ? `${t.typeName} tickets have no SLA.` : "No SLA targets on this ticket."}</p>}
+      {!t.respondBy && !t.resolveBy && <p className="text-sm text-muted-foreground">No SLA targets on this ticket.</p>}
     </section>
   );
 }

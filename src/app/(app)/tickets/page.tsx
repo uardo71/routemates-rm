@@ -50,6 +50,7 @@ export default async function SupportOverviewPage() {
         clientId: true, assigneeId: true, priority: true, updatedAt: true, resolvedAt: true,
         firstResponseAt: true, respondBy: true, resolveBy: true,
         statusDef: { select: { category: true } },
+        typeDef: { select: { slaApplicable: true } },
       },
     }),
   ]);
@@ -66,8 +67,9 @@ export default async function SupportOverviewPage() {
       if (!t.assigneeId) s.unassigned++;
       if (t.priority === "CRITICAL") s.critical++;
       // Same rule as the SLA pill: the live target is respond-by until answered, then resolve-by.
+      // A type with no SLA never counts as breached.
       const target = t.firstResponseAt ? t.resolveBy : t.respondBy;
-      if (target && now > target.getTime()) s.breached++;
+      if (t.typeDef.slaApplicable && target && now > target.getTime()) s.breached++;
     }
     if (t.resolvedAt && t.resolvedAt >= weekAgo) s.resolved7d++;
     if (!s.lastActivity || t.updatedAt > s.lastActivity) s.lastActivity = t.updatedAt;

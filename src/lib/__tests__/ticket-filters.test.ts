@@ -5,7 +5,7 @@ import { createDropNotices, WORKFLOW_REJECTION, INTERNAL_NOTE_REFUSED } from "@/
 
 const row = (p: Partial<TicketRow>): TicketRow => ({
   id: "t", number: "TKT-00000001", title: "Posting error", typeId: "ty", typeName: "Incident", typeColor: null, typeIcon: null,
-  priority: "MEDIUM", statusId: "st", statusName: "New", statusColor: null, statusCategory: "OPEN",
+  priority: "MEDIUM", statusId: "st", statusName: "New", statusColor: null, statusCategory: "OPEN", slaApplicable: true,
   requesterId: "u-req", assigneeId: null, clientId: null, requesterName: "Requester", assigneeName: null, clientName: null, projectName: null,
   category: "", systemRef: "", moduleRef: "", dueDate: "", respondBy: "", resolveBy: "", firstResponseAt: "", resolvedAt: "",
   createdAt: "2026-09-01T00:00:00.000Z", fields: {}, ...p,

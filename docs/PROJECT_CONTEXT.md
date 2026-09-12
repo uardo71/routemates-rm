@@ -1961,3 +1961,34 @@ whoever happened to look.
   staff-created ticket → 0; a team-less client → the admins. 8/8 checks passed.
 - **`scripts/shims/server-only/`** — new: the shim maintenance scripts need to import server modules
   (`report-action-owners.ts` already documented needing one; there wasn't one in the repo).
+
+### Support redesign — Phase 1 item 10: SLA policy source, and slaApplicable finally gates the UI (2026-09-12)
+
+No migration. The resolution order (client override > company policy > built-in default) already
+existed in `resolveSlaTargets` and every STORED deadline already followed it — but nothing displayed
+it, and one screen bypassed it entirely.
+
+- **`sla.ts#pickPolicy` (pure, tested)** is now the single statement of the order, with
+  `SlaSource`/`SLA_SOURCE_LABEL` ("Client override" / "Company policy" / "Built-in default").
+  `sla.server.ts#resolvedSlaPolicy` returns `{ targets, source }` in one query; `resolveSlaTargets`
+  delegates to it, so display and calculation cannot drift. `companySlaPolicies` feeds screens that
+  re-resolve per client in memory.
+- **The new-ticket form was the bug**: its priority dropdown read the hardcoded `SLA_HOURS`,
+  ignoring the company policy, the client override AND the client picked in the form. It now shows
+  the resolved targets for the chosen client (the client select became controlled so it re-resolves
+  as you change it) and names the source underneath.
+- **The ticket page** shows the source as a chip beside the SLA card's target line. The card's
+  numbers were always right — they are derived from the ticket's own stored timestamps.
+- **`slaApplicable` gates SLA everywhere**: no SLA card, no header pill, no list pill, no board pill,
+  and a no-SLA type can never be counted "breached" (overview tile, workspace tile, and the breached
+  focus all skip it). `TicketRow.slaApplicable` carries the flag; `slaState` returns hidden for it.
+  This is what stops Bug tickets showing deadlines.
+- **No deadline is recalculated.** No `slaDeadlines` call changed. Bug tickets keep their stale
+  stored deadlines in the database — hidden, unused, reversible. A live SLA a client is being
+  measured against cannot move because of this change.
+- **Before/after** (`scripts/sla-source-before-after.ts`, temporary override on Pirelli, removed
+  again): new-ticket form for Medium went from `respond 8h · resolve 3d` (built-in, wrong) to
+  `respond 1h · resolve 4h (Client override)`; Tungsten with no override still reads the built-in
+  default and says so; Pirelli's stored ticket deadlines were identical before and after, and its Bug
+  ticket displays no SLA at all.
+- Flag: the stage pill's "· no SLA" text is unchanged, by request.

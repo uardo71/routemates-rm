@@ -6,27 +6,33 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { TICKET_PRIORITIES, TICKET_PRIORITY_LABEL, slaLabel } from "@/lib/ticket";
-import type { TicketPriority } from "@prisma/client";
+import { TICKET_PRIORITIES, TICKET_PRIORITY_LABEL } from "@/lib/ticket";
+import { pickPolicy, targetsLabel, SLA_SOURCE_LABEL, type SlaTargets } from "@/lib/sla";
 import { TypeIcon } from "../ticket-visuals";
 import { createTicketAction } from "../actions";
 
 export type PubField = { id: string; key: string; name: string; kind: string; options: string[]; required: boolean };
 export type FormConfig = {
-  types: { id: string; name: string; color: string | null; icon: string | null; fields: PubField[] }[];
+  types: { id: string; name: string; color: string | null; icon: string | null; slaApplicable: boolean; fields: PubField[] }[];
   globalFields: PubField[];
 };
 type Opt = { id: string; name: string };
 const selectCls = "h-9 w-full rounded-md border bg-transparent px-2 text-sm outline-none focus:border-primary/50";
 
-export function CreateTicketForm({ manage, clients, projects, users, currentUserId, config, defaultClientId }: {
+export function CreateTicketForm({ manage, clients, projects, users, currentUserId, config, slaPolicies, defaultClientId }: {
   manage: boolean; clients: Opt[]; projects: Opt[]; users: Opt[]; currentUserId: string; config: FormConfig;
+  /** Every SLA policy the company has; the targets shown are resolved from these for the client
+   *  picked below — client override first, then the company policy, then the built-in default. */
+  slaPolicies: { clientId: string | null; targets: SlaTargets }[];
   /** Pre-selects the client when the form is opened from that client's workspace. */
   defaultClientId?: string;
 }) {
   const [state, formAction, pending] = useActionState(createTicketAction, undefined as { error?: string } | undefined);
   const [typeId, setTypeId] = React.useState(config.types[0]?.id ?? "");
+  const [clientId, setClientId] = React.useState(defaultClientId ?? "");
   const type = config.types.find((t) => t.id === typeId);
+  // No SLA on this type means no SLA anywhere on this form.
+  const sla = type?.slaApplicable ? pickPolicy(slaPolicies, clientId || null) : null;
   const fields = [...(type?.fields ?? []), ...config.globalFields];
 
   return (
@@ -57,12 +63,17 @@ export function CreateTicketForm({ manage, clients, projects, users, currentUser
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="priority">Priority</Label>
           <select id="priority" name="priority" defaultValue="MEDIUM" className={selectCls}>
-            {TICKET_PRIORITIES.map((p) => <option key={p} value={p}>{TICKET_PRIORITY_LABEL[p]} — SLA {slaLabel(p as TicketPriority)}</option>)}
+            {TICKET_PRIORITIES.map((p) => (
+              <option key={p} value={p}>{TICKET_PRIORITY_LABEL[p]}{sla ? ` — SLA ${targetsLabel(sla.targets, p)}` : ""}</option>
+            ))}
           </select>
+          <p className="text-xs text-muted-foreground">
+            {sla ? SLA_SOURCE_LABEL[sla.source] : `${type?.name ?? "This type"} tickets have no SLA.`}
+          </p>
         </div>
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="clientId">Client <span className="text-muted-foreground">(optional)</span></Label>
-          <select id="clientId" name="clientId" defaultValue={defaultClientId ?? ""} className={selectCls}>
+          <select id="clientId" name="clientId" value={clientId} onChange={(e) => setClientId(e.target.value)} className={selectCls}>
             <option value="">—</option>
             {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>

@@ -69,6 +69,8 @@ export function filterRows(rows: TicketRow[], f: TicketFilters, currentUserId: s
         case "critical": if (!open || r.priority !== "CRITICAL") return false; break;
         case "breached": {
           // Same rule as the SLA pill and the overview: respond-by until answered, then resolve-by.
+          // A type with no SLA can never be breached.
+          if (!r.slaApplicable) return false;
           const target = r.firstResponseAt ? r.resolveBy : r.respondBy;
           if (!open || !target || now <= new Date(target).getTime()) return false;
           break;

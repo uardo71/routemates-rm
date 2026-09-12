@@ -15,7 +15,10 @@ function rel(ms: number): string {
 
 /** SLA display state for a ticket: the active target (respond until first response, then resolve),
  *  whether it's breached, and a colour. Clocks stop once the ticket leaves an open status. */
-export function slaState(r: Pick<TicketRow, "statusCategory" | "firstResponseAt" | "respondBy" | "resolveBy">): SlaState {
+export function slaState(r: Pick<TicketRow, "statusCategory" | "firstResponseAt" | "respondBy" | "resolveBy" | "slaApplicable">): SlaState {
+  // A type with no SLA shows none, even if the ticket still carries deadlines from before the
+  // type changed — those stay in the database, unused.
+  if (!r.slaApplicable) return { show: false, breached: false, label: "", tone: "" };
   if (!isOpenCategory(r.statusCategory)) return { show: false, breached: false, label: "", tone: "" };
   const responded = !!r.firstResponseAt;
   const targetIso = responded ? r.resolveBy : r.respondBy;

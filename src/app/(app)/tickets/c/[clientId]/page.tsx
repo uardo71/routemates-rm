@@ -79,6 +79,7 @@ export default async function ClientWorkspacePage({ params, searchParams }: { pa
   const open = rows.filter((r) => isOpenCategory(r.statusCategory));
   const unassigned = open.filter((r) => !r.assigneeName).length;
   const breached = open.filter((r) => {
+    if (!r.slaApplicable) return false; // a type with no SLA can never be breached
     const target = r.firstResponseAt ? r.resolveBy : r.respondBy;
     return !!target && now > new Date(target).getTime();
   }).length;

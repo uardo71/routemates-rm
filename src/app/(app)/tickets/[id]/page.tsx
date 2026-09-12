@@ -8,6 +8,8 @@ import { asCrStage, isChangeRequestType, timeInStages, type CrStageKey } from "@
 import { crDraftFrom } from "@/lib/change-request.server";
 import { stageTimes, type StageDef } from "@/lib/ticket-stages";
 import { createDropNotices } from "@/lib/ticket";
+import { resolvedSlaPolicy } from "@/lib/sla.server";
+import { SLA_SOURCE_LABEL } from "@/lib/sla";
 import { TicketDetailClient, type DetailConfig } from "./ticket-detail-client";
 import type { CrView } from "./change-request-panel";
 import type { StageView, StageFieldVal } from "./stage-panel";
@@ -78,6 +80,8 @@ export default async function TicketDetailPage({ params, searchParams }: {
     fields: typeFields.map(pubField),
   };
 
+  // Which policy this ticket's targets came from — resolved only when the type has an SLA at all.
+  const sla = t.typeDef.slaApplicable ? await resolvedSlaPolicy(user.companyId, t.clientId) : null;
   const valueByField = new Map(t.fieldValues.map((v) => [v.fieldId, v.value]));
   const { conversation, history } = buildThread(t.comments, user.id, { canManage: manage });
 
@@ -158,7 +162,7 @@ export default async function TicketDetailPage({ params, searchParams }: {
       notices={notices}
       t={{
         id: t.id, number: t.number, title: t.title, description: t.description ?? "",
-        typeId: t.typeId, typeName: t.typeDef.name, typeColor: t.typeDef.color, typeIcon: t.typeDef.icon, slaExempt: !t.typeDef.slaApplicable,
+        typeId: t.typeId, typeName: t.typeDef.name, typeColor: t.typeDef.color, typeIcon: t.typeDef.icon, slaExempt: !t.typeDef.slaApplicable, slaSourceLabel: sla ? SLA_SOURCE_LABEL[sla.source] : null,
         priority: t.priority,
         statusId: t.statusId, statusName: t.statusDef.name, statusColor: t.statusDef.color, statusCategory: t.statusDef.category,
         requesterName: t.requester.name, assigneeId: t.assigneeId, assigneeName: t.assignee?.name ?? null,

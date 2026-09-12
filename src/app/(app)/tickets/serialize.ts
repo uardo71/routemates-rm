@@ -17,6 +17,8 @@ export type TicketRow = {
   statusName: string;
   statusColor: string | null;
   statusCategory: TicketStatusCategory;
+  /** False = this type has no response/resolution targets: no pill, no bar, never "breached". */
+  slaApplicable: boolean;
   // Ids are what filters match on ("Assigned to me", saved views, the workspace export) — names
   // are for display only, since two people or two clients can share a name.
   requesterId: string;
@@ -42,7 +44,7 @@ export type TicketRow = {
 type DbRow = {
   id: string; number: string; title: string; priority: TicketPriority;
   requesterId: string; assigneeId: string | null; clientId: string | null;
-  typeDef: { id: string; name: string; color: string | null; icon: string | null };
+  typeDef: { id: string; name: string; color: string | null; icon: string | null; slaApplicable: boolean };
   statusDef: { id: string; name: string; color: string | null; category: TicketStatusCategory };
   requester: { name: string }; assignee: { name: string } | null; client: { name: string } | null; project: { name: string } | null;
   category: string | null; systemRef: string | null; moduleRef: string | null;
@@ -75,6 +77,7 @@ export function serializeTicketRow(t: DbRow, cfg: TicketConfig, userName: (id: s
     id: t.id, number: t.number, title: t.title, priority: t.priority,
     typeId: t.typeDef.id, typeName: t.typeDef.name, typeColor: t.typeDef.color, typeIcon: t.typeDef.icon,
     statusId: t.statusDef.id, statusName: t.statusDef.name, statusColor: t.statusDef.color, statusCategory: t.statusDef.category,
+    slaApplicable: t.typeDef.slaApplicable,
     requesterId: t.requesterId, assigneeId: t.assigneeId, clientId: t.clientId,
     requesterName: t.requester.name, assigneeName: t.assignee?.name ?? null, clientName: t.client?.name ?? null, projectName: t.project?.name ?? null,
     category: t.category ?? "", systemRef: t.systemRef ?? "", moduleRef: t.moduleRef ?? "",
@@ -86,7 +89,7 @@ export function serializeTicketRow(t: DbRow, cfg: TicketConfig, userName: (id: s
 export const TICKET_ROW_SELECT = {
   id: true, number: true, title: true, priority: true,
   requesterId: true, assigneeId: true, clientId: true,
-  typeDef: { select: { id: true, name: true, color: true, icon: true } },
+  typeDef: { select: { id: true, name: true, color: true, icon: true, slaApplicable: true } },
   statusDef: { select: { id: true, name: true, color: true, category: true } },
   requester: { select: { name: true } }, assignee: { select: { name: true } }, client: { select: { name: true } }, project: { select: { name: true } },
   category: true, systemRef: true, moduleRef: true, dueDate: true, respondBy: true, resolveBy: true, firstResponseAt: true, resolvedAt: true, createdAt: true,

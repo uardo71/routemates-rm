@@ -8,6 +8,15 @@ export type SlaTargets = Record<TicketPriority, SlaTarget>;
 // The built-in fallback used when a company hasn't customised anything.
 export const DEFAULT_SLA_TARGETS: SlaTargets = SLA_HOURS;
 
+/** Where a ticket's targets came from — shown next to them, so "respond 4h" is never a mystery. */
+export type SlaSource = "client" | "company" | "builtin";
+export const SLA_SOURCE_LABEL: Record<SlaSource, string> = {
+  client: "Client override",
+  company: "Company policy",
+  builtin: "Built-in default",
+};
+export type ResolvedSla = { targets: SlaTargets; source: SlaSource };
+
 /** Coerce arbitrary JSON into a complete, valid SlaTargets, filling gaps from the default. */
 export function normalizeTargets(v: unknown): SlaTargets {
   const src = v && typeof v === "object" ? (v as Record<string, { respond?: unknown; resolve?: unknown }>) : {};
@@ -21,6 +30,20 @@ export function normalizeTargets(v: unknown): SlaTargets {
     };
   }
   return out;
+}
+
+/** THE resolution order, in one pure place: the client's own override wins, then the company
+ *  policy, then the built-in default. Pure so the new-ticket form can re-resolve as you change the
+ *  client in the form, without another round trip. */
+export function pickPolicy(
+  policies: { clientId: string | null; targets: unknown }[],
+  clientId: string | null,
+): ResolvedSla {
+  const own = clientId ? policies.find((p) => p.clientId === clientId) : undefined;
+  if (own) return { targets: normalizeTargets(own.targets), source: "client" };
+  const company = policies.find((p) => p.clientId === null);
+  if (company) return { targets: normalizeTargets(company.targets), source: "company" };
+  return { targets: DEFAULT_SLA_TARGETS, source: "builtin" };
 }
 
 export function targetsLabel(t: SlaTargets, p: TicketPriority): string {
