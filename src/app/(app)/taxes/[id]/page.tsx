@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { BackLink } from "@/components/back-link";
 import { notFound } from "next/navigation";
 import { format } from "date-fns";
 import {
@@ -54,7 +54,7 @@ export default async function TaxDetailPage({ params }: { params: Promise<{ id: 
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <Link href="/taxes" className="text-sm text-muted-foreground hover:underline">← Taxes</Link>
+        <BackLink href="/taxes" label="Taxes" />
         <div className="mt-1 flex items-start justify-between flex-wrap gap-3">
           <div className="flex items-center gap-3">
             <InitialsAvatar name={payment.category.name} className="size-11 text-sm" />

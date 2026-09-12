@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { BackLink } from "@/components/back-link";
 import { notFound } from "next/navigation";
 import { format } from "date-fns";
 import type { TimeCardStatus } from "@prisma/client";
@@ -58,7 +58,7 @@ export default async function TimeCardPage({ params }: { params: Promise<{ cardI
 
   return (
     <div className="mx-auto flex max-w-4xl flex-col gap-5">
-      <Link href="/command" className="text-sm text-muted-foreground hover:underline">← Command center</Link>
+      <BackLink href="/command" label="Command center" />
 
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>

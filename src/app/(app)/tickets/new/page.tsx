@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { BackLink } from "@/components/back-link";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/session";
 import { assignedClientIds, visibleClientWhere } from "@/lib/permissions";
@@ -32,7 +32,7 @@ export default async function NewTicketPage({ searchParams }: { searchParams: Pr
 
   return (
     <div className="mx-auto flex max-w-2xl flex-col gap-5">
-      <Link href="/tickets" className="text-sm text-muted-foreground hover:underline">← Tickets</Link>
+      <BackLink href="/tickets" label="Support" />
       <h1 className="text-2xl font-semibold tracking-tight">New ticket</h1>
       <CreateTicketForm defaultClientId={presetClientId ?? ""} manage={manage} clients={clients} projects={projects} users={users} currentUserId={user.id} config={config} slaPolicies={slaPolicies} />
     </div>

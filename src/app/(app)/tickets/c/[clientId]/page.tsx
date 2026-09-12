@@ -106,6 +106,7 @@ export default async function ClientWorkspacePage({ params, searchParams }: { pa
   return (
     <SupportShell
       active="clients"
+      back={{ href: "/tickets", label: "Clients overview" }}
       title={client.name}
       subtitle={`Support workspace · ${team.length === 0 ? "no team assigned" : `${team.length} on the team`}`}
       canManage={canManage}

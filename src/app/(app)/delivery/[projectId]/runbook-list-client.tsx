@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { BackLink } from "@/components/back-link";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
@@ -115,7 +116,7 @@ export function RunbookListClient({
   return (
     <div className="flex flex-col gap-5">
       <div>
-        <Link href={backHref} className="text-sm text-muted-foreground hover:underline">← Back</Link>
+        <BackLink href={backHref} label="Back" />
         <div className="mt-2 flex flex-wrap items-start justify-between gap-3">
           <div>
             <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight"><Icon className="size-5 text-muted-foreground" /> {k.title}</h1>

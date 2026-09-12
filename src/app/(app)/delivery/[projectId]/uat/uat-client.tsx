@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import Link from "next/link";
+import { BackLink } from "@/components/back-link";
 import { PlusIcon, Trash2Icon, DownloadIcon, SaveIcon, Undo2Icon, BugIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -80,7 +80,7 @@ export function UatClient({
   return (
     <div className="flex flex-col gap-5">
       <div>
-        <Link href={backHref} className="text-sm text-muted-foreground hover:underline">← Back</Link>
+        <BackLink href={backHref} label="Back" />
         <div className="mt-2 flex flex-wrap items-start justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold tracking-tight">{scriptName}</h1>

@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { BackLink } from "@/components/back-link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/session";
@@ -35,7 +35,7 @@ export default async function NewInvoicePage() {
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <Link href="/invoices" className="text-sm text-muted-foreground hover:underline">← Invoice register</Link>
+        <BackLink href="/invoices" label="Invoice register" />
         <h1 className="text-2xl font-semibold mt-1">New invoice</h1>
       </div>
       <Card>

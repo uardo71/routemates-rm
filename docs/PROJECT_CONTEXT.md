@@ -2081,3 +2081,31 @@ tsc + lint + build + **410 tests** green.
 needs `serialize.ts` and the queries, so it is its own change); the board has the shell but not yet
 the filter bar or saved views; the overview was not click-tested at 50+ accounts (agent has no
 sign-in), only proven by unit tests and a production build.
+
+### Navigation: "Back" means back; and the donut label fits any amount (2026-09-12)
+
+No migration. tsc + lint + build + **414 tests** green.
+
+- **`src/components/back-link.tsx`** — every detail page hardcoded a link to its own index, so opening
+  a project from the Dashboard or the Command center and pressing Back dumped you on `/projects`,
+  losing where you came from. `BackLink` goes one step back when there IS an in-app step
+  (`router.back()`), and falls back to the index href when you landed directly (bookmark, e-mail deep
+  link, fresh tab). It stays a real `<a href>`, so ctrl/middle-click still opens a new tab.
+  **`src/app/(app)/nav-depth.tsx`** counts in-app navigations per tab in `sessionStorage`
+  (`rm_nav_depth`); depth > 1 is what "there is somewhere of ours to go back to" means. Mounted once
+  in the app shell. Storage blocked (private mode) ⇒ depth 0 ⇒ the index link, never a dead control.
+  Converted: invoices (new + detail), people (matrix + person), revenue/unbilled, taxes, tickets/new,
+  time-cards, vendors, and the four delivery back links (cockpit, cutover, UAT, runbook list).
+- **A client Support workspace had no visible way out**: the shell marks the Clients tab as the
+  current page there, so it reads as "you are here" rather than a way back. `SupportShell` now takes
+  `back={{ href, label }}` and the workspace shows "← Clients overview" above the title; ticket
+  settings shows "← Support".
+- **Donut centre label**: stepping through three Tailwind sizes by string length was not enough —
+  `€177,300.00` is 11 characters, landed on `text-sm`, and at 14px that is ~92px of tabular mono
+  inside an 84px hole, so it painted over the ring. The size is now COMPUTED from the space available:
+  `(hole − 6) / (longest unbreakable run × 0.62em)`, clamped to 9–18px. The binding constraint is the
+  longest run WITHOUT a space, because the label wraps at spaces (`ALL 12,345,678.00` breaks after
+  `ALL`). A value with no space and no room left is clipped with the full figure in the `title`
+  tooltip — clipping is survivable, painting over the ring is not.
+  `src/lib/__tests__/donut-label.test.ts` pins the arithmetic, including the exact value that
+  overflowed and the fact that the old 14px rule did not fit it. Amounts only grow; this holds.

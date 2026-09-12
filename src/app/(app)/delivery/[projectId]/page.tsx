@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { BackLink } from "@/components/back-link";
 import { notFound } from "next/navigation";
 import { format, differenceInCalendarDays } from "date-fns";
 import { TriangleAlertIcon, CalendarIcon, MessageSquareIcon, DiamondIcon, RocketIcon, ClipboardCheckIcon, CheckCircle2Icon, ListChecksIcon } from "lucide-react";
@@ -351,7 +352,7 @@ export default async function DeliveryProjectPage({ params, searchParams }: { pa
   return (
     <div className="flex flex-col gap-5">
       <div>
-        <Link href={backHref} className="text-sm text-muted-foreground hover:underline">{fromPortfolio ? "← Portfolio" : "← Delivery"}</Link>
+        <BackLink href={backHref} label={fromPortfolio ? "Portfolio" : "Delivery"} />
         <div className="mt-1 flex items-start justify-between flex-wrap gap-3">
           <div className="flex items-center gap-3">
             <InitialsAvatar name={engName ?? project.client.name} className="size-11 text-sm" />

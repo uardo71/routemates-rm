@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { BackLink } from "@/components/back-link";
 import { notFound } from "next/navigation";
 import { format } from "date-fns";
 import { MailIcon, MapPinIcon } from "lucide-react";
@@ -33,7 +34,7 @@ export default async function PersonPage({ params }: { params: Promise<{ userId:
   return (
     <div className="flex flex-col gap-5">
       <div>
-        <Link href="/people" className="text-sm text-muted-foreground hover:underline">← Find people</Link>
+        <BackLink href="/people" label="Find people" />
       </div>
       <Card className="flex flex-row flex-wrap items-center gap-4 p-5">
         <InitialsAvatar name={p.name} src={avatarSrc(p.avatarUrl)} className="size-14 text-lg" />

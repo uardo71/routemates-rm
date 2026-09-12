@@ -7,6 +7,7 @@ import { avatarSrc } from "@/lib/avatar";
 import { loadNotifications } from "@/lib/notifications";
 import { type NavGroup } from "./sidebar-nav";
 import { SidebarShell } from "./sidebar-shell";
+import { NavDepthTracker } from "./nav-depth";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const session = await auth();
@@ -159,6 +160,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       notifications={notif.items}
       unreadNotifications={notif.unread}
     >
+      <NavDepthTracker />
       {children}
     </SidebarShell>
   );

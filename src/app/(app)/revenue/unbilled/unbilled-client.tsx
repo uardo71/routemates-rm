@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useMemo, useState } from "react";
-import Link from "next/link";
+import { BackLink } from "@/components/back-link";
 import { DownloadIcon, XIcon, TriangleAlertIcon, HourglassIcon, ClockIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -81,7 +81,7 @@ export function UnbilledClient({ entries, currency, canRematch }: { entries: Unb
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <Link href="/revenue" className="text-sm text-muted-foreground hover:underline">← Revenue &amp; forecast</Link>
+          <BackLink href="/revenue" label="Revenue" />
           <h1 className="mt-1 text-2xl font-semibold">Unbilled work (WIP)</h1>
           <p className="text-sm text-muted-foreground">
             Approved, billable time that isn&apos;t on an invoice yet — valued at the bill rate frozen at approval. This is

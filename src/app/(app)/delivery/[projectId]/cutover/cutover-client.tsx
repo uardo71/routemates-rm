@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import Link from "next/link";
+import { BackLink } from "@/components/back-link";
 import {
   PlusIcon, Trash2Icon, ChevronUpIcon, ChevronDownIcon, DownloadIcon, ListChecksIcon, ClockIcon,
   CornerDownRightIcon, SaveIcon, Undo2Icon, type LucideIcon,
@@ -186,7 +186,7 @@ export function CutoverClient({
   return (
     <div className="flex flex-col gap-5">
       <div>
-        <Link href={backHref} className="text-sm text-muted-foreground hover:underline">← Back</Link>
+        <BackLink href={backHref} label="Back" />
         <div className="mt-2 flex flex-wrap items-start justify-between gap-3">
           <div>
             <h1 className="text-2xl font-semibold tracking-tight">{planName}</h1>

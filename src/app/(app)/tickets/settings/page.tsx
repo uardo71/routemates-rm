@@ -34,6 +34,7 @@ export default async function TicketSettingsPage() {
   return (
     <SupportShell
       active="settings"
+      back={{ href: "/tickets", label: "Support" }}
       title="Ticket configuration"
       subtitle="Types, per-type workflows, custom fields and what customers can see or do."
       canManage

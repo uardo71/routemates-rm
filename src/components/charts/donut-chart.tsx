@@ -59,11 +59,23 @@ export function DonutChart({
   const total = segments.reduce((sum, seg) => sum + Math.max(0, seg.value), 0);
   const positive = segments.filter((seg) => seg.value > 0);
 
-  // Keep the center label inside the ring hole: constrain it to the hole diameter and shrink the
-  // font for long strings (e.g. a big "ALL 947,915.00") so it never overlaps the ring.
+  // Keep the center label inside the ring hole.
+  //
+  // Stepping through three Tailwind sizes by string length was not enough: "€177,300.00" is 11
+  // characters, landed on text-sm, and at 14px that is ~92px of tabular mono inside an 84px hole —
+  // it spilled over the ring. Amounts only grow over the years, so the size is COMPUTED from the
+  // space actually available instead of guessed: mono digits advance ~0.62em, so the largest font
+  // that fits is (hole − padding) / (characters × 0.62), clamped to something still readable.
   const hole = size - thickness * 2;
-  const labelLen = centerLabel?.length ?? 0;
-  const centerLabelSize = labelLen > 11 ? "text-xs" : labelLen > 8 ? "text-sm" : "text-lg";
+  const MONO_ADVANCE_EM = 0.62;
+  // The binding constraint is the longest UNBREAKABLE run, not the whole string: "ALL 12,345,678.00"
+  // wraps at its space, so only "12,345,678.00" has to fit on a line. A value with no space at all
+  // and no room left is clipped with the full figure in the tooltip — clipping is survivable, painting
+  // over the ring is not.
+  const longestWord = centerLabel ? Math.max(...centerLabel.split(/\s+/).map((w) => w.length)) : 1;
+  const centerLabelPx = centerLabel
+    ? Math.max(9, Math.min(18, Math.floor((hole - 6) / (Math.max(1, longestWord) * MONO_ADVANCE_EM))))
+    : 0;
 
   let cumulativePercent = 0;
 
@@ -98,11 +110,19 @@ export function DonutChart({
         {(centerLabel || centerSublabel) && (
           <div className="absolute inset-0 flex flex-col items-center justify-center px-1 text-center">
             {centerLabel && (
-              <span className={cn(centerLabelSize, "font-semibold tabular-nums leading-tight")} style={{ maxWidth: hole }}>
+              <span
+                className="overflow-hidden font-semibold tabular-nums leading-tight"
+                style={{ fontSize: centerLabelPx, maxWidth: hole }}
+                title={centerLabel}
+              >
                 {centerLabel}
               </span>
             )}
-            {centerSublabel && <span className="text-[10px] text-muted-foreground">{centerSublabel}</span>}
+            {centerSublabel && (
+              <span className="max-w-full truncate text-[10px] text-muted-foreground" style={{ maxWidth: hole }} title={centerSublabel}>
+                {centerSublabel}
+              </span>
+            )}
           </div>
         )}
       </div>

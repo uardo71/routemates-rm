@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { BackLink } from "@/components/back-link";
 import { notFound } from "next/navigation";
 import { requirePermission } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
@@ -74,7 +74,7 @@ export default async function InvoiceDetailPage({ params }: { params: Promise<{ 
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <Link href="/invoices" className="text-sm text-muted-foreground hover:underline">← Invoice register</Link>
+        <BackLink href="/invoices" label="Invoice register" />
       </div>
       <InvoiceDetailClient detail={detail} />
       <AuditHistoryCard entries={history} />

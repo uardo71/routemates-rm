@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { LayoutGridIcon, ListIcon, PlusIcon, SettingsIcon, UsersIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { BackLink } from "@/components/back-link";
 
 // One chrome for the whole Support module. Before this, every route invented its own action row:
 // Configure existed only on All tickets, the view switcher was different on each page, and the
@@ -15,9 +16,12 @@ const NAV: { key: SupportView; label: string; href: string }[] = [
   { key: "board", label: "Board", href: "/tickets/board" },
 ];
 
-export function SupportShell({ active, title, subtitle, canManage, newTicketHref = "/tickets/new", aside, children }: {
+export function SupportShell({ active, title, subtitle, canManage, newTicketHref = "/tickets/new", back, aside, children }: {
   active: SupportView;
   title: string;
+  /** A breadcrumb above the title. A client workspace needs one: its switcher tab is the CURRENT
+   *  tab, so without this there is no visible way back to the accounts list. */
+  back?: { href: string; label: string };
   subtitle?: React.ReactNode;
   canManage: boolean;
   /** Pre-fills the client inside a workspace. */
@@ -30,6 +34,7 @@ export function SupportShell({ active, title, subtitle, canManage, newTicketHref
     <div className="flex flex-col gap-5">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="min-w-0">
+          {back && <div className="mb-1"><BackLink href={back.href} label={back.label} /></div>}
           <h1 className="truncate text-2xl font-semibold tracking-tight">{title}</h1>
           {subtitle && <p className="mt-0.5 text-sm text-muted-foreground">{subtitle}</p>}
         </div>

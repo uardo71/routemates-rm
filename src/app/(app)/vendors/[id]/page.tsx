@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { BackLink } from "@/components/back-link";
 import { notFound } from "next/navigation";
 import { format } from "date-fns";
 import {
@@ -60,7 +60,7 @@ export default async function VendorPaymentDetailPage({ params }: { params: Prom
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <Link href="/vendors" className="text-sm text-muted-foreground hover:underline">← Vendor payments</Link>
+        <BackLink href="/vendors" label="Vendor payments" />
         <div className="mt-1 flex items-start justify-between flex-wrap gap-3">
           <div className="flex items-center gap-3">
             <InitialsAvatar name={payment.vendor.name} className="size-11 text-sm" />
