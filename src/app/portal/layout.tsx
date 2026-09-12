@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { NavDepthTracker } from "@/app/(app)/nav-depth";
 import { LifeBuoyIcon, LogOutIcon } from "lucide-react";
 import { requirePortalUser } from "@/lib/portal";
 import { loadNotifications } from "@/lib/notifications";
@@ -34,7 +35,7 @@ export default async function PortalLayout({ children }: { children: React.React
           </div>
         </div>
       </header>
-      <main className="mx-auto max-w-4xl px-4 py-6">{children}</main>
+      <main className="mx-auto max-w-4xl px-4 py-6"><NavDepthTracker />{children}</main>
     </div>
   );
 }

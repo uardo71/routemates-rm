@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { BackLink } from "@/components/back-link";
 import { notFound } from "next/navigation";
 import { format, differenceInCalendarDays, parseISO } from "date-fns";
 import {
@@ -370,7 +371,8 @@ export default async function ProjectDetailPage({
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex items-start justify-between flex-wrap gap-3">
+      <BackLink href="/projects" label="Projects" />
+      <div className="flex items-start justify-between flex-wrap gap-3 -mt-3">
         <div className="flex items-center gap-3">
           <InitialsAvatar name={project.client.name} className="size-11 text-sm" />
           <div>

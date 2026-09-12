@@ -9,7 +9,7 @@
 // was a lone Description, so Files and Discussion live there and the right column is pure metadata.
 
 import * as React from "react";
-import Link from "next/link";
+import { BackLink } from "@/components/back-link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import {
@@ -200,9 +200,7 @@ function WorkItem({ t, config, canManage, involved, users, clients, projects, co
 
   return (
     <div className="flex flex-col gap-5">
-      <Link href={t.clientId ? `/tickets/c/${t.clientId}` : "/tickets"} className="text-sm text-muted-foreground hover:underline">
-        ← {t.clientName ?? "Support"}
-      </Link>
+      <BackLink href={t.clientId ? `/tickets/c/${t.clientId}` : "/tickets"} label={t.clientName ?? "Support"} />
 
       {notices.length > 0 && (
         <div role="status" className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/[0.06] px-3 py-2 text-sm">

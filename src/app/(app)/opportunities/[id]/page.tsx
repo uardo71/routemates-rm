@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { BackLink } from "@/components/back-link";
 import { notFound } from "next/navigation";
 import { requirePermission } from "@/lib/session";
 import { prisma } from "@/lib/prisma";
@@ -148,9 +148,7 @@ export default async function OpportunityDetailPage({ params }: { params: Promis
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <Link href="/opportunities" className="text-sm text-muted-foreground hover:underline">
-          ← Opportunities
-        </Link>
+        <BackLink href="/opportunities" label="Opportunities" />
       </div>
       <OpportunityDetailClient
         detail={detail}

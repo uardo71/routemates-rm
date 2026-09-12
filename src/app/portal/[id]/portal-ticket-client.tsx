@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import Link from "next/link";
+import { BackLink } from "@/components/back-link";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { statusColor } from "@/lib/ticket-config";
@@ -34,7 +34,7 @@ export function PortalTicketClient({ t, conversation }: { t: PortalTicket; conve
 
   return (
     <div className="flex flex-col gap-5">
-      <Link href="/portal" className="text-sm text-muted-foreground hover:underline">← My tickets</Link>
+      <BackLink href="/portal" label="My tickets" />
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">

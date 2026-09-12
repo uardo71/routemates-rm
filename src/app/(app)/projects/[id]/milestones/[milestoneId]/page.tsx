@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { BackLink } from "@/components/back-link";
 import { notFound } from "next/navigation";
 import { ClockIcon, UsersIcon, CheckSquareIcon, WalletIcon, Building2Icon, ReceiptIcon, LockIcon, CheckCircle2Icon, ArrowLeftRightIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -117,9 +118,7 @@ export default async function MilestoneDetailPage({
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <Link href={`/projects/${projectId}?tab=milestones`} className="text-sm text-muted-foreground hover:underline">
-          ← {milestone.project.name}
-        </Link>
+        <BackLink href={`/projects/${projectId}?tab=milestones`} label={milestone.project.name} />
         <div className="flex items-center justify-between mt-1 flex-wrap gap-2">
           <div className="flex items-center gap-3">
             <InitialsAvatar name={milestone.project.client.name} className="size-10" />

@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { BackLink } from "@/components/back-link";
 import { requirePortalUser } from "@/lib/portal";
 import { loadTicketConfig, customerConfig } from "@/lib/ticket-config.server";
 import { PortalNewForm, type PortalFormConfig } from "./portal-new-form";
@@ -20,7 +20,7 @@ export default async function PortalNewPage() {
 
   return (
     <div className="flex flex-col gap-5">
-      <Link href="/portal" className="text-sm text-muted-foreground hover:underline">← My tickets</Link>
+      <BackLink href="/portal" label="My tickets" />
       <h1 className="text-2xl font-semibold tracking-tight">Raise a ticket</h1>
       {config.types.length === 0 ? (
         <p className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">No ticket types are available right now. Please contact your account manager.</p>

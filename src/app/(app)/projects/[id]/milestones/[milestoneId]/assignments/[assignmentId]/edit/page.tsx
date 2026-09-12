@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { BackLink } from "@/components/back-link";
 import { notFound } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { prisma } from "@/lib/prisma";
@@ -30,12 +30,7 @@ export default async function EditAssignmentPage({
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <Link
-          href={fromAssignmentsTab ? `/projects/${projectId}?tab=assignments` : `/projects/${projectId}/milestones/${milestoneId}`}
-          className="text-sm text-muted-foreground hover:underline"
-        >
-          ← {fromAssignmentsTab ? "Assignments" : assignment.milestone.name}
-        </Link>
+        <BackLink href={fromAssignmentsTab ? `/projects/${projectId}?tab=assignments` : `/projects/${projectId}/milestones/${milestoneId}`} label={fromAssignmentsTab ? "Assignments" : assignment.milestone.name} />
         <h1 className="text-2xl font-semibold mt-1">Edit assignment — {assignment.user.name}</h1>
       </div>
       <Card>

@@ -2109,3 +2109,22 @@ No migration. tsc + lint + build + **414 tests** green.
   tooltip — clipping is survivable, painting over the ring is not.
   `src/lib/__tests__/donut-label.test.ts` pins the arithmetic, including the exact value that
   overflowed and the fact that the old 14px rule did not fit it. Amounts only grow; this holds.
+
+### Every page that sits under something now has a Back (2026-09-13)
+
+No migration. tsc + lint + build + 414 tests green. Follows the BackLink work from 2026-09-12.
+
+- **`/projects/[id]` had no back affordance at all** — the owner's report. It now shows
+  "← Projects". Same for **`/planning/availability`** ("← Planning"), which only had week pagination.
+- **Every remaining hardcoded back link in the app is now `BackLink`**, so all of them go one step
+  back when there is an in-app step and fall back to their index otherwise: admin clients (list +
+  new), admin users (list + new), admin exchange rates (new), opportunities (detail + new), projects
+  (new + edit), the whole milestone subtree (milestone, edit, new, tasks new/edit/copy, assignments
+  new/edit), the ticket detail page, and both customer-portal pages. 35 files render one now.
+- **The portal mounts `NavDepthTracker` too** (`src/app/portal/layout.tsx`), so a customer's "← My
+  tickets" behaves the same way instead of always jumping to the index.
+- **Deliberately NOT given a back link**: the ~30 sidebar destinations (`/projects`, `/expenses`,
+  `/planning`, `/tickets`, every `/admin/*` index …) — they are top-level, the sidebar is their nav,
+  and "← Projects" on `/projects` is nonsense. Also left alone: `/profile` and `/help` (reached from
+  the account menu), and the "← Prev" WEEK PAGINATION on the planner, availability, time,
+  my-planning and scheduled-vs-actuals — those arrows move a date range, they are not navigation.

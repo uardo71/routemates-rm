@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { BackLink } from "@/components/back-link";
 import { format } from "date-fns";
 import { notFound } from "next/navigation";
 import {
@@ -56,9 +56,7 @@ export default async function UserDetailPage({ params }: { params: Promise<{ id:
 
   return (
     <div className="flex flex-col gap-6">
-      <Link href="/admin/users" className="text-sm text-muted-foreground hover:underline">
-        ← Users
-      </Link>
+      <BackLink href="/admin/users" label="Users" />
 
       {/* Profile header */}
       <Card className="gap-0 overflow-hidden p-0">

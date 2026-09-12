@@ -1,4 +1,5 @@
 import { addWeeks, format } from "date-fns";
+import { BackLink } from "@/components/back-link";
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/session";
@@ -108,7 +109,8 @@ export default async function AvailabilityPage({
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <BackLink href="/planning" label="Planning" />
+      <div className="flex flex-wrap items-center justify-between gap-3 -mt-3">
         <div>
           <h1 className="text-2xl font-semibold">Availability</h1>
           <p className="text-sm text-muted-foreground">

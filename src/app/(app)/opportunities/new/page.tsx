@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { BackLink } from "@/components/back-link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/session";
@@ -21,9 +21,7 @@ export default async function NewOpportunityPage() {
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <Link href="/opportunities" className="text-sm text-muted-foreground hover:underline">
-          ← Opportunities
-        </Link>
+        <BackLink href="/opportunities" label="Opportunities" />
         <h1 className="text-2xl font-semibold mt-1">New opportunity</h1>
       </div>
       <Card>
