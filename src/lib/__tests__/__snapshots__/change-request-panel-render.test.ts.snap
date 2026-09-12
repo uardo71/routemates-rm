@@ -9,70 +9,70 @@ exports[`Change request panel markup > marks an unmet gate with an empty ring, n
 <div class="overflow-x-auto pb-1">
 <ol class="flex min-w-max items-start">
 <li class="flex items-start">
-<div class="flex w-24 flex-col items-center gap-1 text-center sm:w-28">
+<button type="button" aria-current="step" title="Evaluation — the active stage" class="flex w-24 flex-col items-center gap-1 rounded-md px-1 py-1 text-center outline-none hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring/50 sm:w-28">
 <span class="flex size-7 items-center justify-center rounded-full border-2 text-xs font-semibold tabular-nums transition-colors border-primary bg-accent text-accent-foreground ring-4 ring-primary/15">1</span>
 <span class="text-xs leading-tight font-semibold text-foreground">Evaluation</span>
 <span class="text-[11px] tabular-nums text-muted-foreground">7h</span>
-</div>
+</button>
 <span class="mt-3.5 h-0.5 w-5 shrink-0 sm:w-8 bg-border">
 </span>
 </li>
 <li class="flex items-start">
-<div class="flex w-24 flex-col items-center gap-1 text-center sm:w-28">
+<button type="button" title="Look at Development" class="flex w-24 flex-col items-center gap-1 rounded-md px-1 py-1 text-center outline-none hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring/50 sm:w-28">
 <span class="flex size-7 items-center justify-center rounded-full border-2 text-xs font-semibold tabular-nums transition-colors border-border bg-card text-muted-foreground">2</span>
 <span class="text-xs leading-tight text-muted-foreground">Development</span>
 <span class="text-[11px] tabular-nums text-muted-foreground">—</span>
-</div>
+</button>
 <span class="mt-3.5 h-0.5 w-5 shrink-0 sm:w-8 bg-border">
 </span>
 </li>
 <li class="flex items-start">
-<div class="flex w-24 flex-col items-center gap-1 text-center sm:w-28">
+<button type="button" title="Look at Unit testing" class="flex w-24 flex-col items-center gap-1 rounded-md px-1 py-1 text-center outline-none hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring/50 sm:w-28">
 <span class="flex size-7 items-center justify-center rounded-full border-2 text-xs font-semibold tabular-nums transition-colors border-border bg-card text-muted-foreground">3</span>
 <span class="text-xs leading-tight text-muted-foreground">Unit testing</span>
 <span class="text-[11px] tabular-nums text-muted-foreground">—</span>
-</div>
+</button>
 <span class="mt-3.5 h-0.5 w-5 shrink-0 sm:w-8 bg-border">
 </span>
 </li>
 <li class="flex items-start">
-<div class="flex w-24 flex-col items-center gap-1 text-center sm:w-28">
+<button type="button" title="Look at UAT" class="flex w-24 flex-col items-center gap-1 rounded-md px-1 py-1 text-center outline-none hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring/50 sm:w-28">
 <span class="flex size-7 items-center justify-center rounded-full border-2 text-xs font-semibold tabular-nums transition-colors border-border bg-card text-muted-foreground">4</span>
 <span class="text-xs leading-tight text-muted-foreground">UAT</span>
 <span class="text-[11px] tabular-nums text-muted-foreground">—</span>
-</div>
+</button>
 <span class="mt-3.5 h-0.5 w-5 shrink-0 sm:w-8 bg-border">
 </span>
 </li>
 <li class="flex items-start">
-<div class="flex w-24 flex-col items-center gap-1 text-center sm:w-28">
+<button type="button" title="Look at Go-live" class="flex w-24 flex-col items-center gap-1 rounded-md px-1 py-1 text-center outline-none hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring/50 sm:w-28">
 <span class="flex size-7 items-center justify-center rounded-full border-2 text-xs font-semibold tabular-nums transition-colors border-border bg-card text-muted-foreground">5</span>
 <span class="text-xs leading-tight text-muted-foreground">Go-live</span>
 <span class="text-[11px] tabular-nums text-muted-foreground">—</span>
-</div>
+</button>
 <span class="mt-3.5 h-0.5 w-5 shrink-0 sm:w-8 bg-border">
 </span>
 </li>
 <li class="flex items-start">
-<div class="flex w-24 flex-col items-center gap-1 text-center sm:w-28">
+<button type="button" title="Look at Closing" class="flex w-24 flex-col items-center gap-1 rounded-md px-1 py-1 text-center outline-none hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring/50 sm:w-28">
 <span class="flex size-7 items-center justify-center rounded-full border-2 text-xs font-semibold tabular-nums transition-colors border-border bg-card text-muted-foreground">6</span>
 <span class="text-xs leading-tight text-muted-foreground">Closing</span>
 <span class="text-[11px] tabular-nums text-muted-foreground">—</span>
-</div>
+</button>
 <span class="mt-3.5 h-0.5 w-5 shrink-0 sm:w-8 bg-border">
 </span>
 </li>
 <li class="flex items-start">
-<div class="flex w-24 flex-col items-center gap-1 text-center sm:w-28">
+<button type="button" title="Look at Closed" class="flex w-24 flex-col items-center gap-1 rounded-md px-1 py-1 text-center outline-none hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring/50 sm:w-28">
 <span class="flex size-7 items-center justify-center rounded-full border-2 text-xs font-semibold tabular-nums transition-colors border-border bg-card text-muted-foreground">7</span>
 <span class="text-xs leading-tight text-muted-foreground">Closed</span>
 <span class="text-[11px] tabular-nums text-muted-foreground">
 </span>
-</div>
+</button>
 </li>
 </ol>
 </div>
-<div class="grid gap-4 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
+<div class="flex flex-col gap-3">
 <div class="flex flex-col gap-3 rounded-md border p-3">
 <div class="flex flex-wrap items-baseline justify-between gap-2">
 <div class="text-sm">
@@ -98,6 +98,46 @@ exports[`Change request panel markup > marks an unmet gate with an empty ring, n
 <span class="mt-2 size-1 shrink-0 rounded-full bg-muted-foreground/60">
 </span>Get the customer&#x27;s written approval: who, when, PO or e-mail reference</li>
 </ul>
+</div>
+<div class="flex flex-col gap-3 rounded-md border border-border/60 bg-background p-3">
+<div class="flex min-w-0 flex-col gap-1">
+<span class="text-[11px] text-muted-foreground">Impact assessment and proposed solution</span>
+<textarea data-slot="textarea" class="flex field-sizing-content min-h-16 w-full rounded-lg border px-2.5 py-2 text-base transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:disabled:bg-input/80 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 border-border/60 bg-background" rows="4" placeholder="What changes, what it touches, how it will be built">Add the split-payment flag to the MIRO screen</textarea>
+</div>
+<div class="grid grid-cols-2 gap-2">
+<div class="flex min-w-0 flex-col gap-1">
+<span class="text-[11px] text-muted-foreground">Estimate (hours)</span>
+<input id="base-ui-_R_ikb_" data-slot="input" placeholder="e.g. 16" class="w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base transition-colors outline-none file:inline-flex file:h-6 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:disabled:bg-input/80 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 h-8" value="16"/>
+</div>
+<div class="flex min-w-0 flex-col gap-1">
+<span class="text-[11px] text-muted-foreground">Quote / offer ref.</span>
+<input id="base-ui-_R_kkb_" data-slot="input" class="w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base transition-colors outline-none file:inline-flex file:h-6 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:disabled:bg-input/80 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 h-8" value=""/>
+</div>
+</div>
+<div class="flex flex-col gap-1">
+<div class="flex justify-between text-[11px] text-muted-foreground">
+<span>Logged on the ticket</span>
+<span class="tabular-nums">2.5h of 16h</span>
+</div>
+<div class="h-1.5 overflow-hidden rounded-full bg-muted">
+<div class="h-full rounded-full bg-success" style="width:15.625%">
+</div>
+</div>
+</div>
+<div class="grid grid-cols-2 gap-2">
+<div class="flex min-w-0 flex-col gap-1">
+<span class="text-[11px] text-muted-foreground">Approved by</span>
+<input id="base-ui-_R_j4b_" data-slot="input" class="w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base transition-colors outline-none file:inline-flex file:h-6 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:disabled:bg-input/80 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 h-8" value=""/>
+</div>
+<div class="flex min-w-0 flex-col gap-1">
+<span class="text-[11px] text-muted-foreground">Approved on</span>
+<input id="base-ui-_R_l4b_" type="date" data-slot="input" class="w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base transition-colors outline-none file:inline-flex file:h-6 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:disabled:bg-input/80 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 h-8" value=""/>
+</div>
+</div>
+<div class="flex min-w-0 flex-col gap-1">
+<span class="text-[11px] text-muted-foreground">PO / e-mail reference</span>
+<input id="base-ui-_R_5cb_" data-slot="input" class="w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base transition-colors outline-none file:inline-flex file:h-6 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:disabled:bg-input/80 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 h-8" value=""/>
+</div>
 </div>
 <div class="flex flex-col gap-1">
 <span class="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">To move to Development</span>
@@ -157,20 +197,19 @@ exports[`Change request panel markup > marks an unmet gate with an empty ring, n
 </svg> Reject</button>
 </div>
 </div>
-<div class="flex flex-col gap-3">
 <div class="flex flex-col gap-2 rounded-md border p-3">
 <div class="flex items-center justify-between gap-2">
 <span class="text-sm font-semibold">Next step</span>
 <span class="text-xs text-muted-foreground">Due 2026-09-30</span>
 </div>
-<input id="base-ui-_R_pj_" data-slot="input" maxLength="500" placeholder="e.g. Send the estimate to the customer for approval" aria-label="Next step" class="w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base transition-colors outline-none file:inline-flex file:h-6 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:disabled:bg-input/80 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 h-8" value="Send the estimate for approval"/>
+<input id="base-ui-_R_6j_" data-slot="input" maxLength="500" placeholder="e.g. Send the estimate to the customer for approval" aria-label="Next step" class="w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base transition-colors outline-none file:inline-flex file:h-6 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:disabled:bg-input/80 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 h-8" value="Send the estimate for approval"/>
 <div class="grid grid-cols-2 gap-2">
 <select class="h-8 rounded-md border border-border/60 bg-background px-2 text-sm" aria-label="Next step owner">
 <option value="">Owner…</option>
 <option value="u-1">Uard Bejtja</option>
 <option value="u-2" selected="">Enida Selita</option>
 </select>
-<input id="base-ui-_R_59j_" type="date" data-slot="input" aria-label="Next step due" class="w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base transition-colors outline-none file:inline-flex file:h-6 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:disabled:bg-input/80 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 h-8" value="2026-09-30"/>
+<input id="base-ui-_R_1aj_" type="date" data-slot="input" aria-label="Next step due" class="w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base transition-colors outline-none file:inline-flex file:h-6 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:disabled:bg-input/80 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 h-8" value="2026-09-30"/>
 </div>
 </div>
 <div class="flex flex-col gap-2 rounded-md border p-3">
@@ -199,11 +238,10 @@ exports[`Change request panel markup > marks an unmet gate with an empty ring, n
 </ol>
 </div>
 </div>
-</div>
 </section>"
 `;
 
-exports[`Change request panel markup > renders a read-only, terminal change request the same way too 1`] = `
+exports[`Change request panel markup > renders a read-only, terminal change request 1`] = `
 "<section class="flex flex-col gap-4 rounded-lg border bg-card p-4">
 <div class="flex flex-wrap items-baseline justify-between gap-2">
 <h2 class="text-sm font-semibold">Lifecycle</h2>
@@ -212,7 +250,7 @@ exports[`Change request panel markup > renders a read-only, terminal change requ
 <div class="overflow-x-auto pb-1">
 <ol class="flex min-w-max items-start">
 <li class="flex items-start">
-<div class="flex w-24 flex-col items-center gap-1 text-center sm:w-28">
+<button type="button" title="Look at Evaluation" class="flex w-24 flex-col items-center gap-1 rounded-md px-1 py-1 text-center outline-none hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring/50 sm:w-28">
 <span class="flex size-7 items-center justify-center rounded-full border-2 text-xs font-semibold tabular-nums transition-colors border-primary bg-primary text-primary-foreground">
 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-check size-4" aria-hidden="true">
 <path d="M20 6 9 17l-5-5">
@@ -221,12 +259,12 @@ exports[`Change request panel markup > renders a read-only, terminal change requ
 </span>
 <span class="text-xs leading-tight text-foreground/70">Evaluation</span>
 <span class="text-[11px] tabular-nums text-muted-foreground">7h</span>
-</div>
+</button>
 <span class="mt-3.5 h-0.5 w-5 shrink-0 sm:w-8 bg-primary">
 </span>
 </li>
 <li class="flex items-start">
-<div class="flex w-24 flex-col items-center gap-1 text-center sm:w-28">
+<button type="button" title="Look at Development" class="flex w-24 flex-col items-center gap-1 rounded-md px-1 py-1 text-center outline-none hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring/50 sm:w-28">
 <span class="flex size-7 items-center justify-center rounded-full border-2 text-xs font-semibold tabular-nums transition-colors border-primary bg-primary text-primary-foreground">
 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-check size-4" aria-hidden="true">
 <path d="M20 6 9 17l-5-5">
@@ -235,12 +273,12 @@ exports[`Change request panel markup > renders a read-only, terminal change requ
 </span>
 <span class="text-xs leading-tight text-foreground/70">Development</span>
 <span class="text-[11px] tabular-nums text-muted-foreground">—</span>
-</div>
+</button>
 <span class="mt-3.5 h-0.5 w-5 shrink-0 sm:w-8 bg-primary">
 </span>
 </li>
 <li class="flex items-start">
-<div class="flex w-24 flex-col items-center gap-1 text-center sm:w-28">
+<button type="button" title="Look at Unit testing" class="flex w-24 flex-col items-center gap-1 rounded-md px-1 py-1 text-center outline-none hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring/50 sm:w-28">
 <span class="flex size-7 items-center justify-center rounded-full border-2 text-xs font-semibold tabular-nums transition-colors border-primary bg-primary text-primary-foreground">
 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-check size-4" aria-hidden="true">
 <path d="M20 6 9 17l-5-5">
@@ -249,12 +287,12 @@ exports[`Change request panel markup > renders a read-only, terminal change requ
 </span>
 <span class="text-xs leading-tight text-foreground/70">Unit testing</span>
 <span class="text-[11px] tabular-nums text-muted-foreground">—</span>
-</div>
+</button>
 <span class="mt-3.5 h-0.5 w-5 shrink-0 sm:w-8 bg-primary">
 </span>
 </li>
 <li class="flex items-start">
-<div class="flex w-24 flex-col items-center gap-1 text-center sm:w-28">
+<button type="button" title="Look at UAT" class="flex w-24 flex-col items-center gap-1 rounded-md px-1 py-1 text-center outline-none hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring/50 sm:w-28">
 <span class="flex size-7 items-center justify-center rounded-full border-2 text-xs font-semibold tabular-nums transition-colors border-primary bg-primary text-primary-foreground">
 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-check size-4" aria-hidden="true">
 <path d="M20 6 9 17l-5-5">
@@ -263,12 +301,12 @@ exports[`Change request panel markup > renders a read-only, terminal change requ
 </span>
 <span class="text-xs leading-tight text-foreground/70">UAT</span>
 <span class="text-[11px] tabular-nums text-muted-foreground">—</span>
-</div>
+</button>
 <span class="mt-3.5 h-0.5 w-5 shrink-0 sm:w-8 bg-primary">
 </span>
 </li>
 <li class="flex items-start">
-<div class="flex w-24 flex-col items-center gap-1 text-center sm:w-28">
+<button type="button" title="Look at Go-live" class="flex w-24 flex-col items-center gap-1 rounded-md px-1 py-1 text-center outline-none hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring/50 sm:w-28">
 <span class="flex size-7 items-center justify-center rounded-full border-2 text-xs font-semibold tabular-nums transition-colors border-primary bg-primary text-primary-foreground">
 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-check size-4" aria-hidden="true">
 <path d="M20 6 9 17l-5-5">
@@ -277,12 +315,12 @@ exports[`Change request panel markup > renders a read-only, terminal change requ
 </span>
 <span class="text-xs leading-tight text-foreground/70">Go-live</span>
 <span class="text-[11px] tabular-nums text-muted-foreground">—</span>
-</div>
+</button>
 <span class="mt-3.5 h-0.5 w-5 shrink-0 sm:w-8 bg-primary">
 </span>
 </li>
 <li class="flex items-start">
-<div class="flex w-24 flex-col items-center gap-1 text-center sm:w-28">
+<button type="button" title="Look at Closing" class="flex w-24 flex-col items-center gap-1 rounded-md px-1 py-1 text-center outline-none hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring/50 sm:w-28">
 <span class="flex size-7 items-center justify-center rounded-full border-2 text-xs font-semibold tabular-nums transition-colors border-primary bg-primary text-primary-foreground">
 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-check size-4" aria-hidden="true">
 <path d="M20 6 9 17l-5-5">
@@ -291,12 +329,12 @@ exports[`Change request panel markup > renders a read-only, terminal change requ
 </span>
 <span class="text-xs leading-tight text-foreground/70">Closing</span>
 <span class="text-[11px] tabular-nums text-muted-foreground">—</span>
-</div>
+</button>
 <span class="mt-3.5 h-0.5 w-5 shrink-0 sm:w-8 bg-primary">
 </span>
 </li>
 <li class="flex items-start">
-<div class="flex w-24 flex-col items-center gap-1 text-center sm:w-28">
+<button type="button" aria-current="step" title="Closed — the active stage" class="flex w-24 flex-col items-center gap-1 rounded-md px-1 py-1 text-center outline-none hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring/50 sm:w-28">
 <span class="flex size-7 items-center justify-center rounded-full border-2 text-xs font-semibold tabular-nums transition-colors border-primary bg-primary text-primary-foreground">
 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-check size-4" aria-hidden="true">
 <path d="M20 6 9 17l-5-5">
@@ -306,24 +344,23 @@ exports[`Change request panel markup > renders a read-only, terminal change requ
 <span class="text-xs leading-tight text-foreground/70">Closed</span>
 <span class="text-[11px] tabular-nums text-muted-foreground">
 </span>
-</div>
+</button>
 </li>
 </ol>
 </div>
-<div class="grid gap-4 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
+<div class="flex flex-col gap-3">
 <div class="flex flex-col gap-3 rounded-md border p-3">
 <div class="flex flex-wrap items-baseline justify-between gap-2">
 <div class="text-sm">
-<span class="font-semibold text-emerald-700 dark:text-emerald-400">Closed</span>
+<span class="font-semibold text-success">Closed</span>
 </div>
 </div>
 <p class="text-sm text-muted-foreground">Delivered and closed. Reopen it into Closing if something comes back.</p>
 <div class="flex flex-wrap items-center gap-2 border-t pt-3">
-<span class="text-xs text-amber-700 dark:text-amber-400">Save your changes before moving the stage.</span>
+<span class="text-xs text-warning">Save your changes before moving the stage.</span>
 <span class="text-xs text-muted-foreground">Only the client&#x27;s support team and the people on this ticket can move it.</span>
 </div>
 </div>
-<div class="flex flex-col gap-3">
 <div class="flex flex-col gap-2 rounded-md border p-3">
 <div class="flex items-center justify-between gap-2">
 <span class="text-sm font-semibold">Next step</span>
@@ -357,11 +394,53 @@ exports[`Change request panel markup > renders a read-only, terminal change requ
 </ol>
 </div>
 </div>
-</div>
 </section>"
 `;
 
-exports[`Change request panel markup > renders the lifecycle exactly as before the generic-stage extraction 1`] = `
+exports[`Change request panel markup > renders one stage's record on its own 1`] = `
+"<div class="flex flex-col gap-3 rounded-md border border-border/60 bg-background p-3">
+<div class="flex min-w-0 flex-col gap-1">
+<span class="text-[11px] text-muted-foreground">Impact assessment and proposed solution</span>
+<textarea data-slot="textarea" class="flex field-sizing-content min-h-16 w-full rounded-lg border px-2.5 py-2 text-base transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:disabled:bg-input/80 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 border-border/60 bg-background" rows="4" placeholder="What changes, what it touches, how it will be built">Add the split-payment flag to the MIRO screen</textarea>
+</div>
+<div class="grid grid-cols-2 gap-2">
+<div class="flex min-w-0 flex-col gap-1">
+<span class="text-[11px] text-muted-foreground">Estimate (hours)</span>
+<input id="base-ui-_R_2a_" data-slot="input" placeholder="e.g. 16" class="w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base transition-colors outline-none file:inline-flex file:h-6 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:disabled:bg-input/80 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 h-8" value="16"/>
+</div>
+<div class="flex min-w-0 flex-col gap-1">
+<span class="text-[11px] text-muted-foreground">Quote / offer ref.</span>
+<input id="base-ui-_R_2i_" data-slot="input" class="w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base transition-colors outline-none file:inline-flex file:h-6 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:disabled:bg-input/80 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 h-8" value=""/>
+</div>
+</div>
+<div class="flex flex-col gap-1">
+<div class="flex justify-between text-[11px] text-muted-foreground">
+<span>Logged on the ticket</span>
+<span class="tabular-nums">2.5h of 16h</span>
+</div>
+<div class="h-1.5 overflow-hidden rounded-full bg-muted">
+<div class="h-full rounded-full bg-success" style="width:15.625%">
+</div>
+</div>
+</div>
+<div class="grid grid-cols-2 gap-2">
+<div class="flex min-w-0 flex-col gap-1">
+<span class="text-[11px] text-muted-foreground">Approved by</span>
+<input id="base-ui-_R_2c_" data-slot="input" class="w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base transition-colors outline-none file:inline-flex file:h-6 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:disabled:bg-input/80 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 h-8" value="M. Rossi"/>
+</div>
+<div class="flex min-w-0 flex-col gap-1">
+<span class="text-[11px] text-muted-foreground">Approved on</span>
+<input id="base-ui-_R_2k_" type="date" data-slot="input" class="w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base transition-colors outline-none file:inline-flex file:h-6 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:disabled:bg-input/80 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 h-8" value="2026-09-01"/>
+</div>
+</div>
+<div class="flex min-w-0 flex-col gap-1">
+<span class="text-[11px] text-muted-foreground">PO / e-mail reference</span>
+<input id="base-ui-_R_l_" data-slot="input" class="w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base transition-colors outline-none file:inline-flex file:h-6 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:disabled:bg-input/80 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 h-8" value=""/>
+</div>
+</div>"
+`;
+
+exports[`Change request panel markup > renders the lifecycle with only the current stage's record, never every stage at once 1`] = `
 "<section class="flex flex-col gap-4 rounded-lg border bg-card p-4">
 <div class="flex flex-wrap items-baseline justify-between gap-2">
 <h2 class="text-sm font-semibold">Lifecycle</h2>
@@ -370,70 +449,70 @@ exports[`Change request panel markup > renders the lifecycle exactly as before t
 <div class="overflow-x-auto pb-1">
 <ol class="flex min-w-max items-start">
 <li class="flex items-start">
-<div class="flex w-24 flex-col items-center gap-1 text-center sm:w-28">
+<button type="button" aria-current="step" title="Evaluation — the active stage" class="flex w-24 flex-col items-center gap-1 rounded-md px-1 py-1 text-center outline-none hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring/50 sm:w-28">
 <span class="flex size-7 items-center justify-center rounded-full border-2 text-xs font-semibold tabular-nums transition-colors border-primary bg-accent text-accent-foreground ring-4 ring-primary/15">1</span>
 <span class="text-xs leading-tight font-semibold text-foreground">Evaluation</span>
 <span class="text-[11px] tabular-nums text-muted-foreground">7h</span>
-</div>
+</button>
 <span class="mt-3.5 h-0.5 w-5 shrink-0 sm:w-8 bg-border">
 </span>
 </li>
 <li class="flex items-start">
-<div class="flex w-24 flex-col items-center gap-1 text-center sm:w-28">
+<button type="button" title="Look at Development" class="flex w-24 flex-col items-center gap-1 rounded-md px-1 py-1 text-center outline-none hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring/50 sm:w-28">
 <span class="flex size-7 items-center justify-center rounded-full border-2 text-xs font-semibold tabular-nums transition-colors border-border bg-card text-muted-foreground">2</span>
 <span class="text-xs leading-tight text-muted-foreground">Development</span>
 <span class="text-[11px] tabular-nums text-muted-foreground">—</span>
-</div>
+</button>
 <span class="mt-3.5 h-0.5 w-5 shrink-0 sm:w-8 bg-border">
 </span>
 </li>
 <li class="flex items-start">
-<div class="flex w-24 flex-col items-center gap-1 text-center sm:w-28">
+<button type="button" title="Look at Unit testing" class="flex w-24 flex-col items-center gap-1 rounded-md px-1 py-1 text-center outline-none hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring/50 sm:w-28">
 <span class="flex size-7 items-center justify-center rounded-full border-2 text-xs font-semibold tabular-nums transition-colors border-border bg-card text-muted-foreground">3</span>
 <span class="text-xs leading-tight text-muted-foreground">Unit testing</span>
 <span class="text-[11px] tabular-nums text-muted-foreground">—</span>
-</div>
+</button>
 <span class="mt-3.5 h-0.5 w-5 shrink-0 sm:w-8 bg-border">
 </span>
 </li>
 <li class="flex items-start">
-<div class="flex w-24 flex-col items-center gap-1 text-center sm:w-28">
+<button type="button" title="Look at UAT" class="flex w-24 flex-col items-center gap-1 rounded-md px-1 py-1 text-center outline-none hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring/50 sm:w-28">
 <span class="flex size-7 items-center justify-center rounded-full border-2 text-xs font-semibold tabular-nums transition-colors border-border bg-card text-muted-foreground">4</span>
 <span class="text-xs leading-tight text-muted-foreground">UAT</span>
 <span class="text-[11px] tabular-nums text-muted-foreground">—</span>
-</div>
+</button>
 <span class="mt-3.5 h-0.5 w-5 shrink-0 sm:w-8 bg-border">
 </span>
 </li>
 <li class="flex items-start">
-<div class="flex w-24 flex-col items-center gap-1 text-center sm:w-28">
+<button type="button" title="Look at Go-live" class="flex w-24 flex-col items-center gap-1 rounded-md px-1 py-1 text-center outline-none hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring/50 sm:w-28">
 <span class="flex size-7 items-center justify-center rounded-full border-2 text-xs font-semibold tabular-nums transition-colors border-border bg-card text-muted-foreground">5</span>
 <span class="text-xs leading-tight text-muted-foreground">Go-live</span>
 <span class="text-[11px] tabular-nums text-muted-foreground">—</span>
-</div>
+</button>
 <span class="mt-3.5 h-0.5 w-5 shrink-0 sm:w-8 bg-border">
 </span>
 </li>
 <li class="flex items-start">
-<div class="flex w-24 flex-col items-center gap-1 text-center sm:w-28">
+<button type="button" title="Look at Closing" class="flex w-24 flex-col items-center gap-1 rounded-md px-1 py-1 text-center outline-none hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring/50 sm:w-28">
 <span class="flex size-7 items-center justify-center rounded-full border-2 text-xs font-semibold tabular-nums transition-colors border-border bg-card text-muted-foreground">6</span>
 <span class="text-xs leading-tight text-muted-foreground">Closing</span>
 <span class="text-[11px] tabular-nums text-muted-foreground">—</span>
-</div>
+</button>
 <span class="mt-3.5 h-0.5 w-5 shrink-0 sm:w-8 bg-border">
 </span>
 </li>
 <li class="flex items-start">
-<div class="flex w-24 flex-col items-center gap-1 text-center sm:w-28">
+<button type="button" title="Look at Closed" class="flex w-24 flex-col items-center gap-1 rounded-md px-1 py-1 text-center outline-none hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring/50 sm:w-28">
 <span class="flex size-7 items-center justify-center rounded-full border-2 text-xs font-semibold tabular-nums transition-colors border-border bg-card text-muted-foreground">7</span>
 <span class="text-xs leading-tight text-muted-foreground">Closed</span>
 <span class="text-[11px] tabular-nums text-muted-foreground">
 </span>
-</div>
+</button>
 </li>
 </ol>
 </div>
-<div class="grid gap-4 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
+<div class="flex flex-col gap-3">
 <div class="flex flex-col gap-3 rounded-md border p-3">
 <div class="flex flex-wrap items-baseline justify-between gap-2">
 <div class="text-sm">
@@ -459,6 +538,46 @@ exports[`Change request panel markup > renders the lifecycle exactly as before t
 <span class="mt-2 size-1 shrink-0 rounded-full bg-muted-foreground/60">
 </span>Get the customer&#x27;s written approval: who, when, PO or e-mail reference</li>
 </ul>
+</div>
+<div class="flex flex-col gap-3 rounded-md border border-border/60 bg-background p-3">
+<div class="flex min-w-0 flex-col gap-1">
+<span class="text-[11px] text-muted-foreground">Impact assessment and proposed solution</span>
+<textarea data-slot="textarea" class="flex field-sizing-content min-h-16 w-full rounded-lg border px-2.5 py-2 text-base transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:disabled:bg-input/80 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 border-border/60 bg-background" rows="4" placeholder="What changes, what it touches, how it will be built">Add the split-payment flag to the MIRO screen</textarea>
+</div>
+<div class="grid grid-cols-2 gap-2">
+<div class="flex min-w-0 flex-col gap-1">
+<span class="text-[11px] text-muted-foreground">Estimate (hours)</span>
+<input id="base-ui-_R_ikb_" data-slot="input" placeholder="e.g. 16" class="w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base transition-colors outline-none file:inline-flex file:h-6 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:disabled:bg-input/80 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 h-8" value="16"/>
+</div>
+<div class="flex min-w-0 flex-col gap-1">
+<span class="text-[11px] text-muted-foreground">Quote / offer ref.</span>
+<input id="base-ui-_R_kkb_" data-slot="input" class="w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base transition-colors outline-none file:inline-flex file:h-6 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:disabled:bg-input/80 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 h-8" value=""/>
+</div>
+</div>
+<div class="flex flex-col gap-1">
+<div class="flex justify-between text-[11px] text-muted-foreground">
+<span>Logged on the ticket</span>
+<span class="tabular-nums">2.5h of 16h</span>
+</div>
+<div class="h-1.5 overflow-hidden rounded-full bg-muted">
+<div class="h-full rounded-full bg-success" style="width:15.625%">
+</div>
+</div>
+</div>
+<div class="grid grid-cols-2 gap-2">
+<div class="flex min-w-0 flex-col gap-1">
+<span class="text-[11px] text-muted-foreground">Approved by</span>
+<input id="base-ui-_R_j4b_" data-slot="input" class="w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base transition-colors outline-none file:inline-flex file:h-6 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:disabled:bg-input/80 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 h-8" value="M. Rossi"/>
+</div>
+<div class="flex min-w-0 flex-col gap-1">
+<span class="text-[11px] text-muted-foreground">Approved on</span>
+<input id="base-ui-_R_l4b_" type="date" data-slot="input" class="w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base transition-colors outline-none file:inline-flex file:h-6 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:disabled:bg-input/80 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 h-8" value="2026-09-01"/>
+</div>
+</div>
+<div class="flex min-w-0 flex-col gap-1">
+<span class="text-[11px] text-muted-foreground">PO / e-mail reference</span>
+<input id="base-ui-_R_5cb_" data-slot="input" class="w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base transition-colors outline-none file:inline-flex file:h-6 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:disabled:bg-input/80 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 h-8" value=""/>
+</div>
 </div>
 <div class="flex flex-col gap-1">
 <span class="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">To move to Development</span>
@@ -521,20 +640,19 @@ exports[`Change request panel markup > renders the lifecycle exactly as before t
 </svg> Reject</button>
 </div>
 </div>
-<div class="flex flex-col gap-3">
 <div class="flex flex-col gap-2 rounded-md border p-3">
 <div class="flex items-center justify-between gap-2">
 <span class="text-sm font-semibold">Next step</span>
 <span class="text-xs text-muted-foreground">Due 2026-09-30</span>
 </div>
-<input id="base-ui-_R_pj_" data-slot="input" maxLength="500" placeholder="e.g. Send the estimate to the customer for approval" aria-label="Next step" class="w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base transition-colors outline-none file:inline-flex file:h-6 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:disabled:bg-input/80 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 h-8" value="Send the estimate for approval"/>
+<input id="base-ui-_R_6j_" data-slot="input" maxLength="500" placeholder="e.g. Send the estimate to the customer for approval" aria-label="Next step" class="w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base transition-colors outline-none file:inline-flex file:h-6 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:disabled:bg-input/80 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 h-8" value="Send the estimate for approval"/>
 <div class="grid grid-cols-2 gap-2">
 <select class="h-8 rounded-md border border-border/60 bg-background px-2 text-sm" aria-label="Next step owner">
 <option value="">Owner…</option>
 <option value="u-1">Uard Bejtja</option>
 <option value="u-2" selected="">Enida Selita</option>
 </select>
-<input id="base-ui-_R_59j_" type="date" data-slot="input" aria-label="Next step due" class="w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base transition-colors outline-none file:inline-flex file:h-6 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:disabled:bg-input/80 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 h-8" value="2026-09-30"/>
+<input id="base-ui-_R_1aj_" type="date" data-slot="input" aria-label="Next step due" class="w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base transition-colors outline-none file:inline-flex file:h-6 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:disabled:bg-input/80 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 h-8" value="2026-09-30"/>
 </div>
 </div>
 <div class="flex flex-col gap-2 rounded-md border p-3">
@@ -561,120 +679,6 @@ exports[`Change request panel markup > renders the lifecycle exactly as before t
 </div>
 </li>
 </ol>
-</div>
-</div>
-</div>
-</section>"
-`;
-
-exports[`Change request panel markup > renders the record section exactly as before 1`] = `
-"<section class="flex flex-col gap-3">
-<h2 class="border-b pb-1.5 text-sm font-semibold">Change request</h2>
-<div class="flex flex-col gap-2 rounded-md border p-3 border-primary/50 bg-primary/[0.03]">
-<div class="flex items-center justify-between">
-<span class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Evaluation</span>
-<span class="text-[11px] font-medium text-primary">current stage</span>
-</div>
-<div class="flex min-w-0 flex-col gap-1">
-<span class="text-[11px] text-muted-foreground">Impact assessment and proposed solution</span>
-<textarea data-slot="textarea" class="flex field-sizing-content min-h-16 w-full rounded-lg border px-2.5 py-2 text-base transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:disabled:bg-input/80 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 border-border/60 bg-background" rows="4" placeholder="What changes, what it touches, how it will be built">Add the split-payment flag to the MIRO screen</textarea>
-</div>
-<div class="grid grid-cols-2 gap-2">
-<div class="flex min-w-0 flex-col gap-1">
-<span class="text-[11px] text-muted-foreground">Estimate (hours)</span>
-<input id="base-ui-_R_16i_" data-slot="input" placeholder="e.g. 16" class="w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base transition-colors outline-none file:inline-flex file:h-6 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:disabled:bg-input/80 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 h-8" value="16"/>
-</div>
-<div class="flex min-w-0 flex-col gap-1">
-<span class="text-[11px] text-muted-foreground">Quote / offer ref.</span>
-<input id="base-ui-_R_1ai_" data-slot="input" class="w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base transition-colors outline-none file:inline-flex file:h-6 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:disabled:bg-input/80 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 h-8" value=""/>
-</div>
-</div>
-<div class="flex flex-col gap-1">
-<div class="flex justify-between text-[11px] text-muted-foreground">
-<span>Logged on the ticket</span>
-<span class="tabular-nums">2.5h of 16h</span>
-</div>
-<div class="h-1.5 overflow-hidden rounded-full bg-muted">
-<div class="h-full rounded-full bg-emerald-500" style="width:15.625%">
-</div>
-</div>
-</div>
-</div>
-<div class="flex flex-col gap-2 rounded-md border p-3 border-primary/50 bg-primary/[0.03]">
-<div class="flex items-center justify-between">
-<span class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Customer approval</span>
-<span class="text-[11px] font-medium text-primary">current stage</span>
-</div>
-<div class="grid grid-cols-2 gap-2">
-<div class="flex min-w-0 flex-col gap-1">
-<span class="text-[11px] text-muted-foreground">Approved by</span>
-<input id="base-ui-_R_15j_" data-slot="input" class="w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base transition-colors outline-none file:inline-flex file:h-6 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:disabled:bg-input/80 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 h-8" value="M. Rossi"/>
-</div>
-<div class="flex min-w-0 flex-col gap-1">
-<span class="text-[11px] text-muted-foreground">Approved on</span>
-<input id="base-ui-_R_19j_" type="date" data-slot="input" class="w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base transition-colors outline-none file:inline-flex file:h-6 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:disabled:bg-input/80 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 h-8" value="2026-09-01"/>
-</div>
-</div>
-<div class="flex min-w-0 flex-col gap-1">
-<span class="text-[11px] text-muted-foreground">PO / e-mail reference</span>
-<input id="base-ui-_R_aj_" data-slot="input" class="w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base transition-colors outline-none file:inline-flex file:h-6 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:disabled:bg-input/80 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 h-8" value=""/>
-</div>
-</div>
-<div class="flex flex-col gap-2 rounded-md border p-3 border-border/60">
-<div class="flex items-center justify-between">
-<span class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Development</span>
-</div>
-<div class="flex min-w-0 flex-col gap-1">
-<span class="text-[11px] text-muted-foreground">Planned go-live</span>
-<input id="base-ui-_R_9k_" type="date" data-slot="input" class="w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base transition-colors outline-none file:inline-flex file:h-6 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:disabled:bg-input/80 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 h-8" value=""/>
-</div>
-<div class="flex min-w-0 flex-col gap-1">
-<span class="text-[11px] text-muted-foreground">Transports / release</span>
-<textarea data-slot="textarea" class="flex field-sizing-content min-h-16 w-full rounded-lg border px-2.5 py-2 text-base transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:disabled:bg-input/80 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 border-border/60 bg-background" rows="2" placeholder="e.g. DA1K900123, DA1K900124">
-</textarea>
-</div>
-</div>
-<div class="flex flex-col gap-2 rounded-md border p-3 border-border/60">
-<div class="flex items-center justify-between">
-<span class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Unit testing</span>
-</div>
-<div class="flex min-w-0 flex-col gap-1">
-<span class="text-[11px] text-muted-foreground">Results</span>
-<textarea data-slot="textarea" class="flex field-sizing-content min-h-16 w-full rounded-lg border px-2.5 py-2 text-base transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:disabled:bg-input/80 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 border-border/60 bg-background" rows="3" placeholder="Scenarios tested and their outcome — or attach the evidence under Unit testing">
-</textarea>
-</div>
-<div class="flex min-w-0 flex-col gap-1">
-<span class="text-[11px] text-muted-foreground">Tested on</span>
-<input id="base-ui-_R_al_" type="date" data-slot="input" class="w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base transition-colors outline-none file:inline-flex file:h-6 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:disabled:bg-input/80 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 h-8" value=""/>
-</div>
-</div>
-<div class="flex flex-col gap-2 rounded-md border p-3 border-border/60">
-<div class="flex items-center justify-between">
-<span class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">UAT</span>
-</div>
-<div class="grid grid-cols-2 gap-2">
-<div class="flex min-w-0 flex-col gap-1">
-<span class="text-[11px] text-muted-foreground">Signed off by</span>
-<input id="base-ui-_R_15m_" data-slot="input" class="w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base transition-colors outline-none file:inline-flex file:h-6 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:disabled:bg-input/80 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 h-8" value=""/>
-</div>
-<div class="flex min-w-0 flex-col gap-1">
-<span class="text-[11px] text-muted-foreground">Signed off on</span>
-<input id="base-ui-_R_19m_" type="date" data-slot="input" class="w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base transition-colors outline-none file:inline-flex file:h-6 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:disabled:bg-input/80 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 h-8" value=""/>
-</div>
-</div>
-<div class="flex min-w-0 flex-col gap-1">
-<span class="text-[11px] text-muted-foreground">Notes</span>
-<textarea data-slot="textarea" class="flex field-sizing-content min-h-16 w-full rounded-lg border px-2.5 py-2 text-base transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:disabled:bg-input/80 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 border-border/60 bg-background" rows="2">
-</textarea>
-</div>
-</div>
-<div class="flex flex-col gap-2 rounded-md border p-3 border-border/60">
-<div class="flex items-center justify-between">
-<span class="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Go-live</span>
-</div>
-<div class="flex min-w-0 flex-col gap-1">
-<span class="text-[11px] text-muted-foreground">Went live on</span>
-<input id="base-ui-_R_2n_" type="date" data-slot="input" class="w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1 text-base transition-colors outline-none file:inline-flex file:h-6 file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:cursor-not-allowed disabled:bg-input/50 disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 md:text-sm dark:bg-input/30 dark:disabled:bg-input/80 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 h-8" value=""/>
 </div>
 </div>
 </section>"

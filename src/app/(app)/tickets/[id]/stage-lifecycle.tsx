@@ -26,8 +26,9 @@ export type StageEvent = {
   id: string; fromKey: string | null; toKey: string; move: string;
   note: string; overrideReason: string; byName: string; at: string;
 };
-/** One box of the stepper. `terminal` only decides whether a blank stage shows "—" or nothing. */
-export type StageStep = { key: string; label: string; terminal: boolean };
+/** One box of the stepper. `terminal` only decides whether a blank stage shows "—" or nothing.
+ *  `purpose` is shown when you click a step to look at a stage that isn't the active one. */
+export type StageStep = { key: string; label: string; terminal: boolean; purpose?: string };
 export type StageTarget = { key: string; label: string };
 /** The terminal stage a ticket can be dropped into early, with the words its dialog uses. */
 export type CloseTarget = StageTarget & { title: string; noteLabel: string };
@@ -46,9 +47,9 @@ export type CurrentStage = {
 const fmtDT = (s: string) => (s ? s.slice(0, 16).replace("T", " ") : "—");
 
 export function StageLifecycle({
-  ticketId, note, flow, timeInStage, current, offFlowNotice, stageSince, checks, onToggleCheck,
+  ticketId, note, flow, timeInStage, current, offFlowNotice, stageSince, checksFor, onToggleCheck,
   next, backOptions, close, reopen, editable, canManage, dirty, notEditableNotice, sidebar, events,
-  labelOf, move,
+  labelOf, move, stageBody,
 }: {
   ticketId: string;
   /** The line at the top right — what this type is tracked by. */
@@ -59,9 +60,14 @@ export function StageLifecycle({
   /** Shown instead of the panel when the ticket sits outside the flow. */
   offFlowNotice: React.ReactNode;
   stageSince: string;
-  checks: GateCheck[];
+  /** The gates of ANY stage — the panel shows the stage you picked in the stepper, not only the
+   *  current one, so this is asked per stage rather than handed over as one fixed list. */
+  checksFor: (stageKey: string) => GateCheck[];
   /** Set for hand-ticked gates; left out when the checks are computed from a record. */
   onToggleCheck?: (key: string, next: boolean) => void;
+  /** What that stage recorded — its fields, rendered INSIDE this panel. There is exactly one
+   *  lifecycle panel per ticket: no second copy of the stages anywhere on the page. */
+  stageBody?: (stageKey: string) => React.ReactNode;
   next: StageTarget | null;
   backOptions: StageTarget[];
   close: CloseTarget | null;
@@ -74,9 +80,19 @@ export function StageLifecycle({
   move: (input: { to: string; note: string; overrideReason?: string }) => Promise<{ error?: string }>;
 }) {
   const [dialog, setDialog] = React.useState<"forward" | "back" | "close" | "reopen" | null>(null);
+  // Which stage the panel is showing. Null = the stage the ticket is actually in; clicking a step
+  // looks at another one without moving the ticket anywhere.
+  const [picked, setPicked] = React.useState<string | null>(null);
   const curIdx = current?.index ?? -1;
   const allDone = !!current?.terminal && !current.stopped;
   const since = current ? timeInStage[current.key] : undefined;
+  const viewKey = (picked && flow.some((f) => f.key === picked) ? picked : null) ?? current?.key ?? null;
+  const viewing = !!current && !!viewKey && viewKey !== current.key;
+  const viewStep = flow.find((f) => f.key === viewKey) ?? null;
+  const viewIdx = flow.findIndex((f) => f.key === viewKey);
+  const afterView = viewIdx >= 0 ? flow[viewIdx + 1] ?? null : null;
+  const checks = current ? checksFor(current.key) : [];
+  const viewChecks = viewKey ? checksFor(viewKey) : [];
 
   return (
     <section className="flex flex-col gap-4 rounded-lg border bg-card p-4">
@@ -93,7 +109,15 @@ export function StageLifecycle({
             const spent = timeInStage[step.key];
             return (
               <li key={step.key} className="flex items-start">
-                <div className="flex w-24 flex-col items-center gap-1 text-center sm:w-28">
+                <button
+                  type="button" onClick={() => setPicked(step.key === current?.key ? null : step.key)}
+                  aria-current={step.key === viewKey ? "step" : undefined}
+                  title={step.key === current?.key ? `${step.label} — the active stage` : `Look at ${step.label}`}
+                  className={cn(
+                    "flex w-24 flex-col items-center gap-1 rounded-md px-1 py-1 text-center outline-none hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring/50 sm:w-28",
+                    step.key === viewKey && viewing && "bg-warning-soft/60",
+                  )}
+                >
                   <span className={cn(
                     "flex size-7 items-center justify-center rounded-full border-2 text-xs font-semibold tabular-nums transition-colors",
                     // Done is a filled state, not a tick-versus-cross: the accent fills in behind you.
@@ -110,7 +134,7 @@ export function StageLifecycle({
                     state === "current" ? "font-semibold text-foreground" : state === "done" ? "text-foreground/70" : "text-muted-foreground",
                   )}>{step.label}</span>
                   <span className="text-[11px] tabular-nums text-muted-foreground">{spent ? formatDuration(spent) : step.terminal ? "" : "—"}</span>
-                </div>
+                </button>
                 {i < flow.length - 1 && <span className={cn("mt-3.5 h-0.5 w-5 shrink-0 sm:w-8", allDone || i < curIdx ? "bg-primary" : "bg-border")} />}
               </li>
             );
@@ -119,23 +143,31 @@ export function StageLifecycle({
       </div>
 
       {!current ? (
-        <p className="rounded-md border border-amber-500/40 bg-amber-500/[0.06] p-3 text-sm">{offFlowNotice}</p>
+        <p className="rounded-md border border-warning/40 bg-warning-soft p-3 text-sm">{offFlowNotice}</p>
       ) : (
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
-          {/* current stage */}
+        <div className="flex flex-col gap-3">
+          {/* THE panel — one stage at a time, never an accordion of every stage. */}
           <div className="flex flex-col gap-3 rounded-md border p-3">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
               <div className="text-sm">
-                <span className={cn("font-semibold", current.stopped && "text-rose-600 dark:text-rose-400", allDone && "text-emerald-700 dark:text-emerald-400")}>
-                  {current.terminal ? current.label : `Now: ${current.label}`}
+                <span className={cn("font-semibold", !viewing && current.stopped && "text-destructive", !viewing && allDone && "text-success")}>
+                  {viewing ? viewStep?.label : current.terminal ? current.label : `Now: ${current.label}`}
                 </span>
-                {!current.terminal && <span className="text-muted-foreground"> · for {since ? formatDuration(since) : "<1h"} (since {stageSince.slice(0, 10)})</span>}
+                {!viewing && !current.terminal && <span className="text-muted-foreground"> · for {since ? formatDuration(since) : "<1h"} (since {stageSince.slice(0, 10)})</span>}
+                {viewing && timeInStage[viewKey!] ? <span className="text-muted-foreground"> · {formatDuration(timeInStage[viewKey!])} spent here</span> : null}
               </div>
-              {!current.terminal && current.owner && <span className="text-xs text-muted-foreground">Driven by {current.owner}</span>}
+              {viewing ? (
+                <button type="button" onClick={() => setPicked(null)} className="rounded-full bg-warning-soft px-2 py-0.5 text-xs font-medium text-warning outline-none hover:underline focus-visible:underline">
+                  Viewing — not the active stage · back to {current.label}
+                </button>
+              ) : (
+                !current.terminal && current.owner && <span className="text-xs text-muted-foreground">Driven by {current.owner}</span>
+              )}
             </div>
-            <p className="text-sm text-muted-foreground">{current.purpose}</p>
 
-            {current.steps.length > 0 && (
+            <p className="text-sm text-muted-foreground">{viewing ? viewStep?.purpose ?? "" : current.purpose}</p>
+
+            {!viewing && current.steps.length > 0 && (
               <div className="flex flex-col gap-1">
                 <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">What gets it done</span>
                 <ul className="flex flex-col gap-1 text-sm">
@@ -144,42 +176,54 @@ export function StageLifecycle({
               </div>
             )}
 
-            {next && checks.length > 0 && (
-              <div className="flex flex-col gap-1">
-                <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">To move to {next.label}</span>
-                <CheckList checks={checks} onToggle={editable ? onToggleCheck : undefined} />
+            {/* What this stage recorded. Only this stage — the rest of the record lives behind the stepper. */}
+            {stageBody && viewKey && stageBody(viewKey)}
+
+            {viewing
+              ? viewChecks.length > 0 && (
+                  <div className="flex flex-col gap-1">
+                    <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+                      {afterView ? `To move to ${afterView.label}` : "To finish this stage"}
+                    </span>
+                    {/* Read-only off-stage: the server only accepts a tick on the stage the ticket is in. */}
+                    <CheckList checks={viewChecks} />
+                  </div>
+                )
+              : next && checks.length > 0 && (
+                  <div className="flex flex-col gap-1">
+                    <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">To move to {next.label}</span>
+                    <CheckList checks={checks} onToggle={editable ? onToggleCheck : undefined} />
+                  </div>
+                )}
+
+            {!viewing && (
+              <div className="flex flex-wrap items-center gap-2 border-t pt-3">
+                {next && (
+                  <Button size="sm" className="gap-1.5" disabled={!editable || dirty} onClick={() => setDialog("forward")}>
+                    Move to {next.label} <ArrowRightIcon className="size-4" />
+                  </Button>
+                )}
+                {!current.terminal && backOptions.length > 0 && (
+                  <Button size="sm" variant="outline" className="gap-1.5" disabled={!editable || dirty} onClick={() => setDialog("back")}><Undo2Icon className="size-4" /> Send back</Button>
+                )}
+                {!current.terminal && close && canManage && (
+                  <Button size="sm" variant="ghost" className="gap-1.5 text-destructive hover:bg-destructive/10 hover:text-destructive" disabled={dirty} onClick={() => setDialog("close")}><BanIcon className="size-4" /> {close.label}</Button>
+                )}
+                {current.terminal && reopen && canManage && (
+                  <Button size="sm" variant="outline" className="gap-1.5" disabled={dirty} onClick={() => setDialog("reopen")}>
+                    <RotateCcwIcon className="size-4" /> Reopen into {reopen.label}
+                  </Button>
+                )}
+                {dirty && <span className="text-xs text-warning">Save your changes before moving the stage.</span>}
+                {!editable && <span className="text-xs text-muted-foreground">{notEditableNotice}</span>}
               </div>
             )}
-
-            <div className="flex flex-wrap items-center gap-2 border-t pt-3">
-              {next && (
-                <Button size="sm" className="gap-1.5" disabled={!editable || dirty} onClick={() => setDialog("forward")}>
-                  Move to {next.label} <ArrowRightIcon className="size-4" />
-                </Button>
-              )}
-              {!current.terminal && backOptions.length > 0 && (
-                <Button size="sm" variant="outline" className="gap-1.5" disabled={!editable || dirty} onClick={() => setDialog("back")}><Undo2Icon className="size-4" /> Send back</Button>
-              )}
-              {!current.terminal && close && canManage && (
-                <Button size="sm" variant="ghost" className="gap-1.5 text-destructive hover:bg-destructive/10 hover:text-destructive" disabled={dirty} onClick={() => setDialog("close")}><BanIcon className="size-4" /> {close.label}</Button>
-              )}
-              {current.terminal && reopen && canManage && (
-                <Button size="sm" variant="outline" className="gap-1.5" disabled={dirty} onClick={() => setDialog("reopen")}>
-                  <RotateCcwIcon className="size-4" /> Reopen into {reopen.label}
-                </Button>
-              )}
-              {dirty && <span className="text-xs text-amber-700 dark:text-amber-400">Save your changes before moving the stage.</span>}
-              {!editable && <span className="text-xs text-muted-foreground">{notEditableNotice}</span>}
-            </div>
           </div>
 
-          {/* sidebar + history */}
-          <div className="flex flex-col gap-3">
-            {sidebar}
-            <div className="flex flex-col gap-2 rounded-md border p-3">
-              <span className="text-sm font-semibold">Stage history</span>
-              <StageHistory events={events} labelOf={labelOf} />
-            </div>
+          {sidebar}
+          <div className="flex flex-col gap-2 rounded-md border p-3">
+            <span className="text-sm font-semibold">Stage history</span>
+            <StageHistory events={events} labelOf={labelOf} />
           </div>
         </div>
       )}

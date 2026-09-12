@@ -5,6 +5,7 @@ import { loadTicketConfig } from "@/lib/ticket-config.server";
 import { serializeTicketRow, customColumnsOf, TICKET_ROW_SELECT } from "../serialize";
 import { TicketsClient, type ClientConfig } from "../tickets-client";
 import { normalizeFilters, type TicketFocus } from "../filters";
+import { SupportShell } from "../support-shell";
 
 export const metadata = { title: "All tickets" };
 
@@ -50,6 +51,12 @@ export default async function AllTicketsPage({ searchParams }: { searchParams: P
   };
 
   return (
+    <SupportShell
+      active="all"
+      title="All tickets"
+      subtitle="Every account in one table. Filters, saved views and export live in the bar below."
+      canManage={canManage}
+    >
     <TicketsClient
       key={focus ?? "all"}
       initialFocus={focus}
@@ -64,5 +71,6 @@ export default async function AllTicketsPage({ searchParams }: { searchParams: P
         sort: (v.sort as { key: string; dir: "asc" | "desc" } | null) ?? null,
       }))}
     />
+    </SupportShell>
   );
 }

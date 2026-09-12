@@ -2033,3 +2033,51 @@ and the SLA resolution from item 10 were not touched. tsc + lint + **399 tests**
   because every previous fixture had all its gates ticked, so no snapshot contained an incomplete
   mark at all. That test also asserts `not.toContain("circle-x")` outright, so the red cross cannot
   come back even through a careless snapshot update.
+
+### Support redesign — Phase 3 + 4: one lifecycle per ticket, one consolidated Support surface (2026-09-12)
+
+No migration. Two phases landed together; no server action, loader or permission rule was touched.
+tsc + lint + build + **410 tests** green.
+
+**Phase 3 — the ticket page shows exactly ONE lifecycle.**
+- The Change request panel used to stack SIX cards (Evaluation, Customer approval, Development, Unit
+  testing, UAT, Go-live) on every CR whatever stage it was in; `TicketStageFields` had the same
+  all-stages shape and only LOOKED like one panel because Bug has fields on Triage alone. Both now
+  render **the stage the stepper is on**, inside the lifecycle panel itself (`stageBody`).
+  The six-card stack and its `Group` helper are deleted, not hidden.
+- **The stepper is the selector**: click a step to look at another stage. It shows that stage's
+  purpose, fields and gates with an amber "Viewing — not the active stage" chip; its gates are
+  read-only there, matching the server, which only accepts a tick on the ticket's current stage.
+  Past stages stay editable — they always were, and making them read-only would remove function.
+- Page layout: 60/40. LEFT = Description + the lifecycle. RIGHT = Details (requester, created),
+  Classification, SLA (STATUS types only), general fields, Resolution. **Files and Discussion follow
+  the mode**: on a STATUS-mode ticket the left column would otherwise be a lone Description, so they
+  move there and the right column is pure metadata; on a stage type they stay on the right.
+  The objection about Discussion at 40% is recorded at the top of `ticket-detail-client.tsx`.
+- Snapshots regenerated on purpose again, and a fixture ADDED whose gate is unmet, asserting
+  `not.toContain("circle-x")` and that no other stage's fields render.
+
+**Phase 4 — Support is one surface, not five pages that each invented a header.**
+- **`support-shell.tsx`** wraps `/tickets`, `/tickets/all`, `/tickets/board`, `/tickets/c/[id]` and
+  `/tickets/settings`: same title block, same **Clients · All tickets · Board** switcher, same
+  New ticket, and **Configure on every one of them** — it used to exist only on All tickets.
+  `support-kpis.tsx` is the same four tiles everywhere, each one a link into what it counted.
+- **The clients overview is a dense triage table** (`clients-table.tsx`), worst first: Open,
+  Breached, Unassigned, Critical, Oldest open, Resolved 7d, Last activity, Team. Sortable, searchable
+  (name or team member), chips that filter, state mirrored to the URL. The card grid is gone — it was
+  unusable past a couple of dozen accounts, exactly what happened to `/portfolio`.
+  `src/lib/support-overview.ts` is the **pure, tested** half: `attentionScore` (breached > critical >
+  unassigned > open), `needsAttention`, `isQuiet`, `sortClients`, `filterClients`, `summarize` — so a
+  chip's count and the rows it shows can never disagree.
+- **`filter-bar.tsx` replaced three rows of always-open chip groups** with: search + the five focus
+  chips + ONE Filters popover (Type, Status, Priority, Assignee, Client, Open only, Raised by me) +
+  **active filters listed back as chips you can click off**. Shared by the list and the workspace.
+  **"Clear all" now really clears** — it used to reset to `EMPTY`, which still carried `onlyOpen`, so
+  a filter stayed on. It sets `{}`.
+- **The group labelled "Stage" is called "Status"** — it filters status CATEGORIES, and since the
+  lifecycle work "stage" means something else. That collision was a real defect.
+
+**Known gaps, deliberate**: there is still no filter BY stage (TicketRow carries no stage key — it
+needs `serialize.ts` and the queries, so it is its own change); the board has the shell but not yet
+the filter bar or saved views; the overview was not click-tested at 50+ accounts (agent has no
+sign-in), only proven by unit tests and a production build.

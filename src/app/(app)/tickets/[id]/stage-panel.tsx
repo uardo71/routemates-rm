@@ -3,7 +3,6 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { cn } from "@/lib/utils";
 import {
   closeTarget, earlierStages, gateChecks, nextStage, reopenTarget, sortStages, stageByKey, stageIndex,
   type StageDef,
@@ -31,8 +30,12 @@ export type StageView = {
   stageSince: string;
 };
 
-export function TicketStageLifecycle({ ticketId, view, editable, canManage, dirty }: {
+export function TicketStageLifecycle({ ticketId, view, editable, canManage, dirty, fields, values, onChange, users }: {
   ticketId: string; view: StageView; editable: boolean; canManage: boolean; dirty: boolean;
+  /** The type's stage-scoped fields. They render INSIDE the lifecycle panel, under the stage the
+   *  stepper is showing — the page has no second copy of them. */
+  fields: StageFieldVal[]; values: Record<string, unknown>;
+  onChange: (fieldId: string, value: unknown) => void; users: { id: string; name: string }[];
 }) {
   const router = useRouter();
   const [, start] = React.useTransition();
@@ -67,7 +70,7 @@ export function TicketStageLifecycle({ ticketId, view, editable, canManage, dirt
     <StageLifecycle
       ticketId={ticketId}
       note={`No SLA — a ${view.typeName.toLowerCase()} is tracked by stage and time in stage.`}
-      flow={stages.map((s) => ({ key: s.key, label: s.name, terminal: s.isTerminal }))}
+      flow={stages.map((s) => ({ key: s.key, label: s.name, terminal: s.isTerminal, purpose: s.description ?? "" }))}
       timeInStage={view.timeInStage}
       current={current ? {
         key: current.key, label: current.name, owner: null,
@@ -78,8 +81,11 @@ export function TicketStageLifecycle({ ticketId, view, editable, canManage, dirt
         <>This ticket is in &ldquo;{view.statusName}&rdquo;, which isn&apos;t one of {view.typeName}&apos;s stages. An administrator can check the type in ticket settings.</>
       }
       stageSince={view.stageSince}
-      checks={gateChecks(current, ticked)}
+      checksFor={(key) => gateChecks(stageByKey(stages, key), ticked)}
       onToggleCheck={toggle}
+      stageBody={(key) => (
+        <TicketStageFields stageKey={key} fields={fields} values={values} onChange={onChange} editable={editable} users={users} />
+      )}
       next={next ? { key: next.key, label: next.name } : null}
       backOptions={current ? earlierStages(stages, current.key).map((s) => ({ key: s.key, label: s.name })) : []}
       close={close ? { key: close.key, label: `Close as ${close.name}`, title: `Close as ${close.name}`, noteLabel: "Why is it closed without going through the remaining stages?" } : null}
@@ -93,48 +99,29 @@ export function TicketStageLifecycle({ ticketId, view, editable, canManage, dirt
   );
 }
 
-// ---------- the stage-scoped fields, edited with the ticket's Save ----------
+// ---------- the fields of ONE stage, edited with the ticket's Save ----------
 
 export type StageFieldVal = PubField & { stageKey: string; value: unknown; display: string };
 
-/** A STAGE-mode type's fields, grouped under the stage they belong to — the generic counterpart of
- *  the change request's record section. Values ride the ticket's own draft and Save. */
-export function TicketStageFields({ typeName, stages, stageKey, fields, values, onChange, editable, users }: {
-  typeName: string; stages: StageDef[]; stageKey: string | null;
-  fields: StageFieldVal[]; values: Record<string, unknown>;
+/** The fields ONE stage recorded, drawn inside the lifecycle panel. Values ride the ticket's own
+ *  draft and Save. There is deliberately no "every stage at once" rendering: the stepper is how you
+ *  reach another stage, and a ticket shows exactly one lifecycle panel. */
+export function TicketStageFields({ stageKey, fields, values, onChange, editable, users }: {
+  stageKey: string; fields: StageFieldVal[]; values: Record<string, unknown>;
   onChange: (fieldId: string, value: unknown) => void; editable: boolean; users: { id: string; name: string }[];
 }) {
-  const groups = sortStages(stages)
-    .map((s) => ({ stage: s, fields: fields.filter((f) => f.stageKey === s.key) }))
-    .filter((g) => g.fields.length > 0);
-  if (groups.length === 0) return null;
-
+  const mine = fields.filter((f) => f.stageKey === stageKey);
+  if (mine.length === 0) return null;
   return (
-    <section className="flex flex-col gap-3">
-      <h2 className="border-b pb-1.5 text-sm font-semibold">{typeName} record</h2>
-      {groups.map(({ stage, fields: fs }) => {
-        const active = stage.key === stageKey;
-        return (
-          <div key={stage.key} className={cn("flex flex-col gap-2 rounded-md border p-3", active ? "border-primary/50 bg-primary/[0.03]" : "border-border/60")}>
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{stage.name}</span>
-              {active && <span className="text-[11px] font-medium text-primary">current stage</span>}
+    <div className="flex flex-col gap-3 rounded-md border border-border/60 bg-background p-3">
+      {editable
+        ? mine.map((f) => <FieldControl key={f.id} field={f} users={users} value={values[f.id]} onChange={(v) => onChange(f.id, v)} />)
+        : mine.map((f) => (
+            <div key={f.id} className="flex min-w-0 flex-col gap-1">
+              <span className="text-[11px] text-muted-foreground">{f.name}</span>
+              {f.display ? <span className="text-sm whitespace-pre-wrap">{f.display}</span> : <span className="text-sm text-muted-foreground/40">—</span>}
             </div>
-            {editable ? (
-              <div className="grid grid-cols-1 gap-3">
-                {fs.map((f) => <FieldControl key={f.id} field={f} users={users} value={values[f.id]} onChange={(v) => onChange(f.id, v)} />)}
-              </div>
-            ) : (
-              fs.map((f) => (
-                <div key={f.id} className="flex min-w-0 flex-col gap-1">
-                  <span className="text-[11px] text-muted-foreground">{f.name}</span>
-                  {f.display ? <span className="text-sm whitespace-pre-wrap">{f.display}</span> : <span className="text-sm text-muted-foreground/40">—</span>}
-                </div>
-              ))
-            )}
-          </div>
-        );
-      })}
-    </section>
+          ))}
+    </div>
   );
 }

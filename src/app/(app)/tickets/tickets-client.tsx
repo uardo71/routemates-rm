@@ -3,23 +3,20 @@
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import {
-  PlusIcon, SearchIcon, LayoutGridIcon, Columns3Icon, DownloadIcon,
-  BookmarkIcon, SaveIcon, Trash2Icon, ArrowUpIcon, ArrowDownIcon, XIcon, SettingsIcon,
-} from "lucide-react";
+import { BookmarkIcon, SaveIcon, Trash2Icon, ArrowUpIcon, ArrowDownIcon, XIcon } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import { TICKET_PRIORITY_LABEL, TICKET_PRIORITY_DOT } from "@/lib/ticket";
 import type { TicketStatusCategory } from "@prisma/client";
-import { TICKET_PRIORITIES, TICKET_PRIORITY_LABEL, TICKET_PRIORITY_DOT } from "@/lib/ticket";
-import { STATUS_CATEGORIES, STATUS_CATEGORY_LABEL } from "@/lib/ticket-config";
 import type { TicketRow } from "./serialize";
 import { SlaBadge, slaBadgeState } from "./sla";
 import { TypeChip, StatusChip } from "./ticket-visuals";
 import { NATIVE_COLUMNS, DEFAULT_COLUMNS, columnValue } from "./columns";
-import { filterRows, sortRows, FOCUS_LABEL, type TicketFilters, type TicketFocus } from "./filters";
+import { filterRows, sortRows, type TicketFilters, type TicketFocus } from "./filters";
+import { TicketFilterBar } from "./filter-bar";
 import { saveTicketViewAction, deleteTicketViewAction } from "./view-actions";
 
 type ClientStatus = { id: string; name: string; color: string | null; category: TicketStatusCategory };
@@ -40,15 +37,13 @@ function optionsById(pairs: [string | null, string | null][]): { v: string; l: s
   return [...m.entries()].map(([v, l]) => ({ v, l })).sort((a, b) => a.l.localeCompare(b.l));
 }
 
-export function TicketsClient({ rows, config, canManage, currentUserId, views, lockedClient, embedded = false, initialFocus = null }: {
+export function TicketsClient({ rows, config, canManage, currentUserId, views, lockedClient, initialFocus = null }: {
   rows: TicketRow[]; config: ClientConfig; canManage: boolean; currentUserId: string; views: SavedView[];
   /** Drill-down from an overview number (?focus=…): opens the list already narrowed to those tickets. */
   initialFocus?: TicketFocus | null;
   /** Set inside a client workspace: rows are already scoped server-side, so the client filter is
    *  hidden, new tickets pre-select this client, and exports stay within it. */
   lockedClient?: { id: string; name: string };
-  /** The workspace draws its own heading and actions; skip this component's. */
-  embedded?: boolean;
 }) {
   const router = useRouter();
   // "Resolved" must not be hidden by the default open-only filter.
@@ -58,7 +53,6 @@ export function TicketsClient({ rows, config, canManage, currentUserId, views, l
   const [activeView, setActiveView] = React.useState<string | null>(null);
   const [colsOpen, setColsOpen] = React.useState(false);
   const [saveOpen, setSaveOpen] = React.useState(false);
-  const [more, setMore] = React.useState(false);
 
   const allColumns = React.useMemo(
     () => [...NATIVE_COLUMNS, ...config.customColumns.map((c) => ({ key: `cf:${c.key}`, label: c.label }))],
@@ -79,33 +73,9 @@ export function TicketsClient({ rows, config, canManage, currentUserId, views, l
     setColumns(v.columns.length ? v.columns : DEFAULT_COLUMNS);
     setSort(v.sort);
   }
-  function toggle<T extends string>(key: keyof TicketFilters, value: T) {
-    setFilters((f) => {
-      const cur = (f[key] as T[] | undefined) ?? [];
-      const next = cur.includes(value) ? cur.filter((v) => v !== value) : [...cur, value];
-      return { ...f, [key]: next };
-    });
-  }
-  const chipOn = (key: keyof TicketFilters, value: string) => ((filters[key] as string[] | undefined) ?? []).includes(value);
-
-  const activeViewObj = views.find((v) => v.id === activeView) ?? null;
 
   return (
     <div className="flex flex-col gap-4">
-      {!embedded && (
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Tickets</h1>
-          <p className="mt-0.5 text-sm text-muted-foreground">Configurable incidents, requests, changes, bugs &amp; tasks — with SLA targets, custom fields and saved views.</p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {canManage && <Link href="/tickets/settings" className="inline-flex h-9 items-center gap-1.5 rounded-md border px-3 text-sm font-medium hover:border-primary/50 hover:text-primary"><SettingsIcon className="size-4" /> Configure</Link>}
-          <Link href="/tickets/board" className="inline-flex h-9 items-center gap-1.5 rounded-md border px-3 text-sm font-medium hover:border-primary/50 hover:text-primary"><LayoutGridIcon className="size-4" /> Board</Link>
-          <Link href={lockedClient ? `/tickets/new?clientId=${lockedClient.id}` : "/tickets/new"} className="inline-flex h-9 items-center gap-1.5 rounded-md bg-foreground px-3 text-sm font-medium text-background hover:bg-foreground/90"><PlusIcon className="size-4" /> New ticket</Link>
-        </div>
-      </div>
-      )}
-
       {/* Saved views */}
       <div className="flex flex-wrap items-center gap-1.5">
         <ViewChip label="All open" active={activeView === null} onClick={() => applyView(null)} />
@@ -113,43 +83,15 @@ export function TicketsClient({ rows, config, canManage, currentUserId, views, l
         <button onClick={() => setSaveOpen(true)} className="inline-flex items-center gap-1 rounded-full border border-dashed px-2.5 py-1 text-xs text-muted-foreground hover:text-primary"><BookmarkIcon className="size-3" /> Save view</button>
       </div>
 
-      {/* Toolbar */}
-      <div className="flex flex-col gap-2 rounded-lg border bg-card p-2">
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="relative min-w-0 flex-1">
-            <SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input value={filters.text ?? ""} onChange={(e) => setFilters((f) => ({ ...f, text: e.target.value }))} placeholder="Search number, title, client, system…" className="h-9 pl-8" />
-          </div>
-          <button onClick={() => setFilters((f) => ({ ...f, mine: f.mine === "assigned" ? null : "assigned" }))} className={cn("h-9 rounded-md border px-3 text-sm", filters.mine === "assigned" ? "border-primary bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted")}>Assigned to me</button>
-          <button onClick={() => setFilters((f) => ({ ...f, mine: f.mine === "requested" ? null : "requested" }))} className={cn("h-9 rounded-md border px-3 text-sm", filters.mine === "requested" ? "border-primary bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted")}>Raised by me</button>
-          <button onClick={() => setColsOpen(true)} className="inline-flex h-9 items-center gap-1.5 rounded-md border px-3 text-sm text-muted-foreground hover:bg-muted"><Columns3Icon className="size-4" /> Columns</button>
-          <form method="post" action="/api/tickets/export">
-            {/* Inside a workspace the export is pinned to this client by ID — a same-named client never mixes in. */}
-            <input type="hidden" name="payload" value={JSON.stringify({ filters: lockedClient ? { ...filters, clientIds: [lockedClient.id] } : filters, columns, sort })} />
-            <button type="submit" className="inline-flex h-9 items-center gap-1.5 rounded-md border px-3 text-sm text-muted-foreground hover:bg-muted"><DownloadIcon className="size-4" /> Export</button>
-          </form>
-        </div>
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
-          <div className="flex flex-wrap items-center gap-1">
-            <span className="text-[0.625rem] font-semibold uppercase tracking-wide text-muted-foreground/70">Show</span>
-            {(Object.keys(FOCUS_LABEL) as TicketFocus[]).map((k) => (
-              <button key={k} onClick={() => setFilters((f) => f.focus === k ? { ...f, focus: null } : { ...f, focus: k, onlyOpen: k !== "resolved7d" })} className={cn("rounded-full border px-2 py-0.5 text-xs transition-colors", filters.focus === k ? "border-primary bg-primary/10 font-medium text-primary" : "text-muted-foreground hover:bg-muted")}>{FOCUS_LABEL[k]}</button>
-            ))}
-          </div>
-          <ChipGroup label="Type" options={config.types.map((t) => ({ v: t.id, l: t.name }))} on={(v) => chipOn("typeIds", v)} toggle={(v) => toggle("typeIds", v)} />
-          <ChipGroup label="Stage" options={STATUS_CATEGORIES.map((c) => ({ v: c, l: STATUS_CATEGORY_LABEL[c] }))} on={(v) => chipOn("statusCategories", v)} toggle={(v) => toggle<TicketStatusCategory>("statusCategories", v as TicketStatusCategory)} />
-          <ChipGroup label="Priority" options={TICKET_PRIORITIES.map((p) => ({ v: p, l: TICKET_PRIORITY_LABEL[p] }))} on={(v) => chipOn("priorities", v)} toggle={(v) => toggle("priorities", v)} />
-          <label className="flex items-center gap-1.5 text-xs text-muted-foreground"><input type="checkbox" checked={filters.onlyOpen ?? false} onChange={(e) => setFilters((f) => ({ ...f, onlyOpen: e.target.checked }))} className="accent-primary" /> Open only</label>
-          <button onClick={() => setMore((m) => !m)} className="text-xs text-muted-foreground hover:text-primary">{more ? "Fewer filters" : "More filters"}</button>
-          {(activeViewObj || Object.keys(filters).length > 1) && <button onClick={() => applyView(null)} className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-destructive"><XIcon className="size-3" /> Reset</button>}
-        </div>
-        {more && (
-          <div className="flex flex-wrap items-start gap-x-4 gap-y-1.5 border-t pt-2">
-            {assignees.length > 0 && <ChipGroup label="Assignee" options={assignees} on={(v) => chipOn("assigneeIds", v)} toggle={(v) => toggle("assigneeIds", v)} />}
-            {!lockedClient && clients.length > 0 && <ChipGroup label="Client" options={clients} on={(v) => chipOn("clientIds", v)} toggle={(v) => toggle("clientIds", v)} />}
-          </div>
-        )}
-      </div>
+      <TicketFilterBar
+        filters={filters}
+        setFilters={setFilters}
+        config={{ types: config.types.map((t) => ({ v: t.id, l: t.name })), assignees, clients }}
+        lockedClient={lockedClient}
+        onColumns={() => setColsOpen(true)}
+        exportPayload={JSON.stringify({ filters: lockedClient ? { ...filters, clientIds: [lockedClient.id] } : filters, columns, sort })}
+        onReset={() => { setActiveView(null); setFilters({}); }}
+      />
 
       <div className="flex items-center justify-between text-xs text-muted-foreground">
         <span>{shown.length} of {rows.length} tickets</span>
@@ -207,7 +149,7 @@ export function TicketsClient({ rows, config, canManage, currentUserId, views, l
       {!canManage && <p className="text-xs text-muted-foreground">You see the tickets of the clients you&apos;re staffed on, plus any you raised or are assigned to.</p>}
 
       {colsOpen && <ColumnsDialog all={allColumns} labelOf={labelOf} value={columns} onChange={setColumns} onClose={() => setColsOpen(false)} />}
-      {saveOpen && <SaveViewDialog current={activeViewObj} filters={filters} columns={columns} sort={sort} onClose={() => setSaveOpen(false)} onSaved={() => { setSaveOpen(false); router.refresh(); }} />}
+      {saveOpen && <SaveViewDialog current={views.find((v) => v.id === activeView) ?? null} filters={filters} columns={columns} sort={sort} onClose={() => setSaveOpen(false)} onSaved={() => { setSaveOpen(false); router.refresh(); }} />}
     </div>
   );
 }
@@ -230,16 +172,6 @@ function ViewChip({ label, active, shared, onClick }: { label: string; active: b
   );
 }
 
-function ChipGroup({ label, options, on, toggle }: { label: string; options: { v: string; l: string }[]; on: (v: string) => boolean; toggle: (v: string) => void }) {
-  return (
-    <div className="flex flex-wrap items-center gap-1">
-      <span className="text-[0.625rem] font-semibold uppercase tracking-wide text-muted-foreground/70">{label}</span>
-      {options.map((o) => (
-        <button key={o.v} onClick={() => toggle(o.v)} className={cn("rounded-full border px-2 py-0.5 text-xs transition-colors", on(o.v) ? "border-primary bg-primary/10 font-medium text-primary" : "text-muted-foreground hover:bg-muted")}>{o.l}</button>
-      ))}
-    </div>
-  );
-}
 
 // `all` holds only addable columns (archived fields excluded); `labelOf` also names archived columns a
 // saved view already shows, so they read "Name (archived)" in the shown list.

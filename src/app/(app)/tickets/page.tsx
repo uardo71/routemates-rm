@@ -1,33 +1,26 @@
 import Link from "next/link";
-import { AlertTriangleIcon, CheckCircle2Icon, LayoutGridIcon, ListIcon, PlusIcon, TicketIcon, UserXIcon, UsersIcon } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/session";
+import { can } from "@/lib/permissions";
 import { visibleClientWhere, visibleTicketWhere } from "@/lib/permissions";
 import { isOpenCategory } from "@/lib/ticket-config";
-import { StatCard } from "@/components/stat-card";
-import { InitialsAvatar } from "@/components/initials-avatar";
-import { cn } from "@/lib/utils";
+import { summarize, type ClientRow } from "@/lib/support-overview";
+import { SupportShell } from "./support-shell";
+import { SupportKpis } from "./support-kpis";
+import { ClientsTable } from "./clients-table";
 
 export const metadata = { title: "Support — clients" };
 
-// The Support landing page: one card per client, the way Azure DevOps lists projects. Pick a client
-// to enter its workspace instead of filtering a company-wide list every time. Scoped by team
-// membership — an admin sees every account, everyone else the accounts they're staffed on.
+// The Support landing page: every client account as one row of a triage table, worst first. It was
+// a card grid, which stopped working somewhere around two dozen accounts — the same thing that
+// happened to /portfolio, fixed the same way. Counting lives here; ranking, filtering and the
+// "needs attention" rule live in the pure lib so the tiles and the table cannot disagree.
 
-type ClientStats = { open: number; unassigned: number; breached: number; critical: number; resolved7d: number; lastActivity: Date | null };
-
-function emptyStats(): ClientStats {
-  return { open: 0, unassigned: 0, breached: 0, critical: 0, resolved7d: 0, lastActivity: null };
-}
-
-function daysAgo(d: Date | null, now: number): string {
-  if (!d) return "no activity";
-  const days = Math.floor((now - d.getTime()) / 86_400_000);
-  if (days <= 0) return "today";
-  if (days === 1) return "yesterday";
-  if (days < 30) return `${days}d ago`;
-  return `${Math.floor(days / 30)}mo ago`;
-}
+type Acc = {
+  open: number; unassigned: number; breached: number; critical: number; resolved7d: number;
+  lastActivity: Date | null; oldestOpen: Date | null;
+};
+const empty = (): Acc => ({ open: 0, unassigned: 0, breached: 0, critical: 0, resolved7d: 0, lastActivity: null, oldestOpen: null });
 
 export default async function SupportOverviewPage() {
   const user = await requireUser();
@@ -47,7 +40,7 @@ export default async function SupportOverviewPage() {
     prisma.ticket.findMany({
       where: await visibleTicketWhere(user),
       select: {
-        clientId: true, assigneeId: true, priority: true, updatedAt: true, resolvedAt: true,
+        clientId: true, assigneeId: true, priority: true, updatedAt: true, resolvedAt: true, createdAt: true,
         firstResponseAt: true, respondBy: true, resolveBy: true,
         statusDef: { select: { category: true } },
         typeDef: { select: { slaApplicable: true } },
@@ -55,118 +48,58 @@ export default async function SupportOverviewPage() {
     }),
   ]);
 
-  const stats = new Map<string, ClientStats>();
+  const acc = new Map<string, Acc>();
   let unfiled = 0; // tickets with no client at all
   for (const t of tickets) {
     const key = t.clientId ?? "";
     if (!key) unfiled++;
-    const s = stats.get(key) ?? emptyStats();
-    const open = isOpenCategory(t.statusDef.category);
-    if (open) {
+    const s = acc.get(key) ?? empty();
+    if (isOpenCategory(t.statusDef.category)) {
       s.open++;
       if (!t.assigneeId) s.unassigned++;
       if (t.priority === "CRITICAL") s.critical++;
-      // Same rule as the SLA pill: the live target is respond-by until answered, then resolve-by.
-      // A type with no SLA never counts as breached.
+      // Same rule as the SLA badge: respond-by until answered, then resolve-by. A type with no SLA
+      // never counts as breached.
       const target = t.firstResponseAt ? t.resolveBy : t.respondBy;
       if (t.typeDef.slaApplicable && target && now > target.getTime()) s.breached++;
+      if (!s.oldestOpen || t.createdAt < s.oldestOpen) s.oldestOpen = t.createdAt;
     }
     if (t.resolvedAt && t.resolvedAt >= weekAgo) s.resolved7d++;
     if (!s.lastActivity || t.updatedAt > s.lastActivity) s.lastActivity = t.updatedAt;
-    stats.set(key, s);
+    acc.set(key, s);
   }
-  const total = [...stats.values()].reduce(
-    (a, s) => ({ open: a.open + s.open, unassigned: a.unassigned + s.unassigned, breached: a.breached + s.breached, resolved7d: a.resolved7d + s.resolved7d }),
-    { open: 0, unassigned: 0, breached: 0, resolved7d: 0 },
-  );
 
-  // Busiest accounts first; quiet ones (no open work) sink to the bottom alphabetically.
-  const cards = clients
-    .map((c) => ({ ...c, s: stats.get(c.id) ?? emptyStats() }))
-    .sort((a, b) => b.s.open - a.s.open || a.name.localeCompare(b.name));
+  const rows: ClientRow[] = clients.map((c) => {
+    const s = acc.get(c.id) ?? empty();
+    const leads = c.teamMembers.filter((m) => m.role === "LEAD");
+    return {
+      id: c.id, name: c.name,
+      open: s.open, unassigned: s.unassigned, breached: s.breached, critical: s.critical, resolved7d: s.resolved7d,
+      oldestOpenDays: s.oldestOpen ? Math.floor((now - s.oldestOpen.getTime()) / 86_400_000) : null,
+      lastActivity: s.lastActivity ? s.lastActivity.toISOString() : "",
+      team: [...leads.map((m) => m.user.name), ...c.teamMembers.filter((m) => m.role !== "LEAD").map((m) => m.user.name)],
+      leadCount: leads.length,
+    };
+  });
+  const total = summarize(rows);
 
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Support</h1>
-          <p className="mt-0.5 text-sm text-muted-foreground">
-            {user.role === "ADMIN" ? "Every client account." : "The client accounts you're staffed on."} Open one to work its queue.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Link href="/tickets/all" className="inline-flex h-9 items-center gap-1.5 rounded-md border px-3 text-sm font-medium hover:border-primary/50 hover:text-primary"><ListIcon className="size-4" /> All tickets</Link>
-          <Link href="/tickets/board" className="inline-flex h-9 items-center gap-1.5 rounded-md border px-3 text-sm font-medium hover:border-primary/50 hover:text-primary"><LayoutGridIcon className="size-4" /> Board</Link>
-          <Link href="/tickets/new" className="inline-flex h-9 items-center gap-1.5 rounded-md bg-foreground px-3 text-sm font-medium text-background hover:bg-foreground/90"><PlusIcon className="size-4" /> New ticket</Link>
-        </div>
-      </div>
+    <SupportShell
+      active="clients"
+      title="Support"
+      subtitle={`${user.role === "ADMIN" ? "Every client account" : "The client accounts you're staffed on"} — worst first. Open one to work its queue.`}
+      canManage={can(user, "tickets:manage")}
+    >
+      <SupportKpis
+        items={[
+          { key: "open", label: "Open", value: total.open, href: "/tickets/all?focus=open", sublabel: `across ${rows.length} client${rows.length === 1 ? "" : "s"} · click to list` },
+          { key: "breached", label: "SLA breached", value: total.breached, href: "/tickets/all?focus=breached", sublabel: "past respond / resolve target", tone: total.breached > 0 ? "destructive" : "default" },
+          { key: "unassigned", label: "Unassigned", value: total.unassigned, href: "/tickets/all?focus=unassigned", sublabel: "open, nobody on it", tone: total.unassigned > 0 ? "warning" : "default" },
+          { key: "resolved", label: "Resolved", value: total.resolved7d, href: "/tickets/all?focus=resolved7d", sublabel: "last 7 days" },
+        ]}
+      />
 
-      {/* Every number drills into the list of exactly the tickets it counted. */}
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <Link href="/tickets/all?focus=open" className="block rounded-lg ring-primary/40 hover:ring-2"><StatCard label="Open" value={total.open} icon={TicketIcon} sublabel={`across ${cards.length} client${cards.length === 1 ? "" : "s"} · click to list`} /></Link>
-        <Link href="/tickets/all?focus=breached" className="block rounded-lg ring-primary/40 hover:ring-2"><StatCard label="SLA breached" value={total.breached} icon={AlertTriangleIcon} tone={total.breached > 0 ? "destructive" : "default"} sublabel="past respond / resolve target" /></Link>
-        <Link href="/tickets/all?focus=unassigned" className="block rounded-lg ring-primary/40 hover:ring-2"><StatCard label="Unassigned" value={total.unassigned} icon={UserXIcon} tone={total.unassigned > 0 ? "warning" : "default"} sublabel="open, nobody on it" /></Link>
-        <Link href="/tickets/all?focus=resolved7d" className="block rounded-lg ring-primary/40 hover:ring-2"><StatCard label="Resolved" value={total.resolved7d} icon={CheckCircle2Icon} sublabel="last 7 days" /></Link>
-      </div>
-
-      {cards.length === 0 ? (
-        <div className="rounded-lg border border-dashed p-12 text-center text-sm text-muted-foreground">
-          You&apos;re not staffed on any client account yet. Ask an admin to add you to a client&apos;s support team.
-        </div>
-      ) : (
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {cards.map((c) => {
-            const leads = c.teamMembers.filter((m) => m.role === "LEAD").map((m) => m.user.name);
-            const others = c.teamMembers.filter((m) => m.role !== "LEAD").map((m) => m.user.name);
-            const team = [...leads, ...others];
-            const attention = c.s.breached > 0 || c.s.critical > 0;
-            return (
-              <div
-                key={c.id}
-                className={cn(
-                  "flex flex-col gap-4 rounded-lg border bg-card p-4 transition-colors hover:border-primary/50",
-                  attention && "border-rose-500/40",
-                )}
-              >
-                <Link href={`/tickets/c/${c.id}`} className="group flex items-center gap-3">
-                  <InitialsAvatar name={c.name} size="lg" />
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate font-semibold group-hover:text-primary">{c.name}</div>
-                    <div className="text-xs text-muted-foreground">{daysAgo(c.s.lastActivity, now)}</div>
-                  </div>
-                  <div className="text-right">
-                    <div className="font-mono text-2xl font-semibold tabular-nums">{c.s.open}</div>
-                    <div className="text-[10px] uppercase tracking-wide text-muted-foreground">open</div>
-                  </div>
-                </Link>
-
-                {/* each number opens the workspace already narrowed to exactly those tickets */}
-                <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
-                  <Link href={`/tickets/c/${c.id}?focus=breached`} className={cn("inline-flex items-center gap-1 hover:underline", c.s.breached > 0 ? "font-medium text-rose-600 dark:text-rose-400" : "text-muted-foreground/60")}>
-                    <AlertTriangleIcon className="size-3" /> {c.s.breached} breached
-                  </Link>
-                  <Link href={`/tickets/c/${c.id}?focus=unassigned`} className={cn("inline-flex items-center gap-1 hover:underline", c.s.unassigned > 0 ? "font-medium text-amber-600" : "text-muted-foreground/60")}>
-                    <UserXIcon className="size-3" /> {c.s.unassigned} unassigned
-                  </Link>
-                  {c.s.critical > 0 && <Link href={`/tickets/c/${c.id}?focus=critical`} className="font-medium text-rose-600 hover:underline dark:text-rose-400">{c.s.critical} critical</Link>}
-                  <Link href={`/tickets/c/${c.id}?focus=resolved7d`} className="text-muted-foreground/60 hover:underline">{c.s.resolved7d} resolved this week</Link>
-                </div>
-
-                <div className="flex items-center gap-1.5 border-t pt-3 text-xs text-muted-foreground">
-                  <UsersIcon className="size-3.5 shrink-0" />
-                  {team.length === 0 ? (
-                    <span className="italic">no team yet</span>
-                  ) : (
-                    <span className="truncate">
-                      {team.slice(0, 3).join(", ")}{team.length > 3 && ` +${team.length - 3}`}
-                    </span>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
+      <ClientsTable rows={rows} nowMs={now} />
 
       {unfiled > 0 && (
         <p className="text-xs text-muted-foreground">
@@ -174,6 +107,6 @@ export default async function SupportOverviewPage() {
           <Link href="/tickets/all" className="text-primary hover:underline">All tickets</Link>.
         </p>
       )}
-    </div>
+    </SupportShell>
   );
 }

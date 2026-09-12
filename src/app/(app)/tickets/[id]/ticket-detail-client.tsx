@@ -1,5 +1,13 @@
 "use client";
 
+// Layout objection, recorded as asked and implemented as specified (Phase 3):
+// On a STAGE-mode ticket (change request, bug) Discussion sits in the RIGHT column at ~40% width. I
+// think a long comment thread reads as the page's main activity surface and will feel cramped there
+// beside Files and the field blocks. The owner's call was to build it this way and re-judge it on a
+// real ticket with a real thread rather than guess — so this is deliberate, not an oversight.
+// On a STATUS-mode ticket the question is settled: with no stepper or stage panel the left column
+// was a lone Description, so Files and Discussion live there and the right column is pure metadata.
+
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -30,8 +38,8 @@ import {
 } from "../actions";
 import { saveChangeRequestAction } from "../cr-actions";
 import { formatDuration, isCrTerminal, nextStepState, type CrDraft } from "@/lib/change-request";
-import { ChangeRequestLifecycle, CrRecordSection, type CrView } from "./change-request-panel";
-import { TicketStageLifecycle, TicketStageFields, type StageView, type StageFieldVal } from "./stage-panel";
+import { ChangeRequestLifecycle, type CrView } from "./change-request-panel";
+import { TicketStageLifecycle, type StageView, type StageFieldVal } from "./stage-panel";
 import { TicketFiles, type TicketFile } from "./ticket-files";
 
 // Laid out like an Azure DevOps work item: a sticky header (type eyebrow, title, assignee, state
@@ -175,6 +183,21 @@ function WorkItem({ t, config, canManage, involved, users, clients, projects, co
     </Section>
   );
 
+  // A STATUS-mode ticket has no stepper and no stage panel, so the left column would be a lone
+  // Description beside a packed right column. Files and Discussion move over to fill it. A stage
+  // type's left column is already full, so there they stay on the right.
+  const stageMode = !!(t.cr || t.stage);
+  const filesSection = (
+    <Section title={`Files${t.files.length ? ` (${t.files.length})` : ""}`}>
+      <TicketFiles key={t.cr?.stage ?? "ticket"} ticketId={t.id} files={t.files} canUpload={canContribute} crStage={t.cr ? t.cr.stage : undefined} />
+    </Section>
+  );
+  const discussionSection = (
+    <Section title="Discussion">
+      <Conversation comments={conversation} canInternal={canManage} postAction={post} deleteAttachmentAction={deleteTicketAttachmentAction} editAction={editCommentAction} deleteCommentAction={deleteCommentAction} />
+    </Section>
+  );
+
   return (
     <div className="flex flex-col gap-5">
       <Link href={t.clientId ? `/tickets/c/${t.clientId}` : "/tickets"} className="text-sm text-muted-foreground hover:underline">
@@ -297,19 +320,10 @@ function WorkItem({ t, config, canManage, involved, users, clients, projects, co
         </div>
       </div>
 
-      {/* ---------- Body ---------- */}
-      {tab === "details" && t.stage && (
-        <TicketStageLifecycle ticketId={t.id} view={t.stage} editable={canContribute} canManage={canManage} dirty={dirty} />
-      )}
-      {tab === "details" && t.cr && crd && (
-        <ChangeRequestLifecycle
-          ticketId={t.id} cr={t.cr} draft={crd} set={setCr} editable={canContribute} canManage={canManage} dirty={dirty}
-          assigneeId={d.assigneeId} resolution={d.resolution} users={users}
-        />
-      )}
+      {/* ---------- Body: one lifecycle on the left, everything the ticket IS on the right ---------- */}
       {tab === "details" && (
-        <div className={cn("grid gap-6", hasFields ? "xl:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)]" : "lg:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]")}>
-          {/* Left: Description + Discussion */}
+        <div className="grid gap-6 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
+          {/* LEFT (~60%) — what the ticket says, and (stage types only) where it is in its lifecycle */}
           <div className="flex min-w-0 flex-col gap-6">
             <Section title="Description">
               {ro ? (
@@ -318,49 +332,61 @@ function WorkItem({ t, config, canManage, involved, users, clients, projects, co
                 <Textarea value={d.description} onChange={(e) => set({ description: e.target.value })} rows={8} placeholder="Describe the issue or request…" className="border-border/60 bg-background focus:border-primary/50" />
               )}
             </Section>
-            <Section title={`Files${t.files.length ? ` (${t.files.length})` : ""}`}>
-              <TicketFiles key={t.cr?.stage ?? "ticket"} ticketId={t.id} files={t.files} canUpload={canContribute} crStage={t.cr ? t.cr.stage : undefined} />
-            </Section>
-            <Section title="Discussion">
-              <Conversation comments={conversation} canInternal={canManage} postAction={post} deleteAttachmentAction={deleteTicketAttachmentAction} editAction={editCommentAction} deleteCommentAction={deleteCommentAction} />
-            </Section>
+
+            {/* Exactly one lifecycle representation per ticket. A STATUS-mode type has none at all. */}
+            {t.stage && (
+              <TicketStageLifecycle
+                ticketId={t.id} view={t.stage} editable={canContribute} canManage={canManage} dirty={dirty}
+                fields={t.stageFields} values={d.fields} users={users}
+                onChange={(id, v) => set({ fields: { ...d.fields, [id]: v } })}
+              />
+            )}
+            {t.cr && crd && (
+              <ChangeRequestLifecycle
+                ticketId={t.id} cr={t.cr} draft={crd} set={setCr} editable={canContribute} canManage={canManage} dirty={dirty}
+                assigneeId={d.assigneeId} resolution={d.resolution} users={users}
+              />
+            )}
+
+            {!stageMode && filesSection}
+            {!stageMode && discussionSection}
           </div>
 
-          {/* Middle: Classification + SLA */}
+          {/* RIGHT (~40%) — same order whichever lifecycle the type runs on */}
           <div className="flex min-w-0 flex-col gap-6">
+            <Section title="Details">
+              <Fld label="Requester"><Ro>{t.requesterName}</Ro></Fld>
+              <Fld label="Created"><Ro>{fmtDT(t.createdAt)}</Ro></Fld>
+            </Section>
+
             <Section title="Classification">
               <Fld label="Category">{ro ? <Ro>{t.category}</Ro> : <Input value={d.category} onChange={(e) => set({ category: e.target.value })} className={inputCls} />}</Fld>
               <Fld label="System / CI">{ro ? <Ro>{t.systemRef}</Ro> : <Input value={d.systemRef} onChange={(e) => set({ systemRef: e.target.value })} className={inputCls} placeholder="e.g. DA1" />}</Fld>
               <Fld label="Module">{ro ? <Ro>{t.moduleRef}</Ro> : <Input value={d.moduleRef} onChange={(e) => set({ moduleRef: e.target.value })} className={inputCls} placeholder="e.g. FI, MM, AP" />}</Fld>
               <Fld label="Due date">{ro ? <Ro>{t.dueDate}</Ro> : <Input type="date" value={d.dueDate} onChange={(e) => set({ dueDate: e.target.value })} className={inputCls} />}</Fld>
-              <Fld label="Requester"><Ro>{t.requesterName}</Ro></Fld>
-              <Fld label="Created"><Ro>{fmtDT(t.createdAt)}</Ro></Fld>
             </Section>
-            {t.cr && crd
-              ? <CrRecordSection draft={crd} set={setCr} editable={canContribute} loggedMinutes={t.cr.loggedMinutes} stage={t.cr.stage} />
-              : t.stage
-                ? <TicketStageFields
-                    typeName={t.typeName} stages={t.stage.stages} stageKey={t.stage.stageKey}
-                    fields={t.stageFields} values={d.fields} editable={!ro} users={users}
-                    onChange={(id, v) => set({ fields: { ...d.fields, [id]: v } })} />
-                : t.slaExempt ? null : <SlaSection t={t} />}
-            {!hasFields && resolutionSection}
-          </div>
 
-          {/* Right: the type's own fields + resolution (only when the type has fields) */}
-          {hasFields && <div className="flex min-w-0 flex-col gap-6">
-            <Section title={`${t.typeName} fields`}>
-              {ro ? (
-                t.fields.map((f) => <Fld key={f.id} label={f.name}><Ro>{f.display}</Ro></Fld>)
-              ) : (
-                <div className="grid grid-cols-1 gap-3">
-                  {t.fields.map((f) => <FieldControl key={f.id} field={f} users={users} value={d.fields[f.id]} onChange={(v) => set({ fields: { ...d.fields, [f.id]: v } })} />)}
-                </div>
-              )}
-              {t.archivedFields.map((f) => <ArchivedFieldValue key={f.id} name={f.name} display={f.display} />)}
-            </Section>
+            {/* The clocks and which policy set them — a STATUS-mode type only; the others have no SLA. */}
+            {!t.cr && !t.stage && !t.slaExempt && <SlaSection t={t} />}
+
+            {hasFields && (
+              <Section title={`${t.typeName} fields`}>
+                {ro ? (
+                  t.fields.map((f) => <Fld key={f.id} label={f.name}><Ro>{f.display}</Ro></Fld>)
+                ) : (
+                  <div className="grid grid-cols-1 gap-3">
+                    {t.fields.map((f) => <FieldControl key={f.id} field={f} users={users} value={d.fields[f.id]} onChange={(v) => set({ fields: { ...d.fields, [f.id]: v } })} />)}
+                  </div>
+                )}
+                {t.archivedFields.map((f) => <ArchivedFieldValue key={f.id} name={f.name} display={f.display} />)}
+              </Section>
+            )}
+
             {resolutionSection}
-          </div>}
+
+            {stageMode && filesSection}
+            {stageMode && discussionSection}
+          </div>
         </div>
       )}
 

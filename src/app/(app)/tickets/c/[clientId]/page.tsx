@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { AlertTriangleIcon, CheckCircle2Icon, GitPullRequestIcon, PlusIcon, TicketIcon, UserXIcon, UsersIcon } from "lucide-react";
+import { AlertTriangleIcon, CheckCircle2Icon, GitPullRequestIcon, TicketIcon, UserXIcon, UsersIcon } from "lucide-react";
 import { CR_FLOW, CR_STAGES, asCrStage, isChangeRequestType } from "@/lib/change-request";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/session";
@@ -9,9 +9,9 @@ import { loadTicketConfig } from "@/lib/ticket-config.server";
 import { isOpenCategory } from "@/lib/ticket-config";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatCard } from "@/components/stat-card";
-import { InitialsAvatar } from "@/components/initials-avatar";
 import { serializeTicketRow, customColumnsOf, TICKET_ROW_SELECT } from "../../serialize";
 import { TicketsClient, type ClientConfig } from "../../tickets-client";
+import { SupportShell } from "../../support-shell";
 import { ClientTeamCard } from "../../client-team-card";
 import { ClientSwitcher } from "../../client-switcher";
 import { normalizeFilters, type TicketFocus } from "../../filters";
@@ -104,24 +104,14 @@ export default async function ClientWorkspacePage({ params, searchParams }: { pa
   };
 
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <Link href="/tickets" className="text-sm text-muted-foreground hover:underline">← Clients overview</Link>
-        {switcherClients.length > 1 && <ClientSwitcher current={client.id} clients={switcherClients} />}
-      </div>
-
-      <div className="flex flex-wrap items-center gap-4">
-        <InitialsAvatar name={client.name} size="lg" />
-        <div className="min-w-0 flex-1">
-          <h1 className="truncate text-2xl font-semibold tracking-tight">{client.name}</h1>
-          <p className="text-sm text-muted-foreground">
-            Support workspace · {team.length === 0 ? "no team assigned" : `${team.length} on the team`}
-          </p>
-        </div>
-        <Link href={`/tickets/new?clientId=${client.id}`} className="inline-flex h-9 items-center gap-1.5 rounded-md bg-foreground px-3 text-sm font-medium text-background hover:bg-foreground/90">
-          <PlusIcon className="size-4" /> New ticket
-        </Link>
-      </div>
+    <SupportShell
+      active="clients"
+      title={client.name}
+      subtitle={`Support workspace · ${team.length === 0 ? "no team assigned" : `${team.length} on the team`}`}
+      canManage={canManage}
+      newTicketHref={`/tickets/new?clientId=${client.id}`}
+      aside={switcherClients.length > 1 ? <ClientSwitcher current={client.id} clients={switcherClients} /> : undefined}
+    >
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <Link href={`/tickets/c/${client.id}?focus=open`} className="block rounded-lg ring-primary/40 hover:ring-2"><StatCard label="Open" value={open.length} icon={TicketIcon} sublabel={`${rows.length} total · click to list`} /></Link>
@@ -147,7 +137,6 @@ export default async function ClientWorkspacePage({ params, searchParams }: { pa
         <TicketsClient
           key={focus ?? "all"}
           initialFocus={focus}
-          embedded
           lockedClient={{ id: client.id, name: client.name }}
           rows={rows}
           config={config}
@@ -179,6 +168,6 @@ export default async function ClientWorkspacePage({ params, searchParams }: { pa
           </Card>
         </aside>
       </div>
-    </div>
+    </SupportShell>
   );
 }

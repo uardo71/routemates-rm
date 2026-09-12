@@ -1,9 +1,10 @@
 // The Change request lifecycle + record panel, rendered to HTML and snapshotted.
 //
-// Why: extracting the lifecycle rendering into a component Bug can reuse must not change a single
-// character of what Change request draws. The snapshot below was captured from the panel BEFORE that
-// extraction; if the refactor alters the markup in any way, this test fails. It stays afterwards as a
-// regression guard on the panel's output.
+// The snapshots began life proving that extracting the shared lifecycle component changed nothing.
+// They have since been regenerated twice ON PURPOSE — Phase 2 (the restyle) and Phase 3 (one panel
+// per ticket, showing the stage the stepper is on). They guard the CURRENT intended output, and the
+// outright assertions below guard the two rules a careless snapshot update could otherwise erase:
+// an unmet gate is never a red cross, and only ONE stage is ever rendered at a time.
 //
 // Server-side deps are mocked away: this renders the client component only (its dialog is closed, so
 // no router or toast is reached).
@@ -60,7 +61,7 @@ function render(node: Parameters<typeof renderToStaticMarkup>[0]): string {
 }
 
 describe("Change request panel markup", () => {
-  it("renders the lifecycle exactly as before the generic-stage extraction", () => {
+  it("renders the lifecycle with only the current stage's record, never every stage at once", () => {
     const html = render(
       createElement(ChangeRequestLifecycle, {
         ticketId: "tkt-1", cr: CR, draft: DRAFT, set: () => {},
@@ -68,10 +69,18 @@ describe("Change request panel markup", () => {
         assigneeId: "u-1", resolution: "", users: USERS,
       }),
     );
+    // The stage it is in — Evaluation — brings its own fields into the one panel.
+    expect(html).toContain("Impact assessment and proposed solution");
+    // ...and no other stage's fields are anywhere on the page. This is the whole point of Phase 3:
+    // the old panel stacked Evaluation, Customer approval, Development, Unit testing, UAT and
+    // Go-live on every change request, which was the duplicate lifecycle the redesign set out to kill.
+    for (const otherStage of ["Transports / release", "Tested on", "Signed off by", "Went live on"]) {
+      expect(html).not.toContain(otherStage);
+    }
     expect(html).toMatchSnapshot();
   });
 
-  it("renders the record section exactly as before", () => {
+  it("renders one stage's record on its own", () => {
     const html = render(
       createElement(CrRecordSection, {
         draft: DRAFT, set: () => {}, editable: true, loggedMinutes: 150, stage: "evaluation",
@@ -94,7 +103,7 @@ describe("Change request panel markup", () => {
     expect(html).toMatchSnapshot();
   });
 
-  it("renders a read-only, terminal change request the same way too", () => {
+  it("renders a read-only, terminal change request", () => {
     const html = render(
       createElement(ChangeRequestLifecycle, {
         ticketId: "tkt-2", cr: { ...CR, stage: "closed", statusName: "Closed" }, draft: DRAFT, set: () => {},

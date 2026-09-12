@@ -1,8 +1,8 @@
-import Link from "next/link";
 import { requirePermission } from "@/lib/session";
 import { loadTicketConfig } from "@/lib/ticket-config.server";
 import { getCompanySlaDefault } from "@/lib/sla.server";
 import { TicketSettingsClient, type SettingsConfig } from "./settings-client";
+import { SupportShell } from "../support-shell";
 
 export const metadata = { title: "Ticket settings" };
 
@@ -32,15 +32,13 @@ export default async function TicketSettingsPage() {
   };
 
   return (
-    <div className="mx-auto flex max-w-4xl flex-col gap-5">
-      <div className="flex items-center justify-between">
-        <div>
-          <Link href="/tickets" className="text-sm text-muted-foreground hover:underline">← Tickets</Link>
-          <h1 className="mt-1 text-2xl font-semibold tracking-tight">Ticket configuration</h1>
-          <p className="mt-0.5 text-sm text-muted-foreground">Types, per-type workflows, custom fields and what customers can see or do.</p>
-        </div>
-      </div>
+    <SupportShell
+      active="settings"
+      title="Ticket configuration"
+      subtitle="Types, per-type workflows, custom fields and what customers can see or do."
+      canManage
+    >
       <TicketSettingsClient config={config} slaDefault={slaDefault} />
-    </div>
+    </SupportShell>
   );
 }

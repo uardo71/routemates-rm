@@ -39,7 +39,6 @@ export function ChangeRequestLifecycle({ ticketId, cr, draft, set, editable, can
 }) {
   const stage = cr.stage;
   const record = crRecordFromDraft(draft, { assigneeId: assigneeId || null, resolution: resolution || null, evidence: cr.evidence });
-  const checks = stage ? exitChecks(stage, record) : [];
   const next = stage ? nextStage(stage) : null;
   const rejectedFrom = stage === "rejected" ? [...cr.events].reverse().find((e) => e.toKey === "rejected")?.fromKey ?? null : null;
   const curIdx = (CR_FLOW as readonly string[]).indexOf(stage === "rejected" ? rejectedFrom ?? "" : stage ?? "");
@@ -49,7 +48,7 @@ export function ChangeRequestLifecycle({ ticketId, cr, draft, set, editable, can
     <StageLifecycle
       ticketId={ticketId}
       note="No SLA — a change request is tracked by stage, time in stage and its next step."
-      flow={CR_FLOW.map((k) => ({ key: k, label: CR_STAGES[k].label, terminal: isCrTerminal(k) }))}
+      flow={CR_FLOW.map((k) => ({ key: k, label: CR_STAGES[k].label, terminal: isCrTerminal(k), purpose: CR_STAGES[k].purpose }))}
       timeInStage={cr.timeInStage}
       current={stage && def ? {
         key: stage, label: def.label, owner: def.owner, purpose: def.purpose, steps: def.steps,
@@ -57,7 +56,8 @@ export function ChangeRequestLifecycle({ ticketId, cr, draft, set, editable, can
       } : null}
       offFlowNotice={<>This ticket is in &ldquo;{cr.statusName}&rdquo;, which isn&apos;t a lifecycle stage. An administrator can check the change-request type in ticket settings.</>}
       stageSince={cr.stageSince}
-      checks={checks}
+      checksFor={(key) => { const st = asCrStage(key); return st ? exitChecks(st, record) : []; }}
+      stageBody={(key) => <CrRecordSection stage={asCrStage(key)} draft={draft} set={set} editable={editable} loggedMinutes={cr.loggedMinutes} />}
       next={next ? { key: next, label: CR_STAGES[next].label } : null}
       backOptions={curIdx > 0 ? CR_FLOW.slice(0, curIdx).map((k) => ({ key: k, label: CR_STAGES[k].label })) : []}
       close={{ key: "rejected", label: "Reject", title: "Reject the change request", noteLabel: "Why is it rejected?" }}
@@ -109,6 +109,14 @@ function NextStep({ draft, set, editable, users, todayIso, closed }: {
 
 // ---------- the record (what each stage produced), edited with the ticket's Save ----------
 
+/** What ONE stage of a change request recorded, drawn inside the lifecycle panel under the stage the
+ *  stepper is showing. Edited with the ticket's Save, as before.
+ *
+ *  This replaced a fixed stack of six cards — Evaluation, Customer approval, Development, Unit
+ *  testing, UAT, Go-live — that rendered ALL of them on every change request whatever stage it was
+ *  in. That stack was the duplicate-lifecycle problem this redesign set out to remove, so it is
+ *  gone rather than hidden: reach another stage by clicking its step. "Customer approval" was never
+ *  a stage of its own and now sits inside Evaluation, where its gate is checked. */
 export function CrRecordSection({ draft, set, editable, loggedMinutes, stage }: {
   draft: CrDraft; set: (p: Partial<CrDraft>) => void; editable: boolean; loggedMinutes: number; stage: CrStageKey | null;
 }) {
@@ -125,67 +133,56 @@ export function CrRecordSection({ draft, set, editable, loggedMinutes, stage }: 
     <Fld label={label}>{editable ? <Textarea value={draft[k]} onChange={(e) => set({ [k]: e.target.value })} rows={rows} placeholder={placeholder} className="border-border/60 bg-background" /> : <Ro pre>{draft[k]}</Ro>}</Fld>
   );
 
-  return (
-    <section className="flex flex-col gap-3">
-      <h2 className="border-b pb-1.5 text-sm font-semibold">Change request</h2>
-      <Group title="Evaluation" active={stage === "evaluation"}>
-        {area("assessment", "Impact assessment and proposed solution", 4, "What changes, what it touches, how it will be built")}
-        <div className="grid grid-cols-2 gap-2">
-          {txt("estimateHours", "Estimate (hours)", "e.g. 16")}
-          {txt("quoteReference", "Quote / offer ref.")}
+  const body = stage === "evaluation" ? (
+    <>
+      {area("assessment", "Impact assessment and proposed solution", 4, "What changes, what it touches, how it will be built")}
+      <div className="grid grid-cols-2 gap-2">
+        {txt("estimateHours", "Estimate (hours)", "e.g. 16")}
+        {txt("quoteReference", "Quote / offer ref.")}
+      </div>
+      <div className="flex flex-col gap-1">
+        <div className="flex justify-between text-[11px] text-muted-foreground">
+          <span>Logged on the ticket</span>
+          <span className="tabular-nums">{logged}h{est && est > 0 ? ` of ${est}h` : ""}</span>
         </div>
-        <div className="flex flex-col gap-1">
-          <div className="flex justify-between text-[11px] text-muted-foreground">
-            <span>Logged on the ticket</span>
-            <span className="tabular-nums">{logged}h{est && est > 0 ? ` of ${est}h` : ""}</span>
+        {pct !== null && (
+          <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+            <div className={cn("h-full rounded-full", pct > 1 ? "bg-destructive" : pct > 0.9 ? "bg-warning" : "bg-success")} style={{ width: `${Math.min(100, pct * 100)}%` }} />
           </div>
-          {pct !== null && (
-            <div className="h-1.5 overflow-hidden rounded-full bg-muted">
-              <div className={cn("h-full rounded-full", pct > 1 ? "bg-rose-500" : pct > 0.9 ? "bg-amber-500" : "bg-emerald-500")} style={{ width: `${Math.min(100, pct * 100)}%` }} />
-            </div>
-          )}
-        </div>
-      </Group>
-      <Group title="Customer approval" active={stage === "evaluation"}>
-        <div className="grid grid-cols-2 gap-2">
-          {txt("approvedByName", "Approved by")}
-          {date("approvedOn", "Approved on")}
-        </div>
-        {txt("approvalReference", "PO / e-mail reference")}
-      </Group>
-      <Group title="Development" active={stage === "development"}>
-        {date("plannedGoLive", "Planned go-live")}
-        {area("buildReference", "Transports / release", 2, "e.g. DA1K900123, DA1K900124")}
-      </Group>
-      <Group title="Unit testing" active={stage === "unit_testing"}>
-        {area("unitTestNotes", "Results", 3, "Scenarios tested and their outcome — or attach the evidence under Unit testing")}
-        {date("unitTestedOn", "Tested on")}
-      </Group>
-      <Group title="UAT" active={stage === "uat"}>
-        <div className="grid grid-cols-2 gap-2">
-          {txt("uatSignedOffBy", "Signed off by")}
-          {date("uatSignedOffOn", "Signed off on")}
-        </div>
-        {area("uatNotes", "Notes", 2)}
-      </Group>
-      <Group title="Go-live" active={stage === "go_live"}>
-        {date("goLiveOn", "Went live on")}
-      </Group>
-    </section>
-  );
+        )}
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        {txt("approvedByName", "Approved by")}
+        {date("approvedOn", "Approved on")}
+      </div>
+      {txt("approvalReference", "PO / e-mail reference")}
+    </>
+  ) : stage === "development" ? (
+    <>
+      {date("plannedGoLive", "Planned go-live")}
+      {area("buildReference", "Transports / release", 2, "e.g. DA1K900123, DA1K900124")}
+    </>
+  ) : stage === "unit_testing" ? (
+    <>
+      {area("unitTestNotes", "Results", 3, "Scenarios tested and their outcome — or attach the evidence under Unit testing")}
+      {date("unitTestedOn", "Tested on")}
+    </>
+  ) : stage === "uat" ? (
+    <>
+      <div className="grid grid-cols-2 gap-2">
+        {txt("uatSignedOffBy", "Signed off by")}
+        {date("uatSignedOffOn", "Signed off on")}
+      </div>
+      {area("uatNotes", "Notes", 2)}
+    </>
+  ) : stage === "go_live" ? (
+    date("goLiveOn", "Went live on")
+  ) : null;
+
+  if (!body) return null;
+  return <div className="flex flex-col gap-3 rounded-md border border-border/60 bg-background p-3">{body}</div>;
 }
 
-function Group({ title, active, children }: { title: string; active: boolean; children: React.ReactNode }) {
-  return (
-    <div className={cn("flex flex-col gap-2 rounded-md border p-3", active ? "border-primary/50 bg-primary/[0.03]" : "border-border/60")}>
-      <div className="flex items-center justify-between">
-        <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{title}</span>
-        {active && <span className="text-[11px] font-medium text-primary">current stage</span>}
-      </div>
-      {children}
-    </div>
-  );
-}
 function Fld({ label, children }: { label: string; children: React.ReactNode }) {
   return <div className="flex min-w-0 flex-col gap-1"><span className="text-[11px] text-muted-foreground">{label}</span>{children}</div>;
 }
