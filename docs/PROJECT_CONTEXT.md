@@ -1992,3 +1992,44 @@ it, and one screen bypassed it entirely.
   default and says so; Pirelli's stored ticket deadlines were identical before and after, and its Bug
   ticket displays no SLA at all.
 - Flag: the stage pill's "· no SLA" text is unchanged, by request.
+
+### Support redesign — Phase 2: the stage panel and the SLA badge, restyled (2026-09-12)
+
+No migration, no logic change: rendering only. The stage-move and gate-check actions, the loaders
+and the SLA resolution from item 10 were not touched. tsc + lint + **399 tests** green.
+
+- **The accent decision, settled — do not re-litigate.** The owner's mockup used a teal brand colour
+  on a warm ground. Support keeps the app's own **brass** (`--primary`) instead, so it looks like the
+  rest of the product; the mockup's structure, semantics and typography were taken, its hue was not.
+  A teal accent would either make Support look unlike every other module or become an app-wide
+  repaint, which is a separate decision.
+- **Five semantic tokens added** (`globals.css`, both themes, mapped through `@theme inline`):
+  `--success` / `--success-soft`, `--warning` / `--warning-soft`, `--danger-soft`. The app had none —
+  components hardcoded `emerald-*` / `amber-*` / `rose-*` literals. Red keeps the existing
+  `--destructive`. Light-mode `--warning` is **#8a6410**, NOT chart-4's #d9a441: the lighter value is
+  about 2:1 as a foreground on its soft ground and fails to read. Contrast won, deliberately.
+- **The gate mark is the point of the phase.** An incomplete gate is an **empty ring** — no colour,
+  no icon. It used to be a red `CircleX`, which framed "not done yet" as an error; that pattern is
+  what the redesign set out to remove. Done is a filled `--success` disc with a white check. **Red is
+  reserved for a gate that is genuinely late, which nothing can be today** — `TicketStageGate` has no
+  target date, so "overdue" has no data to stand on. Defining it (per-gate due date? a time-in-stage
+  threshold?) is an OPEN DECISION and needs its own migration; it was deliberately not invented.
+- **The stepper**: completed stages are a filled brass circle and the connector fills brass behind
+  you; the current stage is brass on `--accent` with a ring; future stages are a plain number on card.
+  Rose is kept for a flow that genuinely stopped (a rejected change request).
+- **`SlaBadge` (`tickets/sla.tsx`) is the single SLA chip** — four states and no more: On track ·
+  At risk (inside 4h, the threshold the old amber pill already used) · Breached · No SLA. It reads
+  the ticket's own stored deadlines, which `sla.server.ts` wrote from the resolved policy; it
+  resolves nothing itself. Used by the ticket header, the list column and the board card (compact
+  variant: words only, clock in the tooltip), replacing three separately-styled treatments.
+  `slaState` and `SlaPill` were deleted once nothing called them.
+  **Where it deliberately draws nothing**: a type with no SLA, a stopped clock (resolved/cancelled),
+  or a ticket with no target. `kind` still reports `none`, and `showNone` can draw it — but no screen
+  passes that, because none of them showed anything for those cases before. Don't add a "No SLA" chip
+  to the list or board without asking: it would land on every change request and bug row.
+- **The Change request snapshot was regenerated on purpose** (`vitest -u`): the panel's markup changed
+  by design, so the guard now holds the new output. Two of its three snapshots moved (the record
+  section did not). A fourth case was ADDED — a change request with the customer's approval missing —
+  because every previous fixture had all its gates ticked, so no snapshot contained an incomplete
+  mark at all. That test also asserts `not.toContain("circle-x")` outright, so the red cross cannot
+  come back even through a careless snapshot update.

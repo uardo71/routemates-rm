@@ -3,7 +3,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { CheckIcon, XIcon, CheckCircle2Icon, XCircleIcon, ShieldAlertIcon, ArrowRightIcon, Undo2Icon, BanIcon, RotateCcwIcon } from "lucide-react";
+import { CheckIcon, XIcon, ShieldAlertIcon, ArrowRightIcon, Undo2Icon, BanIcon, RotateCcwIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -95,18 +95,23 @@ export function StageLifecycle({
               <li key={step.key} className="flex items-start">
                 <div className="flex w-24 flex-col items-center gap-1 text-center sm:w-28">
                   <span className={cn(
-                    "flex size-7 items-center justify-center rounded-full border-2 text-xs font-semibold tabular-nums",
-                    state === "done" && "border-emerald-500 bg-emerald-500 text-white",
-                    state === "current" && "border-primary bg-primary/10 text-primary ring-4 ring-primary/15",
-                    state === "stopped" && "border-rose-500 bg-rose-500/10 text-rose-600 dark:text-rose-400",
-                    state === "todo" && "border-border text-muted-foreground",
+                    "flex size-7 items-center justify-center rounded-full border-2 text-xs font-semibold tabular-nums transition-colors",
+                    // Done is a filled state, not a tick-versus-cross: the accent fills in behind you.
+                    state === "done" && "border-primary bg-primary text-primary-foreground",
+                    state === "current" && "border-primary bg-accent text-accent-foreground ring-4 ring-primary/15",
+                    // Red is kept for a flow that genuinely stopped (a rejected change request).
+                    state === "stopped" && "border-destructive bg-danger-soft text-destructive",
+                    state === "todo" && "border-border bg-card text-muted-foreground",
                   )}>
                     {state === "done" ? <CheckIcon className="size-4" /> : state === "stopped" ? <XIcon className="size-3.5" /> : i + 1}
                   </span>
-                  <span className={cn("text-xs leading-tight", state === "current" ? "font-semibold text-foreground" : "text-muted-foreground")}>{step.label}</span>
+                  <span className={cn(
+                    "text-xs leading-tight",
+                    state === "current" ? "font-semibold text-foreground" : state === "done" ? "text-foreground/70" : "text-muted-foreground",
+                  )}>{step.label}</span>
                   <span className="text-[11px] tabular-nums text-muted-foreground">{spent ? formatDuration(spent) : step.terminal ? "" : "—"}</span>
                 </div>
-                {i < flow.length - 1 && <span className={cn("mt-3.5 h-0.5 w-5 shrink-0 sm:w-8", allDone || i < curIdx ? "bg-emerald-500" : "bg-border")} />}
+                {i < flow.length - 1 && <span className={cn("mt-3.5 h-0.5 w-5 shrink-0 sm:w-8", allDone || i < curIdx ? "bg-primary" : "bg-border")} />}
               </li>
             );
           })}
@@ -189,28 +194,42 @@ export function StageLifecycle({
   );
 }
 
+/** A gate's mark. Not-done is an empty circle — never a red cross: work you haven't done yet is
+ *  simply not done, and reading it as an error is the thing this redesign set out to stop. Red is
+ *  reserved for a gate that is genuinely late, which nothing can be today: a gate carries no target
+ *  date in the schema. Defining that is an open decision, deliberately not invented here. */
+function GateMark({ ok }: { ok: boolean }) {
+  return ok ? (
+    <span className="flex size-[18px] shrink-0 items-center justify-center rounded-full bg-success text-white">
+      <CheckIcon className="size-3 stroke-[3]" />
+    </span>
+  ) : (
+    <span className="size-[18px] shrink-0 rounded-full border-[1.6px] border-input" />
+  );
+}
+
 export function CheckList({ checks, onToggle }: { checks: GateCheck[]; onToggle?: (key: string, next: boolean) => void }) {
   return (
     <ul className="flex flex-col divide-y rounded-md border">
       {checks.map((c) => onToggle ? (
-        <li key={c.key} className="flex items-start gap-2 px-2.5 py-1.5 text-sm">
+        <li key={c.key} className="flex items-start gap-2.5 px-3 py-2.5 text-sm">
           <button
             type="button" onClick={() => onToggle(c.key, !c.ok)} aria-pressed={c.ok}
             title={c.ok ? "Untick this check" : "Tick this check"}
             className="mt-0.5 shrink-0 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
           >
-            {c.ok ? <CheckCircle2Icon className="size-4 text-emerald-600" /> : <XCircleIcon className="size-4 text-rose-600 hover:text-muted-foreground" />}
+            <GateMark ok={c.ok} />
           </button>
           <div className="min-w-0">
-            <button type="button" onClick={() => onToggle(c.key, !c.ok)} className={cn("text-left outline-none hover:underline focus-visible:underline", c.ok && "text-muted-foreground")}>{c.label}</button>
+            <button type="button" onClick={() => onToggle(c.key, !c.ok)} className={cn("text-left font-medium outline-none hover:underline focus-visible:underline", c.ok && "font-normal text-muted-foreground")}>{c.label}</button>
             {!c.ok && <div className="text-xs text-muted-foreground">{c.hint}</div>}
           </div>
         </li>
       ) : (
-        <li key={c.key} className="flex items-start gap-2 px-2.5 py-1.5 text-sm">
-          {c.ok ? <CheckCircle2Icon className="mt-0.5 size-4 shrink-0 text-emerald-600" /> : <XCircleIcon className="mt-0.5 size-4 shrink-0 text-rose-600" />}
+        <li key={c.key} className="flex items-start gap-2.5 px-3 py-2.5 text-sm">
+          <span className="mt-0.5"><GateMark ok={c.ok} /></span>
           <div className="min-w-0">
-            <div className={cn(c.ok && "text-muted-foreground")}>{c.label}</div>
+            <div className={cn("font-medium", c.ok && "font-normal text-muted-foreground")}>{c.label}</div>
             {!c.ok && <div className="text-xs text-muted-foreground">{c.hint}</div>}
           </div>
         </li>

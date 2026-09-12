@@ -45,6 +45,13 @@ const CR: CrView = {
   todayIso: "2026-09-12",
 };
 
+// The same change request with the customer's approval NOT yet recorded, so one of Evaluation's
+// exit checks is unmet. Its only job is to put an incomplete gate mark in the stored snapshot: an
+// empty ring. Work that is simply not done yet must never render as a red cross — that was the
+// pattern this redesign set out to remove, and without this fixture no test would notice it coming
+// back.
+const DRAFT_UNMET: CrDraft = { ...DRAFT, approvedByName: "", approvedOn: "" };
+
 const USERS = [{ id: "u-1", name: "Uard Bejtja" }, { id: "u-2", name: "Enida Selita" }];
 
 function render(node: Parameters<typeof renderToStaticMarkup>[0]): string {
@@ -70,6 +77,20 @@ describe("Change request panel markup", () => {
         draft: DRAFT, set: () => {}, editable: true, loggedMinutes: 150, stage: "evaluation",
       }),
     );
+    expect(html).toMatchSnapshot();
+  });
+
+  it("marks an unmet gate with an empty ring, never a red cross", () => {
+    const html = render(
+      createElement(ChangeRequestLifecycle, {
+        ticketId: "tkt-3", cr: { ...CR, saved: DRAFT_UNMET }, draft: DRAFT_UNMET, set: () => {},
+        editable: true, canManage: true, dirty: false,
+        assigneeId: "u-1", resolution: "", users: USERS,
+      }),
+    );
+    // Asserted outright as well as snapshotted, so the intent survives a careless snapshot update.
+    expect(html).toContain('class="size-[18px] shrink-0 rounded-full border-[1.6px] border-input"');
+    expect(html).not.toContain("circle-x");
     expect(html).toMatchSnapshot();
   });
 

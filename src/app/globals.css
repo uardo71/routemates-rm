@@ -27,6 +27,11 @@
   --color-input: var(--input);
   --color-border: var(--border);
   --color-destructive: var(--destructive);
+  --color-danger-soft: var(--danger-soft);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);
@@ -66,6 +71,14 @@
   --accent: #f2e9d3; /* brass tint */
   --accent-foreground: #6e5518;
   --destructive: #b23a2e; /* rust */
+  /* Semantic status colours. The app had none — components hardcoded emerald/amber/rose literals.
+     Named once here so a badge and a gate tick can't drift apart. Each pair is a foreground and the
+     soft ground it sits on; red stays --destructive, which already existed. */
+  --success: #2f7d5b;
+  --success-soft: #e6f1ec;
+  --warning: #8a6410;
+  --warning-soft: #f7ecd7;
+  --danger-soft: #f8e8e6;
   --border: #d2d8dc;
   --input: #c9d0d5;
   --ring: #a9812f;
@@ -101,6 +114,11 @@
   --accent: #26313e;
   --accent-foreground: #ead6a8;
   --destructive: #d2624e;
+  --success: #4bae82;
+  --success-soft: #162b23;
+  --warning: #e0b45c;
+  --warning-soft: #33270f;
+  --danger-soft: #331c19;
   --border: #2a3542;
   --input: #303c4a;
   --ring: #c79a45;

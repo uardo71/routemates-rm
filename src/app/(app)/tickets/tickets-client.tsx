@@ -4,7 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
-  PlusIcon, SearchIcon, LayoutGridIcon, Columns3Icon, DownloadIcon, AlertTriangleIcon,
+  PlusIcon, SearchIcon, LayoutGridIcon, Columns3Icon, DownloadIcon,
   BookmarkIcon, SaveIcon, Trash2Icon, ArrowUpIcon, ArrowDownIcon, XIcon, SettingsIcon,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -16,7 +16,7 @@ import type { TicketStatusCategory } from "@prisma/client";
 import { TICKET_PRIORITIES, TICKET_PRIORITY_LABEL, TICKET_PRIORITY_DOT } from "@/lib/ticket";
 import { STATUS_CATEGORIES, STATUS_CATEGORY_LABEL } from "@/lib/ticket-config";
 import type { TicketRow } from "./serialize";
-import { slaState, SlaPill } from "./sla";
+import { SlaBadge, slaBadgeState } from "./sla";
 import { TypeChip, StatusChip } from "./ticket-visuals";
 import { NATIVE_COLUMNS, DEFAULT_COLUMNS, columnValue } from "./columns";
 import { filterRows, sortRows, FOCUS_LABEL, type TicketFilters, type TicketFocus } from "./filters";
@@ -192,11 +192,11 @@ export function TicketsClient({ rows, config, canManage, currentUserId, views, l
             </thead>
             <tbody>
               {shown.map((r) => {
-                const sla = slaState(r);
+                const sla = slaBadgeState(r);
                 return (
                   <tr key={r.id} onClick={() => router.push(`/tickets/${r.id}`)} className="cursor-pointer border-b last:border-none hover:bg-muted/40">
                     {columns.map((k) => <td key={k} className="px-3 py-2 align-middle">{renderCell(r, k)}</td>)}
-                    <td className="px-3 py-2">{sla.breached ? <span className="inline-flex items-center gap-1 text-xs text-rose-500"><AlertTriangleIcon className="size-3.5" /> {sla.label}</span> : <SlaPill state={sla} />}</td>
+                    <td className="px-3 py-2"><SlaBadge state={sla} /></td>
                   </tr>
                 );
               })}

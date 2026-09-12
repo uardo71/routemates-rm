@@ -3,13 +3,13 @@
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ListIcon, PlusIcon, AlertTriangleIcon } from "lucide-react";
+import { ListIcon, PlusIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { TICKET_PRIORITY_LABEL, TICKET_PRIORITY_DOT } from "@/lib/ticket";
 import { statusColor } from "@/lib/ticket-config";
 import type { TicketStatusCategory } from "@prisma/client";
 import type { TicketRow } from "../serialize";
-import { slaState, SlaPill } from "../sla";
+import { SlaBadge, slaBadgeState } from "../sla";
 import { TypeIcon } from "../ticket-visuals";
 import { setTicketStatusAction } from "../actions";
 
@@ -96,7 +96,7 @@ export function TicketsBoard({ rows, config, canManage }: { rows: TicketRow[]; c
                 <span className="rounded-full bg-muted px-1.5 text-xs tabular-nums text-muted-foreground">{cards.length}</span>
               </div>
               {cards.map((r) => {
-                const sla = slaState({ ...r, statusCategory: col.category });
+                const sla = slaBadgeState({ ...r, statusCategory: col.category });
                 return (
                   <Link key={r.id} href={`/tickets/${r.id}`} draggable onDragStart={() => setDragId(r.id)} onDragEnd={() => { setDragId(null); setOverCol(null); }}
                     className={cn("block cursor-grab rounded-md border bg-card p-2.5 shadow-sm transition-shadow hover:shadow active:cursor-grabbing", dragId === r.id && "opacity-50")}>
@@ -107,7 +107,8 @@ export function TicketsBoard({ rows, config, canManage }: { rows: TicketRow[]; c
                     <div className="mt-1 line-clamp-2 text-sm font-medium leading-snug">{r.title}</div>
                     <div className="mt-1.5 flex items-center justify-between gap-2">
                       <span className="truncate text-xs text-muted-foreground">{r.assigneeName ?? "Unassigned"}</span>
-                      {sla.breached ? <AlertTriangleIcon className="size-3.5 shrink-0 text-rose-500" /> : <SlaPill state={sla} />}
+                      {/* A card is tight: the words only, with the clock in the tooltip. */}
+                      <SlaBadge state={sla} detail={false} />
                     </div>
                   </Link>
                 );

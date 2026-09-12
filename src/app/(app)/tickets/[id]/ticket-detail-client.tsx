@@ -19,7 +19,7 @@ import { TICKET_PRIORITIES, TICKET_PRIORITY_LABEL, TICKET_PRIORITY_DOT, TICKET_A
 import { labelFromTimestamps } from "@/lib/sla";
 import { statusColor } from "@/lib/ticket-config";
 import type { TicketPriority, TicketStatusCategory } from "@prisma/client";
-import { slaState } from "../sla";
+import { SlaBadge, slaBadgeState } from "../sla";
 import { TypeIcon, StatusDot } from "../ticket-visuals";
 import { FieldControl, type PubField } from "../field-control";
 import { Conversation } from "../conversation";
@@ -421,10 +421,9 @@ function Tab({ active, onClick, icon, label, count }: { active: boolean; onClick
 function LiveSla({ t }: { t: Detail }) {
   const [, tick] = React.useState(0);
   React.useEffect(() => { const id = setInterval(() => tick((n) => n + 1), 30_000); return () => clearInterval(id); }, []);
-  // Detail carries the flag as slaExempt; the row helper wants it the positive way round.
-  const s = slaState({ ...t, slaApplicable: !t.slaExempt });
-  if (!s.show) return null;
-  return <span className={cn("inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-xs", s.tone)}>{s.label}</span>;
+  // Detail carries the flag as slaExempt; the badge wants it the positive way round. The badge
+  // draws nothing when there is no SLA to show, which is what this used to return null for.
+  return <SlaBadge state={slaBadgeState({ ...t, slaApplicable: !t.slaExempt })} />;
 }
 
 /** The stage a STAGE-mode ticket is in, as the header strip shows it. */
