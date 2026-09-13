@@ -74,3 +74,18 @@ export const STAGE_TONE: Record<OpportunityStage, "default" | "secondary" | "out
   LOST: "destructive",
   CANCELLED: "outline",
 };
+
+// The "expiring soon" alert (src/lib/alerts) has told a deal's owner and PM by email for a while,
+// but the opportunity's own detail page never showed the same signal — poValidUntil sat there as a
+// plain date, not a warning, even minutes before (or after) the alert fired. Same 30-day window as
+// the alert's default, kept independent on purpose: this is a UI hint, not something an admin's
+// alert-threshold change should silently move.
+export type PoValidityState = "none" | "expired" | "expiring" | "ok";
+const PO_WARNING_WINDOW_DAYS = 30;
+
+export function poValidityState(poValidUntilIso: string | null, todayIso: string): PoValidityState {
+  if (!poValidUntilIso) return "none";
+  if (poValidUntilIso < todayIso) return "expired";
+  const days = (Date.parse(poValidUntilIso) - Date.parse(todayIso)) / 86_400_000;
+  return days <= PO_WARNING_WINDOW_DAYS ? "expiring" : "ok";
+}

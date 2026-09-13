@@ -18,11 +18,14 @@ const NONE = "__none__";
 
 /** The people staffed on one client's support (the AMS team). Renders inside whatever card the
  *  caller provides — the client workspace and the admin client page both use it. */
-export function ClientTeamCard({ clientId, members, candidates, canEdit }: {
+export function ClientTeamCard({ clientId, members, candidates, suggested, canEdit }: {
   clientId: string;
   members: TeamMember[];
   /** Active staff not yet on the team. Only needed when `canEdit`. */
   candidates: TeamCandidate[];
+  /** People actively staffed on this client's delivery projects (Assignment) who aren't on the
+   *  support team yet — see src/lib/delivery-team.ts. Only needed when `canEdit`. */
+  suggested?: TeamCandidate[];
   canEdit: boolean;
 }) {
   const router = useRouter();
@@ -79,6 +82,24 @@ export function ClientTeamCard({ clientId, members, candidates, canEdit }: {
             </li>
           ))}
         </ul>
+      )}
+
+      {canEdit && suggested && suggested.length > 0 && (
+        <div className="flex flex-col gap-2 rounded-md border border-dashed border-primary/40 bg-primary/5 p-2.5">
+          <p className="text-[11px] text-muted-foreground">
+            Staffed on this account&apos;s delivery, not on support yet:
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {suggested.map((c) => (
+              <Button
+                key={c.id} size="sm" variant="outline" className="h-7 gap-1 text-xs" disabled={pending}
+                onClick={() => run(() => addClientTeamMemberAction({ clientId, userId: c.id, role: "MEMBER" }), `${c.name} added.`)}
+              >
+                <UserPlusIcon className="size-3" /> {c.name}
+              </Button>
+            ))}
+          </div>
+        </div>
       )}
 
       {canEdit && (

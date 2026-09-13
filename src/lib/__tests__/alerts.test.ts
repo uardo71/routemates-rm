@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { DEFAULT_ALERTS_CONFIG, mergeAlertsConfig, type AlertsConfig } from "@/lib/alerts/config";
 import {
   projectBudgetRule, invoiceOverdueRule, approvalStaleRule, expiryRule, milestoneOverdueRule, certificationExpiryRule,
-  evaluateAll, daysBetween, type AlertData, type Alert,
+  changeRequestOverdueRule, vendorPaymentOverdueRule, taxPaymentOverdueRule, evaluateAll, daysBetween, type AlertData, type Alert,
 } from "@/lib/alerts/rules";
 
 const TODAY = "2026-09-10";
@@ -17,7 +17,7 @@ function ledger() {
   };
 }
 function data(o: Partial<AlertData> = {}): AlertData {
-  return { today: TODAY, projects: [], invoices: [], timecards: [], expenses: [], assignments: [], opportunities: [], milestones: [], certifications: [], delivery: { baseUrl: "", workspaces: [], planTasks: [], raidItems: [], projects: [] }, ...o };
+  return { today: TODAY, projects: [], invoices: [], timecards: [], expenses: [], assignments: [], opportunities: [], milestones: [], certifications: [], changeRequests: [], vendorPayments: [], taxPayments: [], delivery: { baseUrl: "", workspaces: [], planTasks: [], raidItems: [], projects: [] }, ...o };
 }
 const project = (o: Partial<AlertData["projects"][number]> = {}): AlertData["projects"][number] => ({
   id: "p1", number: "PR-0000001", name: "AFW", managerId: "pm", status: "ACTIVE",
@@ -253,4 +253,98 @@ describe("certification expiry", () => {
     expect(evaluateAll(data({ certifications: [cert({ expiryDate: "2026-10-10" })] }), off, never).filter((a) => a.kind === "certification_expiry")).toHaveLength(0);
   });
 });
+
+describe("change request next step overdue", () => {
+  const cr = (o: Partial<AlertData["changeRequests"][number]> = {}): AlertData["changeRequests"][number] => ({
+    ticketId: "t1", number: "TKT-000001", title: "Add a field to the invoice screen",
+    nextStep: "Get customer sign-off", nextStepDue: "2026-09-09", nextStepOwnerId: "consultant1", assigneeId: "consultant1",
+    clientId: "cl1", clientName: "Zambon", projectId: null, ...o,
+  });
+  const run = (c: AlertData["changeRequests"][number], isSent: (k: string, t: string, p: string) => boolean = never) =>
+    changeRequestOverdueRule(data({ changeRequests: [c] }), cfg.rules.change_request_overdue, isSent as never);
+
+  it("fires when the next step is overdue or due today, not before", () => {
+    expect(run(cr({ nextStepDue: "2026-09-09" }))).toHaveLength(1); // overdue
+    expect(run(cr({ nextStepDue: TODAY }))).toHaveLength(1); // due today
+    expect(run(cr({ nextStepDue: "2026-09-11" }))).toHaveLength(0); // upcoming
+  });
+  it("never fires without a next step due date", () => {
+    expect(run(cr({ nextStepDue: null }))).toHaveLength(0);
+  });
+  it("goes to whoever the next step is waiting on, and the assignee too if different", () => {
+    expect(run(cr({ nextStepOwnerId: "consultant1", assigneeId: "consultant1" }))[0].recipients).toEqual([{ userId: "consultant1" }]);
+    expect(run(cr({ nextStepOwnerId: "pm1", assigneeId: "consultant1" }))[0].recipients).toEqual([{ userId: "pm1" }, { userId: "consultant1" }]);
+    expect(run(cr({ nextStepOwnerId: null, assigneeId: "consultant1" }))[0].recipients).toEqual([{ userId: "consultant1" }]);
+  });
+  it("falls silent once sent, and a moved due date re-arms it", () => {
+    const a = run(cr({ nextStepDue: "2026-09-09" }));
+    const l = ledger();
+    l.record(a);
+    expect(run(cr({ nextStepDue: "2026-09-09" }), l.isSent)).toHaveLength(0);
+    expect(run(cr({ nextStepDue: "2026-09-08" }), l.isSent)).toHaveLength(1);
+  });
+  it("is part of evaluateAll and honours its enable switch", () => {
+    expect(evaluateAll(data({ changeRequests: [cr({ nextStepDue: "2026-09-09" })] }), cfg, never).filter((a) => a.kind === "change_request_overdue")).toHaveLength(1);
+    const off = mergeAlertsConfig({ rules: { change_request_overdue: { enabled: false } } });
+    expect(evaluateAll(data({ changeRequests: [cr({ nextStepDue: "2026-09-09" })] }), off, never).filter((a) => a.kind === "change_request_overdue")).toHaveLength(0);
+  });
+});
+
+describe("vendor payment overdue", () => {
+  const vp = (o: Partial<AlertData["vendorPayments"][number]> = {}): AlertData["vendorPayments"][number] => ({
+    id: "v1", vendorName: "Acme Hosting", description: "Monthly hosting", dueDate: "2026-09-09", amount: 500, currency: "EUR", ...o,
+  });
+  const run = (v: AlertData["vendorPayments"][number], isSent: (k: string, t: string, p: string) => boolean = never) =>
+    vendorPaymentOverdueRule(data({ vendorPayments: [v] }), cfg.rules.vendor_payment_overdue, isSent as never);
+
+  it("fires the +1 tier the day after due, nothing on the due date itself", () => {
+    expect(run(vp({ dueDate: TODAY }))).toHaveLength(0);
+    const a = run(vp({ dueDate: "2026-09-09" }));
+    expect(a.map((x) => x.payloadKey)).toEqual(["d1"]);
+    expect(a[0].recipients).toEqual([{ action: "vendors:manage" }]);
+  });
+  it("adds a tier as more days pass", () => {
+    expect(run(vp({ dueDate: "2026-08-27" })).map((x) => x.payloadKey)).toEqual(["d1", "d14"]);
+  });
+  it("never fires without a due date", () => {
+    expect(run(vp({ dueDate: null }))).toHaveLength(0);
+  });
+  it("suppresses tiers already sent", () => {
+    const l = ledger();
+    l.record(run(vp({ dueDate: "2026-09-01" }), l.isSent));
+    expect(run(vp({ dueDate: "2026-08-20" }), l.isSent).map((x) => x.payloadKey)).toEqual(["d14"]);
+  });
+  it("is part of evaluateAll and honours its enable switch", () => {
+    expect(evaluateAll(data({ vendorPayments: [vp({ dueDate: "2026-09-09" })] }), cfg, never).filter((a) => a.kind === "vendor_payment_overdue")).toHaveLength(1);
+    const off = mergeAlertsConfig({ rules: { vendor_payment_overdue: { enabled: false } } });
+    expect(evaluateAll(data({ vendorPayments: [vp({ dueDate: "2026-09-09" })] }), off, never).filter((a) => a.kind === "vendor_payment_overdue")).toHaveLength(0);
+  });
+});
+
+describe("tax payment overdue", () => {
+  const tp = (o: Partial<AlertData["taxPayments"][number]> = {}): AlertData["taxPayments"][number] => ({
+    id: "t1", categoryName: "VAT", authority: "Tax Office", dueDate: "2026-09-09", amount: 2000, currency: "EUR", ...o,
+  });
+  const run = (t: AlertData["taxPayments"][number], isSent: (k: string, t: string, p: string) => boolean = never) =>
+    taxPaymentOverdueRule(data({ taxPayments: [t] }), cfg.rules.tax_payment_overdue, isSent as never);
+
+  it("fires the +1 tier the day after due, nothing on the due date itself", () => {
+    expect(run(tp({ dueDate: TODAY }))).toHaveLength(0);
+    const a = run(tp({ dueDate: "2026-09-09" }));
+    expect(a.map((x) => x.payloadKey)).toEqual(["d1"]);
+    expect(a[0].recipients).toEqual([{ action: "taxes:manage" }]);
+  });
+  it("uses its own (shorter) default tiers", () => {
+    expect(run(tp({ dueDate: "2026-09-02" })).map((x) => x.payloadKey)).toEqual(["d1", "d7"]); // 7 days late
+  });
+  it("never fires without a due date", () => {
+    expect(run(tp({ dueDate: null }))).toHaveLength(0);
+  });
+  it("is part of evaluateAll and honours its enable switch", () => {
+    expect(evaluateAll(data({ taxPayments: [tp({ dueDate: "2026-09-09" })] }), cfg, never).filter((a) => a.kind === "tax_payment_overdue")).toHaveLength(1);
+    const off = mergeAlertsConfig({ rules: { tax_payment_overdue: { enabled: false } } });
+    expect(evaluateAll(data({ taxPayments: [tp({ dueDate: "2026-09-09" })] }), off, never).filter((a) => a.kind === "tax_payment_overdue")).toHaveLength(0);
+  });
+});
+
 

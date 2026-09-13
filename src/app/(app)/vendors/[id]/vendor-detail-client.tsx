@@ -11,6 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { VendorPaymentStatus } from "@prisma/client";
+import { VENDOR_STATUS_LABEL } from "@/lib/vendor";
 import { updateVendorPaymentAction, markVendorPaidAction, deleteVendorPaymentAction } from "../actions";
 
 export type VendorOpt = { id: string; name: string };
@@ -153,9 +154,9 @@ function EditVendorDialog({ data, vendors, projects, onClose, onDone }: { data: 
           <div className="grid grid-cols-2 gap-3">
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="ev-status">Status</Label>
-              <Select value={status} items={[{ value: "TO_PAY", label: "To pay" }, { value: "PAID", label: "Paid" }]} onValueChange={(v) => setStatus((v as VendorPaymentStatus) ?? "TO_PAY")}>
+              <Select value={status} items={[{ value: "TO_PAY", label: VENDOR_STATUS_LABEL.TO_PAY }, { value: "PAID", label: VENDOR_STATUS_LABEL.PAID }]} onValueChange={(v) => setStatus((v as VendorPaymentStatus) ?? "TO_PAY")}>
                 <SelectTrigger id="ev-status" className="w-full"><SelectValue /></SelectTrigger>
-                <SelectContent><SelectItem value="TO_PAY">To pay</SelectItem><SelectItem value="PAID">Paid</SelectItem></SelectContent>
+                <SelectContent><SelectItem value="TO_PAY">{VENDOR_STATUS_LABEL.TO_PAY}</SelectItem><SelectItem value="PAID">{VENDOR_STATUS_LABEL.PAID}</SelectItem></SelectContent>
               </Select>
             </div>
             {status === "PAID" && (

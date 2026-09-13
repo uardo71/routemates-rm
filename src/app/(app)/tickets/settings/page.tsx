@@ -24,7 +24,7 @@ export default async function TicketSettingsPage() {
       // A STAGE-mode type's lifecycle. Read-only here for now — the stage/gate editors come later;
       // without this the Workflow column would simply look empty for such a type.
       lifecycleMode: t.lifecycleMode,
-      stages: t.stages.map((st) => ({ id: st.id, name: st.name, isStarting: st.isStarting, isTerminal: st.isTerminal, gates: st.gates.map((g) => g.label) })),
+      stages: t.stages.map((st) => ({ id: st.id, name: st.name, isStarting: st.isStarting, isTerminal: st.isTerminal, customerVisible: st.customerVisible, gates: st.gates.map((g) => g.label) })),
       archivedStatuses: t.archivedStatuses.map((s) => ({ id: s.id, name: s.name, archivedAt: s.archivedAt ?? "" })),
       fields: t.fields.map((f) => ({ id: f.id, name: f.name, kind: f.kind, options: f.options, required: f.required, customerVisible: f.customerVisible, customerEditable: f.customerEditable })),
     })),

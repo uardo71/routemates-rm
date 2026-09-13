@@ -26,6 +26,7 @@ import { FxWarning } from "@/components/fx-warning";
 import type { ExcludedGroup } from "@/lib/fx";
 import { cn } from "@/lib/utils";
 import type { VendorPaymentStatus } from "@prisma/client";
+import { VENDOR_STATUS_LABEL } from "@/lib/vendor";
 import { createVendorPaymentAction, createVendorAction, deleteVendorAction, markVendorPaidAction } from "./actions";
 
 export type VendorPaymentRow = {
@@ -70,12 +71,12 @@ function isOverdue(r: VendorPaymentRow): boolean {
 
 function StatusPill({ r }: { r: VendorPaymentRow }) {
   if (r.status === "PAID") {
-    return <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[11px] font-medium text-emerald-700 dark:text-emerald-400"><CheckCircle2Icon className="size-3" /> Paid</span>;
+    return <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[11px] font-medium text-emerald-700 dark:text-emerald-400"><CheckCircle2Icon className="size-3" /> {VENDOR_STATUS_LABEL.PAID}</span>;
   }
   if (isOverdue(r)) {
     return <span className="inline-flex items-center gap-1 rounded-full bg-destructive/15 px-2 py-0.5 text-[11px] font-medium text-destructive"><TriangleAlertIcon className="size-3" /> Overdue</span>;
   }
-  return <Badge variant="secondary">To pay</Badge>;
+  return <Badge variant="secondary">{VENDOR_STATUS_LABEL.TO_PAY}</Badge>;
 }
 
 function AddVendorPaymentDialog({
@@ -204,9 +205,9 @@ function AddVendorPaymentDialog({
           <div className="grid grid-cols-2 gap-3">
             <div className="flex flex-col gap-1.5">
               <Label htmlFor="v-status">Status</Label>
-              <Select value={status} items={[{ value: "TO_PAY", label: "To pay" }, { value: "PAID", label: "Paid" }]} onValueChange={(v) => setStatus((v as VendorPaymentStatus) ?? "TO_PAY")}>
+              <Select value={status} items={[{ value: "TO_PAY", label: VENDOR_STATUS_LABEL.TO_PAY }, { value: "PAID", label: VENDOR_STATUS_LABEL.PAID }]} onValueChange={(v) => setStatus((v as VendorPaymentStatus) ?? "TO_PAY")}>
                 <SelectTrigger id="v-status" className="w-full"><SelectValue /></SelectTrigger>
-                <SelectContent><SelectItem value="TO_PAY">To pay</SelectItem><SelectItem value="PAID">Paid</SelectItem></SelectContent>
+                <SelectContent><SelectItem value="TO_PAY">{VENDOR_STATUS_LABEL.TO_PAY}</SelectItem><SelectItem value="PAID">{VENDOR_STATUS_LABEL.PAID}</SelectItem></SelectContent>
               </Select>
             </div>
             {status === "PAID" && (
@@ -418,12 +419,12 @@ export function VendorsClient({
                 {vendors.map((v) => <SelectItem key={v.id} value={v.id}>{v.name}</SelectItem>)}
               </SelectContent>
             </Select>
-            <Select value={statusFilter} items={[{ value: "ALL", label: "All statuses" }, { value: "TO_PAY", label: "To pay" }, { value: "PAID", label: "Paid" }]} onValueChange={(v) => setStatusFilter((v as typeof statusFilter) ?? "ALL")}>
+            <Select value={statusFilter} items={[{ value: "ALL", label: "All statuses" }, { value: "TO_PAY", label: VENDOR_STATUS_LABEL.TO_PAY }, { value: "PAID", label: VENDOR_STATUS_LABEL.PAID }]} onValueChange={(v) => setStatusFilter((v as typeof statusFilter) ?? "ALL")}>
               <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="ALL">All statuses</SelectItem>
-                <SelectItem value="TO_PAY">To pay</SelectItem>
-                <SelectItem value="PAID">Paid</SelectItem>
+                <SelectItem value="TO_PAY">{VENDOR_STATUS_LABEL.TO_PAY}</SelectItem>
+                <SelectItem value="PAID">{VENDOR_STATUS_LABEL.PAID}</SelectItem>
               </SelectContent>
             </Select>
             <Input type="month" value={month} onChange={(e) => setMonth(e.target.value)} className="w-40" title="Invoice month" />

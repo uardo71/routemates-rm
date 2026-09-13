@@ -5,6 +5,7 @@ import { can, canManageProject, visibleTicketWhere, type SessionUser } from "@/l
 import { actionHref, enrichAll, completionChange, type ActionSource, type EnrichedAction, type RegisterAction } from "@/lib/actions-register";
 import { slaBadgeState } from "@/lib/sla";
 import { isOpenCategory } from "@/lib/ticket-config";
+import { isChangeRequestType, nextStepState } from "@/lib/change-request";
 
 // Server half of the actions register: loads actions (open, completed or both) from the four sources
 // into one shape, and completes or reopens them "at source" so the originating screen agrees.
@@ -110,7 +111,7 @@ export async function loadActions(user: SessionUser, opts: {
       done: a.done, completedAt: a.done ? (a.doneAt ?? a.createdAt).toISOString() : null, completedBy: a.done ? who(a.doneById) : null,
     })),
   ];
-  if (opts.tickets) rows.push(...(await loadTicketActions(user, { mineOnly: !!opts.mineOnly })));
+  if (opts.tickets) rows.push(...(await loadTicketActions(user, { mineOnly: !!opts.mineOnly, todayIso: opts.todayIso })));
   return enrichAll(rows, opts.todayIso);
 }
 
@@ -121,18 +122,25 @@ export async function loadActions(user: SessionUser, opts: {
 //   * a STATUS-mode type (Incident, Question, Task...) whose SLA is BREACHED or AT RISK - the
 //     verdict comes from `slaBadgeState`, the very function the Support badge draws, so this list
 //     and the ticket page can never disagree;
-//   * a STAGE-mode type (Change request, Bug) sitting in a stage with a gate nobody has ticked -
-//     that gate is what the assignee is being waited on for.
+//   * a STAGE-mode type (Bug, or any type an administrator puts on stages) sitting in a stage with
+//     a gate nobody has ticked - that gate is what the assignee is being waited on for;
+//   * a Change request whose next step is due today or overdue - Change requests don't run on
+//     TicketStageDef at all (their stage IS the status, see change-request.ts) and are SLA-exempt,
+//     so until now they fell through both of the rules above and never appeared here no matter how
+//     overdue their next step was. The owner is whoever nextStep is actually waiting on, which is
+//     often not the ticket's general assignee.
 // Visibility is the shipped ticket rule (`visibleTicketWhere`), not a new one. Tickets are never
 // completable from here: the row links out to the ticket, whose own stage/gate rules govern it.
 // ---------------------------------------------------------------------------------------------
-async function loadTicketActions(user: SessionUser, opts: { mineOnly: boolean }): Promise<RegisterAction[]> {
+async function loadTicketActions(user: SessionUser, opts: { mineOnly: boolean; todayIso: string }): Promise<RegisterAction[]> {
   const visible = await visibleTicketWhere(user);
   const tickets = await prisma.ticket.findMany({
     where: {
       AND: [
         visible,
-        { assigneeId: opts.mineOnly ? user.id : { not: null } },
+        opts.mineOnly
+          ? { OR: [{ assigneeId: user.id }, { changeRequest: { nextStepOwnerId: user.id } }] }
+          : { assigneeId: { not: null } },
         { statusDef: { category: { notIn: ["DONE", "CANCELLED"] } } },
       ],
     },
@@ -143,16 +151,21 @@ async function loadTicketActions(user: SessionUser, opts: { mineOnly: boolean })
       projectId: true, project: { select: { name: true } },
       firstResponseAt: true, respondBy: true, resolveBy: true,
       statusDef: { select: { category: true } },
-      typeDef: { select: { name: true, slaApplicable: true } },
+      typeDef: { select: { key: true, name: true, slaApplicable: true } },
       stageDef: { select: { key: true, name: true, gates: { select: { key: true } } } },
       gateChecks: { select: { gate: { select: { key: true } } } },
+      changeRequest: { select: { nextStep: true, nextStepDue: true, nextStepOwnerId: true } },
     },
   });
+  const ownerIds = [...new Set(tickets.map((t) => t.changeRequest?.nextStepOwnerId).filter((id): id is string => !!id))];
+  const ownerName = ownerIds.length > 0
+    ? new Map((await prisma.user.findMany({ where: { id: { in: ownerIds } }, select: { id: true, name: true } })).map((u) => [u.id, u.name]))
+    : new Map<string, string>();
 
   const now = Date.now();
   const rows: RegisterAction[] = [];
   for (const t of tickets) {
-    if (!t.assigneeId) continue;
+    if (!t.assigneeId && !t.changeRequest?.nextStepOwnerId) continue;
     if (!isOpenCategory(t.statusDef.category)) continue;
 
     const base = {
@@ -171,6 +184,24 @@ async function loadTicketActions(user: SessionUser, opts: { mineOnly: boolean })
       done: false, completedAt: null, completedBy: null,
       ref: t.number,
     };
+
+    if (isChangeRequestType(t.typeDef.key)) {
+      const cr = t.changeRequest;
+      const dueIso = cr?.nextStepDue ? cr.nextStepDue.toISOString().slice(0, 10) : null;
+      const state = nextStepState(dueIso, opts.todayIso);
+      if (state !== "overdue" && state !== "today") continue;
+      const ownerId = cr?.nextStepOwnerId ?? t.assigneeId;
+      if (opts.mineOnly && ownerId !== user.id) continue;
+      rows.push({
+        ...base,
+        title: cr?.nextStep?.trim() || t.title,
+        owner: (ownerId ? ownerName.get(ownerId) : null) ?? t.assignee?.name ?? null, ownerUserId: ownerId,
+        dueDate: dueIso,
+        status: state === "overdue" ? "Next step overdue" : "Next step due today",
+        urgent: state === "overdue",
+      });
+      continue;
+    }
 
     if (t.stageDef) {
       // STAGE-mode: what is this person being waited on for?

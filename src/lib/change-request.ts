@@ -15,12 +15,15 @@ export type CrFlowKey = (typeof CR_FLOW)[number];
 export type CrStageKey = CrFlowKey | "rejected";
 export const CR_STAGE_KEYS: CrStageKey[] = [...CR_FLOW, "rejected"];
 
-export type CrStageDef = { key: CrStageKey; label: string; owner: string; purpose: string; steps: string[] };
+export type CrStageDef = { key: CrStageKey; label: string; owner: string; purpose: string; steps: string[]; customerVisible: boolean };
 
-/** The process: what each stage is for, who drives it, and the next steps that get it done. */
+/** The process: what each stage is for, who drives it, and the next steps that get it done.
+ *  `customerVisible` mirrors TicketStageDef's column for the generic stage system, but CR's stages
+ *  are hard-coded rather than admin-editable, so this is a fixed default rather than a per-company
+ *  toggle — every stage is shown to the customer (label + purpose only; `steps` stays internal). */
 export const CR_STAGES: Record<CrStageKey, CrStageDef> = {
   evaluation: {
-    key: "evaluation", label: "Evaluation", owner: "Consultant / PM",
+    key: "evaluation", label: "Evaluation", owner: "Consultant / PM", customerVisible: true,
     purpose: "Understand the change, size it and get the customer's go-ahead before anyone builds.",
     steps: [
       "Clarify the requirement with the requester (a call or a written spec)",
@@ -30,7 +33,7 @@ export const CR_STAGES: Record<CrStageKey, CrStageDef> = {
     ],
   },
   development: {
-    key: "development", label: "Development", owner: "Developer",
+    key: "development", label: "Development", owner: "Developer", customerVisible: true,
     purpose: "Build the approved change in the development system.",
     steps: [
       "Assign the ticket to the developer",
@@ -40,7 +43,7 @@ export const CR_STAGES: Record<CrStageKey, CrStageDef> = {
     ],
   },
   unit_testing: {
-    key: "unit_testing", label: "Unit testing", owner: "Developer / consultant",
+    key: "unit_testing", label: "Unit testing", owner: "Developer / consultant", customerVisible: true,
     purpose: "Prove the change works before the customer sees it.",
     steps: [
       "Test every scenario in the development / QA system",
@@ -49,7 +52,7 @@ export const CR_STAGES: Record<CrStageKey, CrStageDef> = {
     ],
   },
   uat: {
-    key: "uat", label: "UAT", owner: "Customer, supported by the consultant",
+    key: "uat", label: "UAT", owner: "Customer, supported by the consultant", customerVisible: true,
     purpose: "The customer tests in their QA system and signs it off.",
     steps: [
       "Send the customer the test instructions",
@@ -58,7 +61,7 @@ export const CR_STAGES: Record<CrStageKey, CrStageDef> = {
     ],
   },
   go_live: {
-    key: "go_live", label: "Go-live", owner: "Consultant / basis",
+    key: "go_live", label: "Go-live", owner: "Consultant / basis", customerVisible: true,
     purpose: "Move the change to production in the agreed slot.",
     steps: [
       "Confirm the go-live slot with the customer",
@@ -67,7 +70,7 @@ export const CR_STAGES: Record<CrStageKey, CrStageDef> = {
     ],
   },
   closing: {
-    key: "closing", label: "Closing", owner: "PM",
+    key: "closing", label: "Closing", owner: "PM", customerVisible: true,
     purpose: "Hypercare and wrap-up.",
     steps: [
       "Watch the change in production for issues",
@@ -76,12 +79,12 @@ export const CR_STAGES: Record<CrStageKey, CrStageDef> = {
     ],
   },
   closed: {
-    key: "closed", label: "Closed", owner: "—",
+    key: "closed", label: "Closed", owner: "—", customerVisible: true,
     purpose: "Delivered and closed. Reopen it into Closing if something comes back.",
     steps: [],
   },
   rejected: {
-    key: "rejected", label: "Rejected", owner: "—",
+    key: "rejected", label: "Rejected", owner: "—", customerVisible: true,
     purpose: "Not going ahead — the reason is in the stage history. Reopen it into Evaluation if it comes back.",
     steps: [],
   },
@@ -92,6 +95,32 @@ export function asCrStage(statusKey: string | null | undefined): CrStageKey | nu
 }
 export const isCrTerminal = (k: CrStageKey): boolean => k === "closed" || k === "rejected";
 const flowIndex = (k: CrStageKey): number => (CR_FLOW as readonly string[]).indexOf(k);
+
+// ---------- portal view ----------
+
+/** Same shape as ticket-stages.ts's customerStageView, for the same reason: a customer's progress
+ *  view of a change request must never disagree with itself. `rejected` sits outside CR_FLOW, so it
+ *  gets no index/total — the caller shows it as an outcome, not a step in a bar. */
+export type CustomerCrView = { current: { name: string; description: string | null } | null; index: number | null; total: number | null; rejected: boolean };
+
+export function customerCrView(stageKey: CrStageKey | null, stages: Record<CrStageKey, CrStageDef> = CR_STAGES): CustomerCrView | null {
+  if (!stageKey) return null;
+  const visibleFlow = CR_FLOW.filter((k) => stages[k].customerVisible);
+  if (stageKey === "rejected") {
+    const s = stages.rejected;
+    return s.customerVisible ? { current: { name: s.label, description: s.purpose }, index: null, total: null, rejected: true } : null;
+  }
+  if (visibleFlow.length === 0) return null;
+  const stage = stages[stageKey];
+  if (stage.customerVisible) {
+    return { current: { name: stage.label, description: stage.purpose }, index: visibleFlow.indexOf(stageKey) + 1, total: visibleFlow.length, rejected: false };
+  }
+  const i = flowIndex(stageKey);
+  const earlierKey = [...CR_FLOW.slice(0, i)].reverse().find((k) => stages[k].customerVisible);
+  if (!earlierKey) return { current: null, index: null, total: visibleFlow.length, rejected: false };
+  const earlier = stages[earlierKey];
+  return { current: { name: earlier.label, description: earlier.purpose }, index: visibleFlow.indexOf(earlierKey) + 1, total: visibleFlow.length, rejected: false };
+}
 
 /** The stage after this one, or null at the end (and for Rejected). */
 export function nextStage(from: CrStageKey): CrFlowKey | null {

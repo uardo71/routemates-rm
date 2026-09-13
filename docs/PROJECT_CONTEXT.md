@@ -2183,3 +2183,75 @@ types without RAID, but removing a shipped capability would have been the larger
 RAID items already lose it); an at-risk ticket is listed but not in the attention strip; a ticket
 with no project groups under "Support" inside its client; sorting is fixed worst-first inside groups
 (the old sortable column headers went with the table, filters and views all stayed).
+
+### Session update — 2026-09-14 (review/enhancement pass: worklog surfaced, AP/tax/CR alerts, customer-visible stages)
+
+One migration (`20260913120000_ticket_stage_customer_visible`, applied to erp_dev; the pipeline applies
+it to prod on deploy) — purely additive, one boolean with a default. 46 files arrived as a completed
+review pass; **459 tests / 33 files** green (was 428/32), tsc + lint + build clean, and every change
+below was click-tested in the browser against real `erp_dev` data (see the verification notes).
+
+**`TicketWorklog` stopped being a write-only column.** It was logged on a ticket and then invisible
+everywhere else. Now the delivery cockpit carries a **Support card** for the project's tickets
+(open / breached / next-step-overdue / unassigned counts plus total logged, worst-first, top 5) and
+the client Support workspace gained a fifth KPI tile, **LOGGED**. `formatMinutes` moved into
+`src/lib/format.ts` — it was inline on the ticket page and a second consumer would have drifted on
+rounding. Verified live: 1.5h logged on TKT-00000004 reads `1h 30m` in all three places.
+
+**Three alert rules added** (`vendor_payment_overdue`, `tax_payment_overdue`,
+`change_request_overdue`). The first two are the **AP counterpart to `invoice_overdue`** — the
+company could see who owed it money but not what it owed, so a late supplier bill or a missed tax
+deadline was visible only to whoever happened to open Vendors or Taxes. Tax tiers are deliberately
+shorter (1/7/14 vs 1/14/30): tax deadlines carry legal consequences. The CR rule fires once per due
+date, so moving the date re-arms it. Recipients are permission-based (`vendors:manage`,
+`taxes:manage`), resolved at send time, not a stored user list. Verified by borrowing a real bill,
+a real tax payment and TKT-00000002, dry-running the real runner and restoring each field exactly:
+21 days late fired 2 vendor tiers, 16 days fired 3 tax tiers, and the CR reached its assignee.
+
+**Stages can be hidden from the customer.** `TicketStatusDef.customerVisible` has existed since the
+start; `TicketStageDef` never got the equivalent when STAGE mode landed, so a STAGE-mode ticket
+showed the customer every internal step. The portal now renders a **StageProgress** bar over the
+customer-visible stages only — a ticket sitting on a hidden stage reads "Being reviewed", never a
+bar with nothing to point at, and the remaining steps renumber (hiding Triage turns 2/3/4-of-4 into
+1/2/3-of-3). Ticket settings marks a hidden stage with an eye-off icon. Verified against the real
+Bug stage rows through the pure `customerStageView`, flag restored after.
+
+**Two rosters that never talked to each other now do.** `src/lib/delivery-team.ts` finds who is
+actively assigned to a client's delivery projects but NOT on that client's `ClientTeamMember`
+support team; the Team card offers each as a one-click add. Someone had to notice that by hand
+before. Verified: Tungsten suggests 5, Pirelli correctly suggests none.
+
+**Skills reach the staffing decision.** `src/lib/staffing-skills.ts#topSkillsByUser` (top 3 by level)
+annotates the `/planning/availability` bench and the milestone assignment picker — staffing read
+availability and rate and was blind to who knew the toolset, while the skills matrix sat one click
+away in People. Absent from the map means "unknown", not "none".
+
+**Smaller, same shape — surface what already exists:** the staff dashboard gained **Your open items**
+(the PM's My Day, for the people doing the work — same `loadActions` query, so the numbers can't
+disagree); the ticket page shows the coaching guide already written for change requests and
+escalations; `poValidityState` puts the expiring-PO warning on the opportunity page itself, where
+the alert had been emailing about it for months (30-day window, kept independent of the alert
+threshold on purpose); `/capture` lists **unconfirmed drafts** to resume or discard, which
+previously sat in the database forever, excluded from the register by design and listed nowhere.
+
+**One real bug fixed on the way**: `/tickets/c/[clientId]` built its where clause by spreading
+`visibleClientWhere` after `id: clientId`. For a scoped user that spread carries its own `id` key,
+which silently overwrote the requested one — matching *any* visible client instead of the one asked
+for. It is an `AND` now. An admin's where has no `id`, so the bug would never have shown up in
+admin testing.
+
+**`COMMISSION_DESC`** ("Sales comision", misspelling deliberate and load-bearing) moved into
+`src/lib/invoice.ts`. It is matched by exact string in several places and the value is already
+persisted on existing invoices.
+
+**Eight fixes applied on top of the delivered files**, which did not typecheck or lint as they
+arrived: `StageDef` gained a required `customerVisible` that `scripts/walkthrough-bug-stages.ts` and
+two `AlertData` test fixtures had not been updated for; `"rejected" in stage` narrowed to `unknown`
+over a two-member union in the portal page; `Date.now()` during render tripped `react-hooks/purity`
+on the delivery page (now `new Date().getTime()`, the pattern this repo already uses for that rule);
+and three unused bindings were dropped.
+
+**Known, not fixed — data, not code**: TKT-00000004 on erp_dev is a Bug whose `stageId` points at
+"Evaluation", a *change request* stage, most likely left behind by a type change. The page handles
+it, but its warning names the archived status ("New") rather than the actual stage, which reads as
+nonsense. Worth checking whether `changeTicketTypeAction` can leave that state.

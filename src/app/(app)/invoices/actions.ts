@@ -7,7 +7,7 @@ import { prisma } from "@/lib/prisma";
 import { relinkForInvoice } from "@/lib/invoice-time-link-db";
 import { invoiceBlock } from "@/lib/project-stage";
 import { requirePermission } from "@/lib/session";
-import { invoiceTotals, effectiveDueDate } from "@/lib/invoice";
+import { invoiceTotals, effectiveDueDate, COMMISSION_DESC } from "@/lib/invoice";
 import { recordAudit } from "@/lib/audit";
 import { MAX_RECEIPT_SIZE_BYTES, isAllowedReceiptType, saveReceiptFile, deleteReceiptFile } from "@/lib/receipt-storage";
 import type { InvoiceType } from "@prisma/client";
@@ -28,11 +28,6 @@ function parseDate(value: string | null | undefined): Date | null | "invalid" {
   const d = /^\d{4}-\d{2}-\d{2}$/.test(value) ? new Date(`${value}T00:00:00.000Z`) : parseISO(value);
   return Number.isNaN(d.getTime()) ? "invalid" : d;
 }
-
-// The optional sales-commission discount is stored as a single negative line with this exact
-// description (owner's required wording). Kept as a plain line so it flows through every total
-// (net/VAT/gross), the register, and revenue recognition without special-casing.
-const COMMISSION_DESC = "Sales comision";
 
 // ---------- create (manual / partial / full / milestone / credit note) ----------
 

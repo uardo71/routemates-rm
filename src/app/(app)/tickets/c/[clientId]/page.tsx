@@ -1,12 +1,14 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { AlertTriangleIcon, CheckCircle2Icon, GitPullRequestIcon, TicketIcon, UserXIcon, UsersIcon } from "lucide-react";
+import { AlertTriangleIcon, CheckCircle2Icon, ClockIcon, GitPullRequestIcon, TicketIcon, UserXIcon, UsersIcon } from "lucide-react";
 import { CR_FLOW, CR_STAGES, asCrStage, isChangeRequestType } from "@/lib/change-request";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/session";
 import { canManageClientTickets, visibleClientWhere, visibleTicketWhere, STAFF_ONLY } from "@/lib/permissions";
 import { loadTicketConfig } from "@/lib/ticket-config.server";
 import { isOpenCategory } from "@/lib/ticket-config";
+import { formatMinutes } from "@/lib/format";
+import { deliveryStaffForClient } from "@/lib/delivery-team";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatCard } from "@/components/stat-card";
 import { serializeTicketRow, customColumnsOf, TICKET_ROW_SELECT } from "../../serialize";
@@ -33,7 +35,11 @@ export default async function ClientWorkspacePage({ params, searchParams }: { pa
   const user = await requireUser();
 
   const client = await prisma.client.findFirst({
-    where: { id: clientId, ...(await visibleClientWhere(user)) },
+    // AND, not spread: visibleClientWhere also returns an `id` key for scoped users, and a plain
+    // spread after `id: clientId` would let that key silently overwrite it — matching *any*
+    // visible client instead of the one requested (and, for an admin whose where has no `id`,
+    // the bug wouldn't even show up in testing).
+    where: { AND: [{ id: clientId }, await visibleClientWhere(user)] },
     select: { id: true, name: true },
   });
   if (!client) notFound();
@@ -67,6 +73,10 @@ export default async function ClientWorkspacePage({ params, searchParams }: { pa
         orderBy: { name: "asc" },
       })
     : [];
+  const memberIds = new Set(team.map((m) => m.userId));
+  const suggested = canEditTeam
+    ? (await deliveryStaffForClient(user.companyId, client.id)).filter((s) => !memberIds.has(s.id))
+    : [];
 
   const nameById = new Map(users.map((u) => [u.id, u.name]));
   const userName = (id: string) => nameById.get(id) ?? "—";
@@ -84,6 +94,14 @@ export default async function ClientWorkspacePage({ params, searchParams }: { pa
     return !!target && now > new Date(target).getTime();
   }).length;
   const resolved7d = rows.filter((r) => r.resolvedAt && new Date(r.resolvedAt).getTime() >= weekAgo).length;
+  // Same gap as Delivery: TicketWorklog is logged and then invisible everywhere except the one
+  // ticket it's on. A separate aggregate, not part of TICKET_ROW_SELECT, so every other ticket list
+  // in the app doesn't pay for fetching worklogs it never shows.
+  const loggedAgg = await prisma.ticketWorklog.aggregate({
+    where: { ticket: { companyId: user.companyId, clientId: client.id } },
+    _sum: { minutes: true },
+  });
+  const loggedMinutes = loggedAgg._sum.minutes ?? 0;
 
   // Change requests carry no SLA — this strip shows where they are instead.
   const crType = cfg.types.find((x) => isChangeRequestType(x.key));
@@ -114,11 +132,12 @@ export default async function ClientWorkspacePage({ params, searchParams }: { pa
       aside={switcherClients.length > 1 ? <ClientSwitcher current={client.id} clients={switcherClients} /> : undefined}
     >
 
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
         <Link href={`/tickets/c/${client.id}?focus=open`} className="block rounded-lg ring-primary/40 hover:ring-2"><StatCard label="Open" value={open.length} icon={TicketIcon} sublabel={`${rows.length} total · click to list`} /></Link>
         <Link href={`/tickets/c/${client.id}?focus=breached`} className="block rounded-lg ring-primary/40 hover:ring-2"><StatCard label="SLA breached" value={breached} icon={AlertTriangleIcon} tone={breached > 0 ? "destructive" : "default"} sublabel="past respond / resolve target" /></Link>
         <Link href={`/tickets/c/${client.id}?focus=unassigned`} className="block rounded-lg ring-primary/40 hover:ring-2"><StatCard label="Unassigned" value={unassigned} icon={UserXIcon} tone={unassigned > 0 ? "warning" : "default"} sublabel="open, nobody on it" /></Link>
         <Link href={`/tickets/c/${client.id}?focus=resolved7d`} className="block rounded-lg ring-primary/40 hover:ring-2"><StatCard label="Resolved" value={resolved7d} icon={CheckCircle2Icon} sublabel="last 7 days" /></Link>
+        <StatCard label="Logged" value={formatMinutes(loggedMinutes)} icon={ClockIcon} sublabel="worklog total, all tickets" />
       </div>
 
       {crOpen.length > 0 && (
@@ -163,6 +182,7 @@ export default async function ClientWorkspacePage({ params, searchParams }: { pa
                 clientId={client.id}
                 members={team.map((m) => ({ id: m.id, userId: m.userId, name: m.user.name, role: m.role }))}
                 candidates={candidates}
+                suggested={suggested}
                 canEdit={canEditTeam}
               />
             </CardContent>

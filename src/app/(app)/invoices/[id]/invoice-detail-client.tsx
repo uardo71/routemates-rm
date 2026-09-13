@@ -18,7 +18,7 @@ import { InfoField } from "@/components/info-field";
 import { FileTextIcon } from "lucide-react";
 import { formatMoney } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { INVOICE_STATUS_LABEL, INVOICE_TYPE_LABEL, invoiceTotals } from "@/lib/invoice";
+import { INVOICE_STATUS_LABEL, INVOICE_TYPE_LABEL, invoiceTotals, COMMISSION_DESC } from "@/lib/invoice";
 import { StatusStamp, type StampTone } from "@/components/status-stamp";
 import { DocumentsCard } from "@/components/documents-card";
 import type { InvoiceStatus, InvoiceType } from "@prisma/client";
@@ -154,7 +154,7 @@ export function InvoiceDetailClient({ detail }: { detail: InvoiceDetail }) {
                   <TableRow key={l.id}>
                     <TableCell>
                       {l.description}
-                      {l.description === "Sales comision" && (detail.commissionPercent || detail.commissionFixed) && (
+                      {l.description === COMMISSION_DESC && (detail.commissionPercent || detail.commissionFixed) && (
                         <span className="ml-1.5 text-[11px] text-muted-foreground">
                           ({[detail.commissionPercent ? `${detail.commissionPercent}% of net` : null, detail.commissionFixed ? formatMoney(detail.commissionFixed, c) : null].filter(Boolean).join(" + ")})
                         </span>
@@ -359,13 +359,13 @@ function EditDialog({ detail, onClose, onDone }: { detail: InvoiceDetail; onClos
   const [notes, setNotes] = useState(detail.notes ?? "");
   const [periodStart, setPeriodStart] = useState(detail.periodStart ?? "");
   const [periodEnd, setPeriodEnd] = useState(detail.periodEnd ?? "");
-  // The optional sales-commission discount is stored as a "Sales comision" line, but entered as a
+  // The optional sales-commission discount is stored as a COMMISSION_DESC line, but entered as a
   // % of the line net and/or a flat amount (they combine). Those two raw inputs are persisted on
   // the invoice, so seed the boxes from them, not from the materialised line.
   const [commissionPercent, setCommissionPercent] = useState(detail.commissionPercent != null ? String(detail.commissionPercent) : "");
   const [commissionFixed, setCommissionFixed] = useState(detail.commissionFixed != null ? String(detail.commissionFixed) : "");
   const [lines, setLines] = useState<EditLineRow[]>(
-    detail.lines.filter((l) => l.description !== "Sales comision").map((l) => ({ id: l.id, description: l.description, quantity: String(l.quantity), rate: String(l.rate), milestoneId: l.milestoneId, timeEntryCount: l.timeEntryCount })),
+    detail.lines.filter((l) => l.description !== COMMISSION_DESC).map((l) => ({ id: l.id, description: l.description, quantity: String(l.quantity), rate: String(l.rate), milestoneId: l.milestoneId, timeEntryCount: l.timeEntryCount })),
   );
 
   const vatNum = vatRate === "" || Number.isNaN(Number(vatRate)) ? null : Number(vatRate);
@@ -449,7 +449,7 @@ function EditDialog({ detail, onClose, onDone }: { detail: InvoiceDetail; onClos
             </div>
           )}
           {/* Sales commission — always editable (not just DRAFT): a deal-level discount that can be
-              agreed after issuing, stored as the "Sales comision" line. */}
+              agreed after issuing, stored as the COMMISSION_DESC line. */}
           <div className="flex flex-col gap-2 rounded-md border bg-muted/30 p-3">
             <Label className="shrink-0">Sales commission <span className="font-normal text-muted-foreground">(optional discount — leave blank to remove)</span></Label>
             <div className="flex flex-wrap items-end gap-3">

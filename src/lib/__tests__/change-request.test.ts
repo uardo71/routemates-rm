@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
-  CR_FLOW, asCrStage, crMoveKind, nextStage, exitChecks, decideCrMove, timeInStages, formatDuration, nextStepState,
-  type CrRecord, type CrStageKey,
+  CR_FLOW, CR_STAGES, asCrStage, crMoveKind, customerCrView, nextStage, exitChecks, decideCrMove, timeInStages, formatDuration, nextStepState,
+  type CrRecord, type CrStageKey, type CrStageDef,
 } from "@/lib/change-request";
 
 const EMPTY: CrRecord = {
@@ -150,5 +150,46 @@ describe("next step", () => {
     expect(nextStepState("2026-09-10", "2026-09-11")).toBe("overdue");
     expect(nextStepState("2026-09-11", "2026-09-11")).toBe("today");
     expect(nextStepState("2026-09-12", "2026-09-11")).toBe("upcoming");
+  });
+});
+
+describe("customerCrView", () => {
+  it("shows the current stage's position in the flow", () => {
+    expect(customerCrView("uat")).toEqual({
+      current: { name: "UAT", description: CR_STAGES.uat.purpose }, index: 4, total: 7, rejected: false,
+    });
+  });
+
+  it("returns null when there is no current stage", () => {
+    expect(customerCrView(null)).toBeNull();
+  });
+
+  it("treats rejected as an outcome, not a step in the flow", () => {
+    expect(customerCrView("rejected")).toEqual({
+      current: { name: "Rejected", description: CR_STAGES.rejected.purpose }, index: null, total: null, rejected: true,
+    });
+  });
+
+  it("falls back to the nearest earlier visible stage when the current one is hidden", () => {
+    const stages = { ...CR_STAGES, uat: { ...CR_STAGES.uat, customerVisible: false } };
+    expect(customerCrView("uat", stages)).toEqual({
+      current: { name: "Unit testing", description: CR_STAGES.unit_testing.purpose }, index: 3, total: 6, rejected: false,
+    });
+  });
+
+  it("returns null when nothing is customer-visible", () => {
+    const entries = CR_FLOW.map((k): [CrStageKey, CrStageDef] => [k, { ...CR_STAGES[k], customerVisible: false }]);
+    const stages: Record<CrStageKey, CrStageDef> = { ...CR_STAGES, ...Object.fromEntries(entries) };
+    expect(customerCrView("evaluation", stages)).toBeNull();
+  });
+
+  it("shows nothing yet when even the earlier stages are all hidden", () => {
+    const stages = { ...CR_STAGES, evaluation: { ...CR_STAGES.evaluation, customerVisible: false } };
+    expect(customerCrView("evaluation", stages)).toEqual({ current: null, index: null, total: 6, rejected: false });
+  });
+
+  it("returns null when Rejected itself is hidden", () => {
+    const stages = { ...CR_STAGES, rejected: { ...CR_STAGES.rejected, customerVisible: false } };
+    expect(customerCrView("rejected", stages)).toBeNull();
   });
 });

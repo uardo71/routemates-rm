@@ -15,7 +15,7 @@ import type { GateCheck } from "@/lib/project-stage";
 export type StageGateDef = { key: string; label: string; description: string | null };
 export type StageDef = {
   key: string; name: string; description: string | null;
-  order: number; isStarting: boolean; isTerminal: boolean;
+  order: number; isStarting: boolean; isTerminal: boolean; customerVisible: boolean;
   gates: StageGateDef[];
 };
 
@@ -181,3 +181,30 @@ export function stageTimes(
 /** Said when someone tries to set a STAGE-mode ticket's status directly (status menu, board, portal). */
 export const STAGE_MOVE_ONLY =
   "This ticket type moves through its stages from the Lifecycle panel on the ticket, where each stage's checks apply.";
+
+// ---------- portal view ----------
+
+export type CustomerStageView = {
+  /** Name + description of the stage to show — the ticket's actual current stage if it's
+   *  customer-visible, otherwise the nearest earlier visible stage (never a later one: a customer
+   *  should never see progress that hasn't happened, but seeing it "still" at the last visible
+   *  checkpoint while an internal-only stage runs is fine). Null when even that doesn't exist. */
+  current: { name: string; description: string | null } | null;
+  /** 1-based position of `current` among the visible stages, and how many there are — null when
+   *  `current` is null, or nothing is customer-visible at all. */
+  index: number | null;
+  total: number | null;
+};
+
+/** What a portal user should see for a STAGE-mode ticket's progress. Pure: same rule wherever it's
+ *  computed, so the customer's view of a stage list can never disagree with itself. */
+export function customerStageView(stages: StageDef[], currentKey: string | null): CustomerStageView | null {
+  const ordered = sortStages(stages);
+  const visible = ordered.filter((s) => s.customerVisible);
+  if (visible.length === 0 || !currentKey) return null;
+  const current = ordered.find((s) => s.key === currentKey);
+  if (!current) return null;
+  const shown = current.customerVisible ? current : [...ordered].reverse().find((s) => s.order < current.order && s.customerVisible);
+  if (!shown) return { current: null, index: null, total: visible.length };
+  return { current: { name: shown.name, description: shown.description }, index: visible.findIndex((s) => s.key === shown.key) + 1, total: visible.length };
+}

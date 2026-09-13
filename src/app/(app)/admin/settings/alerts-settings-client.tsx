@@ -40,6 +40,8 @@ export function AlertsSettingsClient({ config, emailConfigured, teamsConfigured,
   const [c, setC] = useState<AlertsConfig>(config);
   const [budgetText, setBudgetText] = useState(config.rules.project_budget.thresholds.join(", "));
   const [overdueText, setOverdueText] = useState(config.rules.invoice_overdue.days.join(", "));
+  const [vendorOverdueText, setVendorOverdueText] = useState(config.rules.vendor_payment_overdue.days.join(", "));
+  const [taxOverdueText, setTaxOverdueText] = useState(config.rules.tax_payment_overdue.days.join(", "));
   const [certText, setCertText] = useState(config.rules.certification_expiry.days.join(", "));
   const [preview, setPreview] = useState<Preview | null>(null);
   const rule = <K extends AlertKind>(k: K, patch: Partial<AlertsConfig["rules"][K]>) =>
@@ -52,7 +54,21 @@ export function AlertsSettingsClient({ config, emailConfigured, teamsConfigured,
     if (days.length === 0) return toast.error("Overdue tiers need at least one day count.");
     const certDays = parseList(certText);
     if (certDays.length === 0) return toast.error("Certification tiers need at least one day count.");
-    const payload: AlertsConfig = { ...c, rules: { ...c.rules, project_budget: { ...c.rules.project_budget, thresholds }, invoice_overdue: { ...c.rules.invoice_overdue, days }, certification_expiry: { ...c.rules.certification_expiry, days: certDays } } };
+    const vendorDays = parseList(vendorOverdueText);
+    if (vendorDays.length === 0) return toast.error("Vendor bill overdue tiers need at least one day count.");
+    const taxDays = parseList(taxOverdueText);
+    if (taxDays.length === 0) return toast.error("Tax payment overdue tiers need at least one day count.");
+    const payload: AlertsConfig = {
+      ...c,
+      rules: {
+        ...c.rules,
+        project_budget: { ...c.rules.project_budget, thresholds },
+        invoice_overdue: { ...c.rules.invoice_overdue, days },
+        certification_expiry: { ...c.rules.certification_expiry, days: certDays },
+        vendor_payment_overdue: { ...c.rules.vendor_payment_overdue, days: vendorDays },
+        tax_payment_overdue: { ...c.rules.tax_payment_overdue, days: taxDays },
+      },
+    };
     start(async () => {
       const r = await saveAlertsConfigAction(payload);
       if (r.error) toast.error(r.error); else { toast.success("Alert settings saved."); router.refresh(); }
@@ -113,6 +129,15 @@ export function AlertsSettingsClient({ config, emailConfigured, teamsConfigured,
           <RuleRow kind="status_overdue" enabled={c.rules.status_overdue.enabled} onEnabled={(v) => rule("status_overdue", { enabled: v })} />
           <RuleRow kind="plan_slipping" enabled={c.rules.plan_slipping.enabled} onEnabled={(v) => rule("plan_slipping", { enabled: v })} />
           <RuleRow kind="issue_overdue" enabled={c.rules.issue_overdue.enabled} onEnabled={(v) => rule("issue_overdue", { enabled: v })} />
+          <RuleRow kind="change_request_overdue" enabled={c.rules.change_request_overdue.enabled} onEnabled={(v) => rule("change_request_overdue", { enabled: v })} />
+          <RuleRow kind="vendor_payment_overdue" enabled={c.rules.vendor_payment_overdue.enabled} onEnabled={(v) => rule("vendor_payment_overdue", { enabled: v })}>
+            <Label htmlFor="al-vod" className="text-xs">Days past due</Label>
+            <Input id="al-vod" value={vendorOverdueText} onChange={(e) => setVendorOverdueText(e.target.value)} className="h-8 w-40" placeholder="1, 14, 30" />
+          </RuleRow>
+          <RuleRow kind="tax_payment_overdue" enabled={c.rules.tax_payment_overdue.enabled} onEnabled={(v) => rule("tax_payment_overdue", { enabled: v })}>
+            <Label htmlFor="al-tod" className="text-xs">Days past due</Label>
+            <Input id="al-tod" value={taxOverdueText} onChange={(e) => setTaxOverdueText(e.target.value)} className="h-8 w-40" placeholder="1, 7, 14" />
+          </RuleRow>
           <RuleRow kind="golive_readiness" enabled={c.rules.golive_readiness.enabled} onEnabled={(v) => rule("golive_readiness", { enabled: v })} />
           <RuleRow kind="delivery_digest" enabled={c.rules.delivery_digest.enabled} onEnabled={(v) => rule("delivery_digest", { enabled: v })}>
             <Label htmlFor="al-dg" className="text-xs">Send on</Label>

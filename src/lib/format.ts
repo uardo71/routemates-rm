@@ -28,3 +28,13 @@ export function currencySymbol(currency: string): string {
     return currency;
   }
 }
+
+/** "1h 30m" / "45m" / "3h" — for TicketWorklog totals, the only place minutes (not hours) are the
+ *  unit. Was duplicated inline on the ticket detail page; centralized once a second consumer needed
+ *  it too, so the two can't drift on rounding or formatting. */
+export function formatMinutes(m: number): string {
+  const h = Math.floor(m / 60);
+  const rest = m % 60;
+  if (h === 0) return `${rest}m`;
+  return rest ? `${h}h ${rest}m` : `${h}h`;
+}

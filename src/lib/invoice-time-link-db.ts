@@ -2,8 +2,8 @@
 // (scripts/link-manual-invoice-time.ts) runs the exact same routine as the live invoice actions.
 import type { PrismaClient } from "@prisma/client";
 import { buildUnits, allocateUnits, resolveLineTask, type AllocLine } from "@/lib/invoice-time-link";
+import { COMMISSION_DESC } from "@/lib/invoice";
 
-const COMMISSION_DESC = "Sales comision";
 const EPS = 0.005;
 const r2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
 const iso = (d: Date) => d.toISOString().slice(0, 10);

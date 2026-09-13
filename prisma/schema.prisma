@@ -1944,6 +1944,7 @@ model TicketStageDef {
   order       Int      @default(0)
   isStarting  Boolean  @default(false)
   isTerminal  Boolean  @default(false)
+  customerVisible Boolean @default(true) // shown to portal users, same meaning as TicketStatusDef's
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 

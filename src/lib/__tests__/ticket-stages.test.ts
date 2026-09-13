@@ -1,20 +1,20 @@
 import { describe, it, expect } from "vitest";
 import {
-  closeTarget, decideStageMove, earlierStages, gateChecks, nextStage, reopenTarget, sortStages,
+  closeTarget, customerStageView, decideStageMove, earlierStages, gateChecks, nextStage, reopenTarget, sortStages,
   stageByKey, stageIndex, stageMoveKind, stageTimes, startingStage, type StageDef,
 } from "@/lib/ticket-stages";
 
 // The Bug stage set as migration 20260912090000 seeds it.
 const BUG: StageDef[] = [
-  { key: "triage", name: "Triage", description: "Confirm the defect.", order: 0, isStarting: true, isTerminal: false, gates: [
+  { key: "triage", name: "Triage", description: "Confirm the defect.", order: 0, isStarting: true, isTerminal: false, customerVisible: true, gates: [
     { key: "reproduced", label: "Reproduced", description: null },
     { key: "severity_set", label: "Severity set", description: null },
   ] },
-  { key: "in_progress", name: "In progress", description: null, order: 1, isStarting: false, isTerminal: false, gates: [] },
-  { key: "fix_verification", name: "Fix verification", description: null, order: 2, isStarting: false, isTerminal: false, gates: [
+  { key: "in_progress", name: "In progress", description: null, order: 1, isStarting: false, isTerminal: false, customerVisible: true, gates: [] },
+  { key: "fix_verification", name: "Fix verification", description: null, order: 2, isStarting: false, isTerminal: false, customerVisible: true, gates: [
     { key: "fix_verified", label: "Fix verified in test environment", description: null },
   ] },
-  { key: "closed", name: "Closed", description: null, order: 3, isStarting: false, isTerminal: true, gates: [] },
+  { key: "closed", name: "Closed", description: null, order: 3, isStarting: false, isTerminal: true, customerVisible: true, gates: [] },
 ];
 
 const move = (from: string, to: string, extra: Partial<Parameters<typeof decideStageMove>[0]> = {}) =>
@@ -23,8 +23,8 @@ const move = (from: string, to: string, extra: Partial<Parameters<typeof decideS
 describe("stage order", () => {
   it("sorts by order, breaking ties by key", () => {
     const tied: StageDef[] = [
-      { key: "b", name: "B", description: null, order: 1, isStarting: false, isTerminal: false, gates: [] },
-      { key: "a", name: "A", description: null, order: 1, isStarting: false, isTerminal: false, gates: [] },
+      { key: "b", name: "B", description: null, order: 1, isStarting: false, isTerminal: false, customerVisible: true, gates: [] },
+      { key: "a", name: "A", description: null, order: 1, isStarting: false, isTerminal: false, customerVisible: true, gates: [] },
     ];
     expect(sortStages(tied).map((s) => s.key)).toEqual(["a", "b"]);
   });
@@ -184,5 +184,34 @@ describe("stageTimes", () => {
       { toKey: "triage", at: "2026-09-10T00:00:00.000Z" },
     ];
     expect(stageTimes(BUG, events, "2026-09-10T03:00:00.000Z")).toEqual({ triage: 2 * H, in_progress: 1 * H });
+  });
+});
+
+describe("customerStageView", () => {
+  it("shows the current stage's position among visible stages", () => {
+    expect(customerStageView(BUG, "in_progress")).toEqual({
+      current: { name: "In progress", description: null }, index: 2, total: 4,
+    });
+  });
+
+  it("returns null when the ticket has no current stage", () => {
+    expect(customerStageView(BUG, null)).toBeNull();
+  });
+
+  it("returns null when nothing is customer-visible", () => {
+    const hidden = BUG.map((s) => ({ ...s, customerVisible: false }));
+    expect(customerStageView(hidden, "triage")).toBeNull();
+  });
+
+  it("falls back to the nearest earlier visible stage when the current one is hidden", () => {
+    const withHiddenMiddle = BUG.map((s) => (s.key === "in_progress" ? { ...s, customerVisible: false } : s));
+    expect(customerStageView(withHiddenMiddle, "in_progress")).toEqual({
+      current: { name: "Triage", description: "Confirm the defect." }, index: 1, total: 3,
+    });
+  });
+
+  it("shows nothing yet when even the earlier stages are all hidden", () => {
+    const onlyLaterVisible = BUG.map((s) => ({ ...s, customerVisible: s.key === "closed" }));
+    expect(customerStageView(onlyLaterVisible, "triage")).toEqual({ current: null, index: null, total: 1 });
   });
 });

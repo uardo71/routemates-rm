@@ -14,14 +14,15 @@ import type { AlertsConfig, AlertKind } from "./config";
 // date is moved.
 
 export type { AlertKind };
-export type RecipientAction = "invoices:manage" | "expenses:manage" | "timesheet:approve:any" | "users:manage";
+export type RecipientAction = "invoices:manage" | "expenses:manage" | "timesheet:approve:any" | "users:manage" | "vendors:manage" | "taxes:manage";
 import { statusChase, overduePlanTasks, overdueRaidItems, isHighSeverity, goLiveReadiness, isoWeek, isoWeekday } from "@/lib/delivery-signals";
 import { evaluateHygiene, HYGIENE_CHECKS, type HygieneRows } from "@/lib/hygiene";
+import { nextStepState } from "@/lib/change-request";
 export type Recipient = { userId: string } | { action: RecipientAction };
 
 export type Alert = {
   kind: AlertKind;
-  targetType: "project" | "invoice" | "timecard" | "expense" | "assignment" | "opportunity" | "milestone" | "certification" | "workspace" | "plantask" | "raid" | "user";
+  targetType: "project" | "invoice" | "timecard" | "expense" | "assignment" | "opportunity" | "milestone" | "certification" | "workspace" | "plantask" | "raid" | "user" | "ticket" | "vendor_payment" | "tax_payment";
   targetId: string;
   payloadKey: string;
   subject: string;
@@ -56,6 +57,16 @@ export type AlertData = {
   }[];
   milestones: { id: string; name: string; projectName: string; projectManagerId: string | null; endDate: string | null; status: string }[];
   certifications: { id: string; userId: string; userName: string; name: string; issuer: string | null; expiryDate: string | null }[];
+  changeRequests: {
+    ticketId: string; number: string; title: string; nextStep: string | null; nextStepDue: string | null;
+    nextStepOwnerId: string | null; assigneeId: string | null; clientId: string | null; clientName: string | null;
+    projectId: string | null;
+  }[];
+  // AR (invoices) has had an overdue alert since the start; AP (what the company itself owes) never
+  // did — a late supplier bill or a missed tax deadline was visible only to someone who happened to
+  // open Vendors or Taxes and looked. Same tiered-days shape as invoice_overdue.
+  vendorPayments: { id: string; vendorName: string; description: string | null; dueDate: string | null; amount: number; currency: string }[];
+  taxPayments: { id: string; categoryName: string; authority: string | null; dueDate: string | null; amount: number; currency: string }[];
   /** Delivery signals, pre-shaped by the runner; the predicates below and My Day share the same pure rules. */
   delivery: {
     baseUrl: string;
@@ -163,6 +174,61 @@ export function invoiceOverdueRule(data: AlertData, cfg: AlertsConfig["rules"]["
         ]),
         teamsText: `**${inv.invoiceNumber}** (${inv.clientName}) — ${late}d overdue, ${money(inv.outstanding, inv.currency)} outstanding.`,
         recipients: [{ action: "invoices:manage" }],
+      });
+    }
+  }
+  return out;
+}
+
+/** A vendor bill (AP) past its due date, still unpaid. Same tiered shape as invoice_overdue, the AR
+ *  equivalent — this side of the ledger just never had it. */
+export function vendorPaymentOverdueRule(data: AlertData, cfg: AlertsConfig["rules"]["vendor_payment_overdue"], isSent: IsSent): Alert[] {
+  if (!cfg.enabled) return [];
+  const out: Alert[] = [];
+  const tiers = [...cfg.days].sort((a, b) => a - b);
+  for (const v of data.vendorPayments) {
+    if (!v.dueDate) continue;
+    const late = daysBetween(v.dueDate, data.today);
+    for (const d of tiers) {
+      if (late < d) continue;
+      const payloadKey = `d${d}`;
+      if (isSent("vendor_payment_overdue", v.id, payloadKey)) continue;
+      out.push({
+        kind: "vendor_payment_overdue", targetType: "vendor_payment", targetId: v.id, payloadKey,
+        subject: `${v.vendorName} bill is ${late} day${late === 1 ? "" : "s"} overdue`,
+        html: page(`${esc(v.vendorName)}${v.description ? ` · ${esc(v.description)}` : ""}`, [
+          `Due ${esc(v.dueDate.slice(0, 10))}, now <strong>${late} day${late === 1 ? "" : "s"}</strong> overdue.`,
+          `Amount: <strong>${esc(money(v.amount, v.currency))}</strong>.`,
+        ]),
+        teamsText: `**${v.vendorName}**${v.description ? ` (${v.description})` : ""} — ${late}d overdue, ${money(v.amount, v.currency)}.`,
+        recipients: [{ action: "vendors:manage" }],
+      });
+    }
+  }
+  return out;
+}
+
+/** A tax obligation past its due date, still unpaid — the highest-stakes item on this list to miss. */
+export function taxPaymentOverdueRule(data: AlertData, cfg: AlertsConfig["rules"]["tax_payment_overdue"], isSent: IsSent): Alert[] {
+  if (!cfg.enabled) return [];
+  const out: Alert[] = [];
+  const tiers = [...cfg.days].sort((a, b) => a - b);
+  for (const t of data.taxPayments) {
+    if (!t.dueDate) continue;
+    const late = daysBetween(t.dueDate, data.today);
+    for (const d of tiers) {
+      if (late < d) continue;
+      const payloadKey = `d${d}`;
+      if (isSent("tax_payment_overdue", t.id, payloadKey)) continue;
+      out.push({
+        kind: "tax_payment_overdue", targetType: "tax_payment", targetId: t.id, payloadKey,
+        subject: `${t.categoryName} payment is ${late} day${late === 1 ? "" : "s"} overdue`,
+        html: page(`${esc(t.categoryName)}${t.authority ? ` · ${esc(t.authority)}` : ""}`, [
+          `Due ${esc(t.dueDate.slice(0, 10))}, now <strong>${late} day${late === 1 ? "" : "s"}</strong> overdue.`,
+          `Amount: <strong>${esc(money(t.amount, t.currency))}</strong>.`,
+        ]),
+        teamsText: `**${t.categoryName}**${t.authority ? ` (${t.authority})` : ""} — ${late}d overdue, ${money(t.amount, t.currency)}.`,
+        recipients: [{ action: "taxes:manage" }],
       });
     }
   }
@@ -386,6 +452,38 @@ export function issueOverdueRule(data: AlertData, cfg: AlertsConfig["rules"]["is
   return out;
 }
 
+/** A change request's next step, due today or overdue. Same data the Actions register and the
+ *  Delivery cockpit's Support card now use — a change request never breaches SLA (it's exempt) and
+ *  never showed up in any alert, no matter how overdue its next step was. */
+export function changeRequestOverdueRule(data: AlertData, cfg: AlertsConfig["rules"]["change_request_overdue"], isSent: IsSent): Alert[] {
+  if (!cfg.enabled) return [];
+  const out: Alert[] = [];
+  for (const c of data.changeRequests) {
+    const state = nextStepState(c.nextStepDue, data.today);
+    if (state !== "overdue" && state !== "today") continue;
+    if (!c.nextStepDue) continue;
+    const payloadKey = c.nextStepDue;
+    if (isSent("change_request_overdue", c.ticketId, payloadKey)) continue;
+    const ownerId = c.nextStepOwnerId ?? c.assigneeId;
+    const recipients = uniq([...(ownerId ? [{ userId: ownerId }] : []), ...(c.assigneeId && c.assigneeId !== ownerId ? [{ userId: c.assigneeId }] : [])]);
+    if (recipients.length === 0) continue;
+    const late = daysBetween(c.nextStepDue, data.today);
+    const step = c.nextStep?.trim() || "the next step";
+    const clientBit = c.clientName ? ` (${c.clientName})` : "";
+    out.push({
+      kind: "change_request_overdue", targetType: "ticket", targetId: c.ticketId, payloadKey,
+      subject: `${state === "overdue" ? "Overdue" : "Due today"} — ${c.number}: ${step}`,
+      html: page(`Change request · ${esc(c.title)}${esc(clientBit)}`, [
+        `<strong>${esc(step)}</strong> was due ${esc(c.nextStepDue)}${state === "overdue" ? ` — ${late} day${late === 1 ? "" : "s"} ago` : " — today"}.`,
+        `<a href="${esc(data.delivery.baseUrl)}/tickets/${esc(c.ticketId)}">Open the ticket</a>.`,
+      ]),
+      teamsText: `${state === "overdue" ? "🔴 " : ""}**${c.number}**${esc(clientBit)} — ${step}, due ${c.nextStepDue}${state === "overdue" ? ` (${late}d late)` : ""}.`,
+      recipients,
+    });
+  }
+  return out;
+}
+
 /** UAT script not sent inside the UAT window; cutover not finished near go-live. Keys: the UAT phase
  *  (a new phase re-fires) and the go-live date (a moved date re-fires). */
 export function goLiveReadinessRule(data: AlertData, cfg: AlertsConfig["rules"]["golive_readiness"], isSent: IsSent): Alert[] {
@@ -425,9 +523,10 @@ export function deliveryDigestRule(data: AlertData, cfg: AlertsConfig["rules"]["
   if (isoWeekday(data.today) !== cfg.weekday) return [];
   const week = isoWeek(data.today);
   const base = data.delivery.baseUrl;
-  type Bucket = { status: string[]; tasks: string[]; issues: string[]; golive: string[] };
+  type Bucket = { status: string[]; tasks: string[]; issues: string[]; golive: string[]; crs: string[] };
   const byPm = new Map<string, Bucket>();
-  const bucket = (pm: string | null) => { if (!pm) return null; let b = byPm.get(pm); if (!b) { b = { status: [], tasks: [], issues: [], golive: [] }; byPm.set(pm, b); } return b; };
+  const bucket = (pm: string | null) => { if (!pm) return null; let b = byPm.get(pm); if (!b) { b = { status: [], tasks: [], issues: [], golive: [], crs: [] }; byPm.set(pm, b); } return b; };
+  const projectById = new Map(data.delivery.projects.map((p) => [p.id, p]));
 
   for (const w of data.delivery.workspaces) {
     const sc = statusChase({ lastReportDateIso: w.lastReportDateIso, cadence: w.cadence, sinceIso: w.sinceIso, todayIso: data.today, customerFacing: w.customerFacing, active: w.active, done: w.done });
@@ -435,6 +534,15 @@ export function deliveryDigestRule(data: AlertData, cfg: AlertsConfig["rules"]["
   }
   for (const t of overduePlanTasks(data.delivery.planTasks, data.today)) bucket(t.managerId)?.tasks.push(`<a href="${esc(wsLink(base, t.projectId, t.engagementId, "plan"))}">${esc(t.name)}</a> — ${esc(scopeName(t))}, due ${esc(t.dueDate ?? "")}`);
   for (const r of overdueRaidItems(data.delivery.raidItems, data.today)) bucket(r.managerId)?.issues.push(`<a href="${esc(wsLink(base, r.projectId, r.engagementId, "raid"))}">${esc(r.title)}</a> — ${esc(scopeName(r))}, due ${esc(r.dueDate ?? "")}${isHighSeverity(r.severity) ? " <strong>(high)</strong>" : ""}`);
+  // Change requests with no project (pure Support work) skip the digest — there's no PM to bucket
+  // them under here, and the daily change_request_overdue alert already reaches the actual step
+  // owner. Only strictly overdue (not due-today), matching overduePlanTasks/overdueRaidItems above.
+  for (const c of data.changeRequests) {
+    if (!c.projectId || !c.nextStepDue || c.nextStepDue >= data.today) continue;
+    const p = projectById.get(c.projectId);
+    if (!p) continue;
+    bucket(p.managerId)?.crs.push(`<a href="${esc(base)}/tickets/${esc(c.ticketId)}">${esc(c.number)}</a> — ${esc(c.nextStep?.trim() || "next step")}, due ${esc(c.nextStepDue)}`);
+  }
   for (const p of data.delivery.projects) {
     const g = goLiveReadiness({ active: p.active, done: p.done, uatStatus: p.uatStatus, uatAccepted: p.uatAccepted, endDateIso: p.endDateIso, todayIso: data.today, scripts: p.scripts, cutoverLeaves: p.cutoverLeaves });
     const items: string[] = [];
@@ -446,7 +554,7 @@ export function deliveryDigestRule(data: AlertData, cfg: AlertsConfig["rules"]["
 
   const out: Alert[] = [];
   for (const [pm, b] of byPm) {
-    const total = b.status.length + b.tasks.length + b.issues.length + b.golive.length;
+    const total = b.status.length + b.tasks.length + b.issues.length + b.golive.length + b.crs.length;
     if (total === 0) continue;
     if (isSent("delivery_digest", pm, week)) continue;
     const section = (title: string, rows: string[]) => (rows.length ? `<h3 style="margin:16px 0 4px;font-size:13px">${title} (${rows.length})</h3><ul style="margin:0;padding-left:18px">${rows.map((r) => `<li>${r}</li>`).join("")}</ul>` : "");
@@ -454,8 +562,8 @@ export function deliveryDigestRule(data: AlertData, cfg: AlertsConfig["rules"]["
       kind: "delivery_digest", targetType: "user", targetId: pm, payloadKey: week,
       subject: `Your delivery week ${week}: ${total} thing${total === 1 ? "" : "s"} need${total === 1 ? "s" : ""} a hand`,
       html: page(`Monday digest · ${week}`, [
-        `Across your projects: ${b.status.length} status update${b.status.length === 1 ? "" : "s"} due, ${b.tasks.length} overdue task${b.tasks.length === 1 ? "" : "s"}, ${b.issues.length} issue${b.issues.length === 1 ? "" : "s"} past due, ${b.golive.length} go-live item${b.golive.length === 1 ? "" : "s"}.`,
-        section("Status updates due", b.status) + section("Overdue plan tasks", b.tasks) + section("Issues past due", b.issues) + section("Go-live in the next 14 days", b.golive),
+        `Across your projects: ${b.status.length} status update${b.status.length === 1 ? "" : "s"} due, ${b.tasks.length} overdue task${b.tasks.length === 1 ? "" : "s"}, ${b.issues.length} issue${b.issues.length === 1 ? "" : "s"} past due, ${b.crs.length} change request next step${b.crs.length === 1 ? "" : "s"} overdue, ${b.golive.length} go-live item${b.golive.length === 1 ? "" : "s"}.`,
+        section("Status updates due", b.status) + section("Overdue plan tasks", b.tasks) + section("Issues past due", b.issues) + section("Change request next steps overdue", b.crs) + section("Go-live in the next 14 days", b.golive),
         `<a href="${esc(base)}/delivery">Open My Day</a> · <a href="${esc(base)}/actions?mine=1">My actions</a>`,
       ]),
       teamsText: `Weekly digest ${week}: ${total} item${total === 1 ? "" : "s"} across your projects.`,
@@ -504,6 +612,8 @@ export function hygieneWeeklyRule(data: AlertData, cfg: AlertsConfig["rules"]["h
 export const RULES: { kind: AlertKind; run: (data: AlertData, cfg: AlertsConfig, isSent: IsSent) => Alert[] }[] = [
   { kind: "project_budget", run: (d, c, s) => projectBudgetRule(d, c.rules.project_budget, s) },
   { kind: "invoice_overdue", run: (d, c, s) => invoiceOverdueRule(d, c.rules.invoice_overdue, s) },
+  { kind: "vendor_payment_overdue", run: (d, c, s) => vendorPaymentOverdueRule(d, c.rules.vendor_payment_overdue, s) },
+  { kind: "tax_payment_overdue", run: (d, c, s) => taxPaymentOverdueRule(d, c.rules.tax_payment_overdue, s) },
   { kind: "approval_stale", run: (d, c, s) => approvalStaleRule(d, c.rules.approval_stale, s) },
   { kind: "expiry", run: (d, c, s) => expiryRule(d, c.rules.expiry, s) },
   { kind: "milestone_overdue", run: (d, c, s) => milestoneOverdueRule(d, c.rules.milestone_overdue, s) },
@@ -511,6 +621,7 @@ export const RULES: { kind: AlertKind; run: (data: AlertData, cfg: AlertsConfig,
   { kind: "status_overdue", run: (d, c, s) => statusOverdueRule(d, c.rules.status_overdue, s) },
   { kind: "plan_slipping", run: (d, c, s) => planSlippingRule(d, c.rules.plan_slipping, s) },
   { kind: "issue_overdue", run: (d, c, s) => issueOverdueRule(d, c.rules.issue_overdue, s) },
+  { kind: "change_request_overdue", run: (d, c, s) => changeRequestOverdueRule(d, c.rules.change_request_overdue, s) },
   { kind: "golive_readiness", run: (d, c, s) => goLiveReadinessRule(d, c.rules.golive_readiness, s) },
   { kind: "delivery_digest", run: (d, c, s) => deliveryDigestRule(d, c.rules.delivery_digest, s) },
   { kind: "hygiene_weekly", run: (d, c, s) => hygieneWeeklyRule(d, c.rules.hygiene_weekly, s) },

@@ -22,6 +22,7 @@ import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/session";
 import { can, STAFF_ONLY } from "@/lib/permissions";
 import { getCompanySlaDefault, getClientSlaOverride } from "@/lib/sla.server";
+import { deliveryStaffForClient } from "@/lib/delivery-team";
 import { EditClientForm } from "./edit-client-form";
 import { AddContactForm } from "./add-contact-form";
 import { PortalUsers } from "./portal-users";
@@ -68,6 +69,10 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
         select: { id: true, name: true },
         orderBy: { name: "asc" },
       })
+    : [];
+  const teamMemberIds = new Set(team.map((m) => m.userId));
+  const teamSuggested = canEditTeam
+    ? (await deliveryStaffForClient(user.companyId, client.id)).filter((s) => !teamMemberIds.has(s.id))
     : [];
   const canManageTickets = can(user, "tickets:manage");
   const [slaDefault, slaOverride] = canManageTickets
@@ -251,6 +256,7 @@ export default async function ClientDetailPage({ params }: { params: Promise<{ i
             clientId={client.id}
             members={team.map((m) => ({ id: m.id, userId: m.userId, name: m.user.name, role: m.role }))}
             candidates={teamCandidates}
+            suggested={teamSuggested}
             canEdit={canEditTeam}
           />
         </CardContent>

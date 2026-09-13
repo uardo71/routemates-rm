@@ -135,3 +135,10 @@ export const RECOGNIZED_STATUSES: InvoiceStatus[] = ["ISSUED", "RECONCILED", "PA
 export function isRecognized(status: InvoiceStatus): boolean {
   return RECOGNIZED_STATUSES.includes(status);
 }
+
+// The optional deal-level sales-commission discount is stored as a single negative InvoiceLine
+// whose `description` is exactly this text (there's no dedicated column) — everything that adds,
+// edits, displays or excludes that line from totals must match on this exact string. Keep the
+// misspelling: it's the value already persisted on existing invoices, and changing it would orphan
+// every commission line written before the change.
+export const COMMISSION_DESC = "Sales comision";

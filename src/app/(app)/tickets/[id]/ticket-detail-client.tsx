@@ -12,6 +12,9 @@ import * as React from "react";
 import { BackLink } from "@/components/back-link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import { formatMinutes } from "@/lib/format";
+import { GuideHelp } from "@/components/guide-help";
+import type { Guide } from "@/lib/guides-server";
 import {
   Trash2Icon, ClockIcon, SaveIcon, RotateCcwIcon, MessageSquareIcon, HistoryIcon, TimerIcon,
   CheckCircle2Icon, AlertTriangleIcon, PencilLineIcon,
@@ -80,7 +83,7 @@ type Detail = {
 const selectCls = "h-8 w-full rounded-md border bg-transparent px-2 text-sm outline-none focus:border-primary/50 disabled:border-transparent disabled:px-0 disabled:opacity-100";
 const inputCls = "h-8";
 const fmtDT = (s: string) => (s ? s.slice(0, 16).replace("T", " ") : "—");
-const fmtMin = (m: number) => `${Math.floor(m / 60)}h${m % 60 ? ` ${m % 60}m` : ""}`;
+const fmtMin = formatMinutes;
 
 type Draft = {
   title: string; description: string; statusId: string; assigneeId: string; priority: TicketPriority;
@@ -102,17 +105,22 @@ export function TicketDetailClient(props: {
   conversation: CommentNode[]; history: HistoryEvent[];
   /** Explanations for values the create step didn't keep (lib/ticket.ts#createDropNotices). */
   notices: string[];
+  guides: Guide[];
+  /** Which guide category is relevant to this ticket (its type or its priority) — null shows no trigger at all. */
+  guideCategory: string | null;
 }) {
   // Re-key on the server's version of the ticket so a refresh after Save resets the draft without
   // an effect that syncs state to props.
   return <WorkItem key={JSON.stringify(draftFrom(props.t)) + props.t.typeId + JSON.stringify(props.t.cr?.saved ?? null) + (props.t.stage?.stageKey ?? "")} {...props} />;
 }
 
-function WorkItem({ t, config, canManage, involved, users, clients, projects, conversation, history, notices }: {
+function WorkItem({ t, config, canManage, involved, users, clients, projects, conversation, history, notices, guides, guideCategory }: {
   t: Detail; config: DetailConfig; canManage: boolean; involved: boolean; users: Opt[]; clients: Opt[]; projects: Opt[];
   conversation: CommentNode[]; history: HistoryEvent[];
   /** Explanations for values the create step didn't keep (lib/ticket.ts#createDropNotices). */
   notices: string[];
+  guides: Guide[];
+  guideCategory: string | null;
 }) {
   const router = useRouter();
   const [tab, setTab] = React.useState<"details" | "history" | "worklog">("details");
@@ -218,6 +226,9 @@ function WorkItem({ t, config, canManage, involved, users, clients, projects, co
             {/* eyebrow */}
             <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
               <TypeIcon icon={t.typeIcon} className="size-3.5" /> {t.typeName} <span className="font-mono normal-case tracking-normal">{t.number}</span>
+              {guideCategory && guides.some((g) => g.category === guideCategory) && (
+                <GuideHelp guides={guides} initialCategory={guideCategory} triggerLabel="Playbook" triggerClassName="ml-auto h-6 px-2 text-[11px] normal-case tracking-normal text-muted-foreground" />
+              )}
             </div>
 
             {/* title */}

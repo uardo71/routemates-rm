@@ -12,6 +12,10 @@ export type AlertsConfig = {
     project_budget: { enabled: boolean; thresholds: number[] };
     /** Days past dueDate at which an unpaid issued invoice is flagged. */
     invoice_overdue: { enabled: boolean; days: number[] };
+    /** Days past dueDate at which an unpaid vendor bill (AP) is flagged. */
+    vendor_payment_overdue: { enabled: boolean; days: number[] };
+    /** Days past dueDate at which an unpaid tax obligation is flagged. */
+    tax_payment_overdue: { enabled: boolean; days: number[] };
     /** Timecards / expenses waiting for a decision longer than this many days. */
     approval_stale: { enabled: boolean; staleDays: number };
     /** Assignment end dates and customer PO expiries within this many days. */
@@ -26,6 +30,8 @@ export type AlertsConfig = {
     plan_slipping: { enabled: boolean };
     /** RAID items past due; HIGH/CRITICAL also reach admins. */
     issue_overdue: { enabled: boolean };
+    /** A change request's next step is due today or overdue. */
+    change_request_overdue: { enabled: boolean };
     /** UAT script not sent in the UAT window; cutover incomplete near go-live. */
     golive_readiness: { enabled: boolean };
     /** Weekly per-PM digest of everything needing attention (ISO weekday, 1 = Monday). */
@@ -42,6 +48,8 @@ export const DEFAULT_ALERTS_CONFIG: AlertsConfig = {
   rules: {
     project_budget: { enabled: true, thresholds: [80, 100] },
     invoice_overdue: { enabled: true, days: [1, 14, 30] },
+    vendor_payment_overdue: { enabled: true, days: [1, 14, 30] },
+    tax_payment_overdue: { enabled: true, days: [1, 7, 14] },
     approval_stale: { enabled: true, staleDays: 3 },
     expiry: { enabled: true, days: 30 },
     milestone_overdue: { enabled: true },
@@ -49,6 +57,7 @@ export const DEFAULT_ALERTS_CONFIG: AlertsConfig = {
     status_overdue: { enabled: true },
     plan_slipping: { enabled: true },
     issue_overdue: { enabled: true },
+    change_request_overdue: { enabled: true },
     golive_readiness: { enabled: true },
     delivery_digest: { enabled: true, weekday: 1 },
     hygiene_weekly: { enabled: true, weekday: 1 },
@@ -67,6 +76,16 @@ export const ALERT_RULE_META: Record<AlertKind, { label: string; description: st
     label: "Invoice overdue",
     description: "An issued invoice with money outstanding is past its due date by each listed number of days. Fires once per tier.",
     recipients: "everyone who manages invoices",
+  },
+  vendor_payment_overdue: {
+    label: "Vendor bill overdue",
+    description: "An unpaid vendor bill (accounts payable) is past its due date by each listed number of days. Fires once per tier — the AP counterpart to Invoice overdue.",
+    recipients: "everyone who manages vendors",
+  },
+  tax_payment_overdue: {
+    label: "Tax payment overdue",
+    description: "An unpaid tax obligation is past its due date by each listed number of days. Fires once per tier. Shorter default tiers than the other overdue rules — tax deadlines carry legal, not just commercial, risk.",
+    recipients: "everyone who manages taxes",
   },
   approval_stale: {
     label: "Approvals waiting",
@@ -103,6 +122,11 @@ export const ALERT_RULE_META: Record<AlertKind, { label: string; description: st
     description: "An open RAID item is past its target date. High and critical ones also reach the administrators.",
     recipients: "the project manager, the owner, and admins for high/critical",
   },
+  change_request_overdue: {
+    label: "Change request next step",
+    description: "A change request's next step is due today or overdue. Fires once per due date — moving the date re-arms it, and rejecting or reworking the step to a new one starts over.",
+    recipients: "whoever the next step is waiting on, and the ticket's assignee",
+  },
   golive_readiness: {
     label: "Go-live readiness",
     description: "UAT is under way or within 30 days but no test script is sent; or go-live is within 14 days (or UAT accepted) and the cutover isn't finished.",
@@ -110,7 +134,7 @@ export const ALERT_RULE_META: Record<AlertKind, { label: string; description: st
   },
   delivery_digest: {
     label: "Monday digest",
-    description: "One email per project manager listing workspaces needing a status update, overdue tasks, issues past due and go-live items in the next 14 days, with links. Once per week.",
+    description: "One email per project manager listing workspaces needing a status update, overdue tasks, issues past due, overdue change request next steps, and go-live items in the next 14 days, with links. Once per week.",
     recipients: "each project manager, about their own projects",
   },
   hygiene_weekly: {
@@ -136,6 +160,8 @@ export function mergeAlertsConfig(stored: unknown): AlertsConfig {
     rules: {
       project_budget: { enabled: bool(r.project_budget?.enabled, true), thresholds: nums(r.project_budget?.thresholds, d.rules.project_budget.thresholds) },
       invoice_overdue: { enabled: bool(r.invoice_overdue?.enabled, true), days: nums(r.invoice_overdue?.days, d.rules.invoice_overdue.days) },
+      vendor_payment_overdue: { enabled: bool(r.vendor_payment_overdue?.enabled, true), days: nums(r.vendor_payment_overdue?.days, d.rules.vendor_payment_overdue.days) },
+      tax_payment_overdue: { enabled: bool(r.tax_payment_overdue?.enabled, true), days: nums(r.tax_payment_overdue?.days, d.rules.tax_payment_overdue.days) },
       approval_stale: { enabled: bool(r.approval_stale?.enabled, true), staleDays: num(r.approval_stale?.staleDays, d.rules.approval_stale.staleDays) },
       expiry: { enabled: bool(r.expiry?.enabled, true), days: num(r.expiry?.days, d.rules.expiry.days) },
       milestone_overdue: { enabled: bool(r.milestone_overdue?.enabled, true) },
@@ -143,6 +169,7 @@ export function mergeAlertsConfig(stored: unknown): AlertsConfig {
       status_overdue: { enabled: bool(r.status_overdue?.enabled, true) },
       plan_slipping: { enabled: bool(r.plan_slipping?.enabled, true) },
       issue_overdue: { enabled: bool(r.issue_overdue?.enabled, true) },
+      change_request_overdue: { enabled: bool(r.change_request_overdue?.enabled, true) },
       golive_readiness: { enabled: bool(r.golive_readiness?.enabled, true) },
       delivery_digest: { enabled: bool(r.delivery_digest?.enabled, true), weekday: (() => { const w = num(r.delivery_digest?.weekday, 1); return w >= 1 && w <= 7 ? Math.round(w) : 1; })() },
       hygiene_weekly: { enabled: bool(r.hygiene_weekly?.enabled, true), weekday: (() => { const w = num(r.hygiene_weekly?.weekday, 1); return w >= 1 && w <= 7 ? Math.round(w) : 1; })() },

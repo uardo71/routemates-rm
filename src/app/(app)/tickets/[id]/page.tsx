@@ -10,6 +10,7 @@ import { stageTimes, type StageDef } from "@/lib/ticket-stages";
 import { createDropNotices } from "@/lib/ticket";
 import { resolvedSlaPolicy } from "@/lib/sla.server";
 import { SLA_SOURCE_LABEL } from "@/lib/sla";
+import { getActiveGuides } from "@/lib/guides-server";
 import { TicketDetailClient, type DetailConfig } from "./ticket-detail-client";
 import type { CrView } from "./change-request-panel";
 import type { StageView, StageFieldVal } from "./stage-panel";
@@ -65,12 +66,19 @@ export default async function TicketDetailPage({ params, searchParams }: {
   const type = cfg.types.find((x) => x.id === t.typeId);
   const typeFields = fieldsForType(cfg, t.typeId);
 
-  const [clients, projects, users] = await Promise.all([
+  const [clients, projects, users, guides] = await Promise.all([
     manage ? prisma.client.findMany({ where: { companyId: user.companyId }, select: { id: true, name: true }, orderBy: { name: "asc" } }) : Promise.resolve([]),
     manage ? prisma.project.findMany({ where: { companyId: user.companyId, isInternal: false }, select: { id: true, name: true }, orderBy: { name: "asc" } }) : Promise.resolve([]),
     prisma.user.findMany({ where: { companyId: user.companyId, active: true, role: { not: "CUSTOMER" } }, select: { id: true, name: true }, orderBy: { name: "asc" } }),
+    getActiveGuides(user.companyId),
   ]);
   const nameById = new Map(users.map((u) => [u.id, u.name]));
+  // The coaching library already has a guide written for exactly this moment ("a customer asks for
+  // extra work" under change_request) — it just never showed up anywhere a consultant was actually
+  // working a ticket, only on the PM-only /delivery home. Same idea as My Day: surface what already
+  // exists instead of building something new. Escalation covers the other case a ticket itself
+  // signals — a CRITICAL one, whatever its type.
+  const guideCategory = isChangeRequestType(t.typeDef.key) ? "change_request" : t.priority === "CRITICAL" ? "escalation" : null;
 
   const pubField = (f: { id: string; key: string; name: string; kind: string; options: string[]; required: boolean }) =>
     ({ id: f.id, key: f.key, name: f.name, kind: f.kind, options: f.options, required: f.required });
@@ -125,7 +133,7 @@ export default async function TicketDetailPage({ params, searchParams }: {
     const now = new Date();
     const stages: StageDef[] = type.stages.map((st) => ({
       key: st.key, name: st.name, description: st.description, order: st.order,
-      isStarting: st.isStarting, isTerminal: st.isTerminal, gates: st.gates,
+      isStarting: st.isStarting, isTerminal: st.isTerminal, customerVisible: st.customerVisible, gates: st.gates,
     }));
     const events = t.crStageEvents.map((e) => ({
       id: e.id, fromKey: e.fromKey, toKey: e.toKey, move: e.move, note: e.note ?? "", overrideReason: e.overrideReason ?? "",
@@ -160,6 +168,8 @@ export default async function TicketDetailPage({ params, searchParams }: {
       conversation={conversation}
       history={history}
       notices={notices}
+      guides={guides}
+      guideCategory={guideCategory}
       t={{
         id: t.id, number: t.number, title: t.title, description: t.description ?? "",
         typeId: t.typeId, typeName: t.typeDef.name, typeColor: t.typeDef.color, typeIcon: t.typeDef.icon, slaExempt: !t.typeDef.slaApplicable, slaSourceLabel: sla ? SLA_SOURCE_LABEL[sla.source] : null,

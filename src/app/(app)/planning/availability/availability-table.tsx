@@ -19,6 +19,8 @@ export type AvailabilityRow = {
   userId: string;
   userName: string;
   role: string;
+  /** Top skills recorded in People — a hint only, doesn't affect sorting or filtering. */
+  skills?: string[];
   cells: AvailabilityCell[];
   totalFree: number;
 };
@@ -88,6 +90,9 @@ export function AvailabilityTable({
                     <span className="font-medium truncate">{r.userName}</span>
                     <Badge variant="secondary" className="text-[10px] shrink-0">{r.role}</Badge>
                   </div>
+                  {r.skills && r.skills.length > 0 && (
+                    <div className="truncate text-[10px] text-muted-foreground">{r.skills.join(", ")}</div>
+                  )}
                 </td>
                 {r.cells.map((c) => (
                   <td

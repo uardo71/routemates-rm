@@ -13,6 +13,7 @@ import { prisma } from "@/lib/prisma";
 import { requirePermission } from "@/lib/session";
 import { formatMoney } from "@/lib/format";
 import { uploadVendorDocumentAction, deleteVendorDocumentAction } from "../actions";
+import { VENDOR_STATUS_LABEL, VENDOR_DOC_KIND_LABEL } from "@/lib/vendor";
 import { VendorDetailActions, type VendorEditData, type VendorOpt, type ProjectOpt } from "./vendor-detail-client";
 
 const iso = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : null);
@@ -68,11 +69,11 @@ export default async function VendorPaymentDetailPage({ params }: { params: Prom
               <div className="flex items-center gap-2 flex-wrap">
                 <h1 className="text-2xl font-semibold">{payment.vendor.name}</h1>
                 {payment.status === "PAID" ? (
-                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:text-emerald-400"><CheckCircle2Icon className="size-3.5" /> Paid</span>
+                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:text-emerald-400"><CheckCircle2Icon className="size-3.5" /> {VENDOR_STATUS_LABEL.PAID}</span>
                 ) : overdue ? (
                   <span className="inline-flex items-center gap-1 rounded-full bg-destructive/15 px-2 py-0.5 text-xs font-medium text-destructive"><TriangleAlertIcon className="size-3.5" /> Overdue</span>
                 ) : (
-                  <Badge variant="secondary">To pay</Badge>
+                  <Badge variant="secondary">{VENDOR_STATUS_LABEL.TO_PAY}</Badge>
                 )}
               </div>
               <p className="text-sm text-muted-foreground mt-1">{payment.description ?? "—"} · {formatMoney(Number(payment.amount), payment.currency)}</p>
@@ -111,9 +112,9 @@ export default async function VendorPaymentDetailPage({ params }: { params: Prom
             title="Documents"
             documents={docRows}
             kinds={[
-              { value: "VENDOR_INVOICE", label: "Vendor invoice" },
-              { value: "PAYMENT_RECEIPT", label: "Payment receipt" },
-              { value: "OTHER", label: "Other" },
+              { value: "VENDOR_INVOICE", label: VENDOR_DOC_KIND_LABEL.VENDOR_INVOICE },
+              { value: "PAYMENT_RECEIPT", label: VENDOR_DOC_KIND_LABEL.PAYMENT_RECEIPT },
+              { value: "OTHER", label: VENDOR_DOC_KIND_LABEL.OTHER },
             ]}
             canManage
             uploadAction={uploadVendorDocumentAction.bind(null, payment.id)}

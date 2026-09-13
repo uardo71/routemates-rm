@@ -24,7 +24,7 @@ const OPP_DOC_KINDS = [
   { value: "OTHER", label: "Other" },
 ];
 import { formatMoney, formatNumber } from "@/lib/format";
-import { STAGE_LABELS, isOpenStage } from "@/lib/opportunity";
+import { STAGE_LABELS, isOpenStage, poValidityState } from "@/lib/opportunity";
 import type { OpportunityStage, ProjectBillingType, DiscountType } from "@prisma/client";
 
 const STAGE_STAMP: Record<OpportunityStage, { tone: StampTone; dashed?: boolean }> = {
@@ -140,6 +140,7 @@ type Option = { id: string; name: string };
 type ContactOption = { id: string; name: string; clientId: string };
 
 const BILLING_TYPES: ProjectBillingType[] = ["TIME_AND_MATERIALS", "FIXED_PRICE", "RETAINER"];
+const todayIso = () => new Date().toISOString().slice(0, 10);
 
 export function OpportunityDetailClient({
   detail,
@@ -450,7 +451,22 @@ export function OpportunityDetailClient({
             <InfoField icon={FileTextIcon} label="PO number" value={detail.poNumber ?? "—"} />
             <InfoField icon={FileTextIcon} label="PO amount" value={detail.poAmount != null ? formatMoney(detail.poAmount, c) : "—"} />
             <InfoField icon={FileTextIcon} label="PO date" value={detail.poDate ?? "—"} />
-            <InfoField icon={FileTextIcon} label="PO valid until" value={detail.poValidUntil ?? "—"} />
+            <InfoField
+              icon={FileTextIcon}
+              label="PO valid until"
+              value={
+                detail.stage === "WON" && detail.poValidUntil && poValidityState(detail.poValidUntil, todayIso()) !== "ok" ? (
+                  <span className="inline-flex items-center gap-1.5">
+                    {detail.poValidUntil}
+                    {poValidityState(detail.poValidUntil, todayIso()) === "expired" ? (
+                      <Badge variant="destructive" className="text-[10px]">expired</Badge>
+                    ) : (
+                      <Badge variant="secondary" className="text-[10px] text-amber-700 dark:text-amber-400">expiring soon</Badge>
+                    )}
+                  </span>
+                ) : (detail.poValidUntil ?? "—")
+              }
+            />
           </CardContent>
         </Card>
         <Card>

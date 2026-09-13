@@ -29,9 +29,13 @@ const raid = (o: Partial<D["raidItems"][number]> = {}): D["raidItems"][number] =
 const proj = (o: Partial<D["projects"][number]> = {}): D["projects"][number] => ({
   id: "p1", name: "Tungsten", managerId: "pm", active: true, done: false, uatStatus: "NOT_STARTED", uatAccepted: false, endDateIso: "2026-09-25", scripts: [], cutoverLeaves: [], ...o,
 });
+const cr = (o: Partial<AlertData["changeRequests"][number]> = {}): AlertData["changeRequests"][number] => ({
+  ticketId: "cr1", number: "TKT-000002", title: "Add a discount field", nextStep: "Get customer sign-off", nextStepDue: "2026-09-10",
+  nextStepOwnerId: "consultant1", assigneeId: "consultant1", clientId: "cl1", clientName: "Tungsten", projectId: "p1", ...o,
+});
 function data(d: Partial<D> = {}): AlertData {
   return {
-    today: TODAY, projects: [], invoices: [], timecards: [], expenses: [], assignments: [], opportunities: [], milestones: [], certifications: [],
+    today: TODAY, projects: [], invoices: [], timecards: [], expenses: [], assignments: [], opportunities: [], milestones: [], certifications: [], changeRequests: [], vendorPayments: [], taxPayments: [],
     delivery: { baseUrl: "https://psa.example", workspaces: [], planTasks: [], raidItems: [], projects: [], ...d },
   };
 }
@@ -151,6 +155,18 @@ describe("delivery_digest", () => {
   });
   it("a PM with nothing to do gets no digest", () => {
     expect(deliveryDigestRule(data({ workspaces: [ws({ lastReportDateIso: "2026-09-13" })] }), cfg.rules.delivery_digest, never)).toHaveLength(0);
+  });
+  it("includes overdue change request next steps that belong to a project, skips project-less ones and ones not yet due", () => {
+    const withCr = { ...data({ projects: [proj()] }), changeRequests: [cr({ nextStepDue: "2026-09-10" })] };
+    const a = deliveryDigestRule(withCr, cfg.rules.delivery_digest, never);
+    expect(a[0].html).toContain("Change request next steps overdue (1)");
+    expect(a[0].html).toContain("TKT-000002");
+
+    const noProject = { ...data({ projects: [proj()] }), changeRequests: [cr({ nextStepDue: "2026-09-10", projectId: null })] };
+    expect(deliveryDigestRule(noProject, cfg.rules.delivery_digest, never)[0].html).not.toContain("Change request next steps");
+
+    const dueToday = { ...data({ projects: [proj()] }), changeRequests: [cr({ nextStepDue: TODAY })] };
+    expect(deliveryDigestRule(dueToday, cfg.rules.delivery_digest, never)[0].html).not.toContain("Change request next steps"); // due today isn't overdue yet
   });
   it("all delivery rules are part of evaluateAll", () => {
     const d = data({ workspaces: [ws({ lastReportDateIso: "2026-08-25" })], planTasks: [task({ dueDate: "2026-09-10" })], raidItems: [raid({ dueDate: "2026-09-10" })], projects: [proj({ endDateIso: "2026-09-20" })] });

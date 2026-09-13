@@ -42,7 +42,7 @@ async function main() {
 
   const stages: StageDef[] = sortStages(type.stages.map((s) => ({
     key: s.key, name: s.name, description: s.description, order: s.order,
-    isStarting: s.isStarting, isTerminal: s.isTerminal,
+    isStarting: s.isStarting, isTerminal: s.isTerminal, customerVisible: s.customerVisible,
     gates: s.gates.map((g) => ({ key: g.key, label: g.label, description: g.description })),
   })));
   const rowOf = (key: string) => type.stages.find((s) => s.key === key)!;

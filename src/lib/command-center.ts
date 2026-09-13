@@ -3,7 +3,7 @@ import type { RagStatus, ProjectBillingType, MilestoneStatus, InvoiceStatus } fr
 import { prisma } from "@/lib/prisma";
 import { visibleProjectIds, type SessionUser } from "@/lib/permissions";
 import { computeCompanyRevenue } from "@/lib/revenue-data";
-import { invoiceTotals, outstanding } from "@/lib/invoice";
+import { invoiceTotals, outstanding, COMMISSION_DESC } from "@/lib/invoice";
 import { contractValueScale } from "@/lib/revenue";
 import { computeQuoteTotals, TERMINAL_STAGES, STAGE_LABELS } from "@/lib/opportunity";
 
@@ -181,7 +181,6 @@ export async function assembleCommandCenter(user: SessionUser): Promise<CommandC
     ]);
 
   // ---- Cash from the invoice register ----
-  const COMMISSION_DESC = "Sales comision"; // exact wording of the deal-level commission discount line
   const today = new Date(new Date().toISOString().slice(0, 10));
   const outstandingByProject = new Map<string, number>();
   // Value of actual WORK billed per project = Σ invoice line amounts excluding the commission-discount

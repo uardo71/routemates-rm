@@ -145,7 +145,7 @@ export async function loadTicketConfig(companyId: string, includeInactive = fals
     archivedStatuses: t.statuses.filter((s) => s.archivedAt).map(status),
     stages: t.stages.map((s) => ({
       id: s.id, key: s.key, name: s.name, description: s.description, order: s.order,
-      isStarting: s.isStarting, isTerminal: s.isTerminal,
+      isStarting: s.isStarting, isTerminal: s.isTerminal, customerVisible: s.customerVisible,
       gates: s.gates.map((g) => ({ key: g.key, label: g.label, description: g.description })),
       gateIdByKey: Object.fromEntries(s.gates.map((g) => [g.key, g.id])),
     })),

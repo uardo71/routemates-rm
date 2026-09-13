@@ -11,7 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { formatMoney } from "@/lib/format";
-import { invoiceTotals } from "@/lib/invoice";
+import { invoiceTotals, COMMISSION_DESC } from "@/lib/invoice";
 import type { ProjectBillingType } from "@prisma/client";
 import { createInvoiceAction, createTimeInvoiceAction, setInvoiceCommissionAction, unbilledPreviewAction, type UnbilledPreview } from "../actions";
 
@@ -86,7 +86,7 @@ export function NewInvoiceClient({ projects, defaultCurrency, invoices }: { proj
   const pct = Number(commissionPercent) || 0;
   const fixedAmt = Number(commissionFixed) || 0;
   const commissionVal = Math.round((linesNet * (pct / 100) + fixedAmt) * 100) / 100;
-  const net = linesNet - commissionVal; // the "Sales comision" line reduces net
+  const net = linesNet - commissionVal; // the COMMISSION_DESC line reduces net
   const totals = invoiceTotals([{ amount: net }], vatRate === "" ? null : Number(vatRate));
 
   function setLine(i: number, patch: Partial<LineRow>) {
@@ -347,7 +347,7 @@ export function NewInvoiceClient({ projects, defaultCurrency, invoices }: { proj
             <Input aria-label="Commission fixed amount" className="w-32" type="number" step="0.01" min="0" value={commissionFixed} onChange={(e) => setCommissionFixed(e.target.value)} placeholder="0.00" />
           </div>
           {commissionVal > 0 && (
-            <span className="pb-2 text-sm text-muted-foreground">= <span className="text-destructive tabular-nums">−{formatMoney(commissionVal, defaultCurrency)}</span> &quot;Sales comision&quot; line</span>
+            <span className="pb-2 text-sm text-muted-foreground">= <span className="text-destructive tabular-nums">−{formatMoney(commissionVal, defaultCurrency)}</span> &quot;{COMMISSION_DESC}&quot; line</span>
           )}
         </div>
       </div>
@@ -363,7 +363,7 @@ export function NewInvoiceClient({ projects, defaultCurrency, invoices }: { proj
           {commissionVal > 0 && (
             <>
               <span className="text-muted-foreground">Subtotal <span className="text-foreground">{formatMoney(linesNet, defaultCurrency)}</span></span>
-              <span className="text-muted-foreground">Sales comision <span className="text-destructive">−{formatMoney(commissionVal, defaultCurrency)}</span></span>
+              <span className="text-muted-foreground">{COMMISSION_DESC} <span className="text-destructive">−{formatMoney(commissionVal, defaultCurrency)}</span></span>
             </>
           )}
           <span className="text-muted-foreground">Net <span className="text-foreground">{formatMoney(net, defaultCurrency)}</span></span>

@@ -14,21 +14,27 @@ import {
   ScaleIcon,
   PlaneIcon,
   WalletIcon,
+  ListChecksIcon,
 } from "lucide-react";
 import { StatCard } from "@/components/stat-card";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { InitialsAvatar } from "@/components/initials-avatar";
 import { HourProgress } from "@/components/hour-progress";
+import { cn } from "@/lib/utils";
 import { DonutChart, DONUT_COLORS } from "@/components/charts/donut-chart";
 import { MiniBarChart } from "@/components/charts/mini-bar-chart";
 import { prisma } from "@/lib/prisma";
 import { requireUser } from "@/lib/session";
-import { can, STAFF_ONLY } from "@/lib/permissions";
+import { can, STAFF_ONLY, type SessionUser } from "@/lib/permissions";
 import { startOfWeek, toDateParam } from "@/lib/week";
 import { formatMoney, formatNumber } from "@/lib/format";
 import { loadExternalCost } from "@/lib/external-cost";
 import { computeProjectRevenue } from "@/lib/revenue";
+import { loadActions } from "@/lib/actions-register-data";
+import { enrichAll, ACTION_SOURCE_LABEL } from "@/lib/actions-register";
+import { getActiveGuides } from "@/lib/guides-server";
+import { GuideHelp } from "@/components/guide-help";
 
 export default async function DashboardPage() {
   const user = await requireUser();
@@ -45,7 +51,7 @@ export default async function DashboardPage() {
         </p>
       </div>
       {isStaff ? (
-        <StaffDashboard userId={user.id} />
+        <StaffDashboard user={user} />
       ) : (
         <ManagerDashboard userId={user.id} isAdmin={user.role === "ADMIN"} companyId={user.companyId} canReports={canReports} />
       )}
@@ -56,12 +62,14 @@ export default async function DashboardPage() {
 // ---------------------------------------------------------------------------------------------
 // Staff — an individual's own week.
 // ---------------------------------------------------------------------------------------------
-async function StaffDashboard({ userId }: { userId: string }) {
+async function StaffDashboard({ user }: { user: SessionUser }) {
+  const userId = user.id;
   const weekStart = startOfWeek(new Date());
   const weekEnd = addDays(weekStart, 6);
   const eightWeeksAgo = addDays(weekStart, -7 * 7);
+  const todayIso = toDateParam(new Date());
 
-  const [hoursAgg, activeAssignments, cardsThisWeek, awaitingSubmission, recentEntries] = await Promise.all([
+  const [hoursAgg, activeAssignments, cardsThisWeek, awaitingSubmission, recentEntries, myActions, guides] = await Promise.all([
     prisma.timeEntry.aggregate({ where: { userId, date: { gte: weekStart, lte: weekEnd } }, _sum: { hours: true } }),
     prisma.assignment.count({ where: { userId, status: "ACTIVE", milestone: { timeEntryOpen: true } } }),
     prisma.timeCard.findMany({ where: { userId, weekStartDate: weekStart }, select: { status: true } }),
@@ -70,8 +78,16 @@ async function StaffDashboard({ userId }: { userId: string }) {
       where: { userId, date: { gte: eightWeeksAgo, lte: weekEnd }, timeCard: { status: { not: "DRAFT" } } },
       select: { date: true, hours: true },
     }),
+    // The "My Day" a PM already gets on /delivery, but for the people actually doing the work: their
+    // own open plan tasks, RAID items, and assigned tickets, across every project — not just the
+    // three stat cards this page used to stop at. Same query the Actions register and /delivery use,
+    // so the numbers can never disagree with each other.
+    loadActions(user, { projectIds: "ALL", mineOnly: true, todayIso, include: "open", tickets: true }),
+    getActiveGuides(user.companyId),
   ]);
   const submitted = cardsThisWeek.filter((c) => c.status === "SUBMITTED").length;
+  const myOpen = enrichAll(myActions, todayIso);
+  const myOverdue = myOpen.filter((a) => a.isOverdue).length;
 
   // Weekly hours over the last 8 weeks.
   const byWeek = new Map<string, number>();
@@ -91,6 +107,37 @@ async function StaffDashboard({ userId }: { userId: string }) {
         <StatCard label="Active assignments" value={activeAssignments} icon={BriefcaseIcon} />
         <StatCard label="Lines awaiting submission" value={awaitingSubmission} icon={CheckSquareIcon} tone={awaitingSubmission > 0 ? "warning" : "default"} />
       </div>
+
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between pb-2">
+          <CardTitle className="text-base flex items-center gap-2">
+            <ListChecksIcon className="size-4 text-muted-foreground" /> Your open items
+            <span className="font-normal text-muted-foreground">({myOpen.length}{myOverdue > 0 ? <span className="text-rose-600">, {myOverdue} overdue</span> : null})</span>
+          </CardTitle>
+          <div className="flex items-center gap-3">
+            <GuideHelp guides={guides} />
+            <Link href="/actions?mine=1" className="text-xs font-medium text-primary hover:underline">Register →</Link>
+          </div>
+        </CardHeader>
+        <CardContent className="pt-1">
+          {myOpen.length === 0 ? (
+            <p className="py-2 text-sm text-muted-foreground">Nothing open — plan tasks, issues and tickets assigned to you all clear.</p>
+          ) : (
+            <div className="flex flex-col">
+              {myOpen.slice(0, 8).map((a) => (
+                <Link key={`${a.source}:${a.id}`} href={a.href} className="flex items-center gap-2.5 border-b py-2 last:border-none hover:bg-muted/40">
+                  <span className="w-24 shrink-0 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{ACTION_SOURCE_LABEL[a.source].replace(" / RAID", "")}</span>
+                  <span className="min-w-0 flex-1 truncate text-sm">{a.title}</span>
+                  <span className="shrink-0 text-xs text-muted-foreground">{a.projectName}</span>
+                  <span className={cn("w-16 shrink-0 text-right font-mono text-xs", a.isOverdue ? "text-rose-600 dark:text-rose-400" : "text-muted-foreground")}>{a.dueDate ? format(new Date(a.dueDate), "MMM d") : "—"}</span>
+                </Link>
+              ))}
+              {myOpen.length > 8 && <p className="pt-2 text-xs text-muted-foreground">+ {myOpen.length - 8} more in the register.</p>}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Your hours — last 8 weeks</CardTitle>

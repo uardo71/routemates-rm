@@ -57,6 +57,24 @@ type CaptureResponse = {
   } | null;
 };
 
+// A capture that got saved (so the receipt itself is never lost) but never confirmed — the user
+// closed the tab, lost signal, or just got interrupted before finishing. Previously these just sat
+// invisibly in the database forever: excluded from the main expense register by design, and never
+// listed anywhere to resume or discard.
+export type DraftSummary = {
+  id: string;
+  createdAt: string;
+  date: string;
+  amount: number;
+  currency: string;
+  description: string;
+  vendor: string | null;
+  categoryId: string;
+  paymentMethod: PaymentMethod;
+  paidBy: PaidBy;
+  receiptFileName: string | null;
+};
+
 // Downscale to <= maxDim on the longest side and re-encode as JPEG. Falls back to the original file
 // if the browser can't decode it (e.g. some HEIC cases).
 async function compressImage(file: File, maxDim = 2000, quality = 0.8): Promise<Blob> {
@@ -81,16 +99,20 @@ export function CaptureClient({
   defaultCurrency,
   canManage,
   ocrConfigured,
+  drafts,
 }: {
   categories: Category[];
   defaultCurrency: string;
   canManage: boolean;
   ocrConfigured: boolean;
+  drafts: DraftSummary[];
 }) {
   const [stage, setStage] = useState<"idle" | "processing" | "review" | "saved">("idle");
   const [statusText, setStatusText] = useState("");
   const [pending, startTransition] = useTransition();
   const fileRef = useRef<HTMLInputElement>(null);
+  const [localDrafts, setLocalDrafts] = useState(drafts);
+  const [draftPending, setDraftPending] = useState<string | null>(null);
 
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [draftId, setDraftId] = useState("");
@@ -210,6 +232,39 @@ export function CaptureClient({
     });
   }
 
+  // Resuming loads what the draft already has (from OCR, or the placeholder defaults if OCR never
+  // ran) straight into the review form — same screen a fresh capture lands on, just skipping the
+  // camera step since the receipt is already saved.
+  function resumeDraft(d: DraftSummary) {
+    setDraftId(d.id);
+    setCapture(null);
+    setCategoryId(d.categoryId);
+    setDate(d.date);
+    setAmount(d.amount > 0 ? String(d.amount) : "");
+    setCurrency(d.currency);
+    setDescription(d.description === "Captured receipt" ? "" : d.description);
+    setVendor(d.vendor ?? "");
+    setPaymentMethod(d.paymentMethod);
+    setPaidBy(d.paidBy);
+    setPreviewUrl(d.receiptFileName ? `/api/receipts/${d.receiptFileName}` : null);
+    setLocalDrafts((prev) => prev.filter((x) => x.id !== d.id));
+    setStage("review");
+  }
+
+  function discardListedDraft(id: string) {
+    if (!confirm("Discard this captured receipt?")) return;
+    setDraftPending(id);
+    startTransition(async () => {
+      const result = await discardCapturedExpenseAction(id);
+      setDraftPending(null);
+      if (result.error) toast.error(result.error);
+      else {
+        toast.success("Discarded.");
+        setLocalDrafts((prev) => prev.filter((x) => x.id !== id));
+      }
+    });
+  }
+
   const conf = capture?.confidences;
   const lowConf = (v?: number) => typeof v === "number" && v < LOW_CONFIDENCE;
 
@@ -223,6 +278,31 @@ export function CaptureClient({
 
       {stage === "idle" && (
         <div className="flex flex-1 flex-col items-center justify-center gap-6 text-center">
+          {localDrafts.length > 0 && (
+            <div className="w-full rounded-xl border border-amber-500/40 bg-amber-500/[0.06] p-3 text-left">
+              <p className="mb-2 text-xs font-medium text-amber-700 dark:text-amber-400">
+                {localDrafts.length} unfinished capture{localDrafts.length === 1 ? "" : "s"} — the receipt is saved, just not submitted yet.
+              </p>
+              <div className="flex flex-col gap-2">
+                {localDrafts.map((d) => (
+                  <div key={d.id} className="flex items-center gap-2.5 rounded-lg border bg-card p-2">
+                    {d.receiptFileName ? (
+                      // eslint-disable-next-line @next/next/no-img-element -- a small local thumbnail, not worth next/image's overhead here
+                      <img src={`/api/receipts/${d.receiptFileName}`} alt="" className="size-10 shrink-0 rounded object-cover" />
+                    ) : (
+                      <div className="flex size-10 shrink-0 items-center justify-center rounded bg-muted"><ReceiptTextIcon className="size-4 text-muted-foreground" /></div>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm font-medium">{d.vendor || d.description || "Receipt"}</div>
+                      <div className="text-xs text-muted-foreground">{d.amount > 0 ? `${d.amount} ${d.currency}` : "amount unknown"} · {d.date}</div>
+                    </div>
+                    <Button size="sm" variant="outline" className="h-7 shrink-0 px-2 text-xs" disabled={draftPending === d.id} onClick={() => resumeDraft(d)}>Resume</Button>
+                    <Button size="sm" variant="ghost" className="h-7 shrink-0 px-2 text-xs text-muted-foreground hover:text-destructive" disabled={draftPending === d.id} onClick={() => discardListedDraft(d.id)}>Discard</Button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="flex size-20 items-center justify-center rounded-2xl bg-primary/10 text-primary">
             <ReceiptTextIcon className="size-9" />
           </div>

@@ -8,6 +8,7 @@ import { parseList } from "@/lib/utils";
 import { WeekJump } from "@/components/week-jump";
 import { loadCapacity, capacityKey } from "@/lib/capacity-data";
 import { freeHours, bookingStatus } from "@/lib/capacity";
+import { topSkillsByUser } from "@/lib/staffing-skills";
 import { AvailabilityFilters } from "./availability-filters";
 import { AvailabilityTable, type AvailabilityRow } from "./availability-table";
 
@@ -70,6 +71,9 @@ export default async function AvailabilityPage({
   }
 
   const capacity = await loadCapacity(user.companyId, people.map((p) => p.id), weekKeys, timelineStart, timelineEnd);
+  // Same gap as staffing an assignment: this screen answers "who's free" but never "who's free AND
+  // knows the toolset" — the skills matrix sits one click away in People and nothing here reads it.
+  const skillsByUser = await topSkillsByUser(user.companyId, people.map((p) => p.id));
 
   const rows: AvailabilityRow[] = people.map((p) => {
     const cells = weekKeys.map((weekKey) => {
@@ -91,6 +95,7 @@ export default async function AvailabilityPage({
       userId: p.id,
       userName: p.name,
       role: p.role,
+      skills: skillsByUser.get(p.id),
       cells,
       totalFree: Math.round(cells.reduce((s, c) => s + c.free, 0) * 100) / 100,
     };

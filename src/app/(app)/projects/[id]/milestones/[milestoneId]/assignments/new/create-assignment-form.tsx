@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/select";
 import { createAssignmentAction } from "../../../../../milestone-actions";
 
-type Option = { id: string; name: string };
+type Option = { id: string; name: string; skills?: string[] };
 
 export function CreateAssignmentForm({
   milestoneId,
@@ -43,7 +43,12 @@ export function CreateAssignmentForm({
             <SelectContent>
               {users.map((u) => (
                 <SelectItem key={u.id} value={u.id}>
-                  {u.name}
+                  <span className="inline-flex min-w-0 items-center gap-1.5">
+                    <span>{u.name}</span>
+                    {u.skills && u.skills.length > 0 && (
+                      <span className="truncate text-[11px] text-muted-foreground">— {u.skills.join(", ")}</span>
+                    )}
+                  </span>
                 </SelectItem>
               ))}
             </SelectContent>

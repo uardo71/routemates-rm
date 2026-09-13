@@ -10,6 +10,7 @@ import { toDateParam } from "@/lib/week";
 import { evaluateAll, type Alert, type AlertData, type Recipient } from "./rules";
 import { loadDeliveryAlertData } from "./delivery-data";
 import { loadHygieneRows } from "@/lib/hygiene-data";
+import { CR_TYPE_KEY } from "@/lib/change-request";
 
 // The daily alerts runner. Loads what the pure rules need, evaluates them, dedups through the
 // Notification ledger, fans out through notify(). Idempotent per day via an AppSetting marker, and
@@ -36,7 +37,7 @@ const iso = (d: Date | null | undefined) => (d ? d.toISOString() : null);
 
 async function loadAlertData(companyId: string, today: string): Promise<AlertData> {
   const baseUrl = (process.env.AUTH_URL ?? "").replace(/\/$/, "");
-  const [projects, entries, invoices, timecards, expenses, assignments, opportunities, milestones, certifications, delivery] = await Promise.all([
+  const [projects, entries, invoices, timecards, expenses, assignments, opportunities, milestones, certifications, changeRequests, vendorPayments, taxPayments, delivery] = await Promise.all([
     prisma.project.findMany({
       where: { companyId, isInternal: false },
       select: { id: true, number: true, name: true, managerId: true, status: true, budgetHours: true, budgetAmount: true },
@@ -74,6 +75,24 @@ async function loadAlertData(companyId: string, today: string): Promise<AlertDat
     prisma.certification.findMany({
       where: { expiryDate: { not: null }, user: { companyId, active: true } },
       select: { id: true, userId: true, name: true, issuer: true, expiryDate: true, user: { select: { name: true } } },
+    }),
+    prisma.ticket.findMany({
+      where: {
+        companyId, typeDef: { key: CR_TYPE_KEY }, statusDef: { category: { notIn: ["DONE", "CANCELLED"] } },
+        changeRequest: { nextStepDue: { not: null } },
+      },
+      select: {
+        id: true, number: true, title: true, assigneeId: true, clientId: true, client: { select: { name: true } }, projectId: true,
+        changeRequest: { select: { nextStep: true, nextStepDue: true, nextStepOwnerId: true } },
+      },
+    }),
+    prisma.vendorPayment.findMany({
+      where: { companyId, status: "TO_PAY", dueDate: { not: null } },
+      select: { id: true, description: true, dueDate: true, amount: true, currency: true, vendor: { select: { name: true } } },
+    }),
+    prisma.taxPayment.findMany({
+      where: { companyId, status: "TO_PAY", dueDate: { not: null } },
+      select: { id: true, authority: true, dueDate: true, amount: true, currency: true, category: { select: { name: true } } },
     }),
     loadDeliveryAlertData(companyId, baseUrl),
   ]);
@@ -120,6 +139,18 @@ async function loadAlertData(companyId: string, today: string): Promise<AlertDat
     })),
     milestones: milestones.map((m) => ({ id: m.id, name: m.name, projectName: m.project.name, projectManagerId: m.project.managerId, endDate: iso(m.endDate), status: m.status })),
     certifications: certifications.map((c) => ({ id: c.id, userId: c.userId, userName: c.user.name, name: c.name, issuer: c.issuer, expiryDate: iso(c.expiryDate) })),
+    changeRequests: changeRequests.map((t) => ({
+      ticketId: t.id, number: t.number, title: t.title,
+      nextStep: t.changeRequest?.nextStep ?? null, nextStepDue: iso(t.changeRequest?.nextStepDue ?? null),
+      nextStepOwnerId: t.changeRequest?.nextStepOwnerId ?? null, assigneeId: t.assigneeId,
+      clientId: t.clientId, clientName: t.client?.name ?? null, projectId: t.projectId,
+    })),
+    vendorPayments: vendorPayments.map((v) => ({
+      id: v.id, vendorName: v.vendor.name, description: v.description, dueDate: iso(v.dueDate), amount: Number(v.amount), currency: v.currency,
+    })),
+    taxPayments: taxPayments.map((t) => ({
+      id: t.id, categoryName: t.category.name, authority: t.authority, dueDate: iso(t.dueDate), amount: Number(t.amount), currency: t.currency,
+    })),
     delivery,
     hygiene,
   };

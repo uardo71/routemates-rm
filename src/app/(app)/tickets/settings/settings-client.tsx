@@ -29,7 +29,7 @@ import {
 type ClientStatus = { id: string; name: string; color: string | null; category: TicketStatusCategory; isInitial: boolean; customerVisible: boolean; customerCanSet: boolean };
 type ClientField = { id: string; name: string; kind: string; options: string[]; required: boolean; customerVisible: boolean; customerEditable: boolean };
 type ArchivedField = { id: string; name: string; kind: string; archivedAt: string };
-type ClientStage = { id: string; name: string; isStarting: boolean; isTerminal: boolean; gates: string[] };
+type ClientStage = { id: string; name: string; isStarting: boolean; isTerminal: boolean; customerVisible: boolean; gates: string[] };
 type ArchivedStatus = { id: string; name: string; archivedAt: string };
 type ClientType = { id: string; key: string; name: string; description: string | null; icon: string | null; color: string | null; active: boolean; isDefault: boolean; customerCanCreate: boolean; slaExempt: boolean; lifecycleMode: string; stages: ClientStage[]; archivedStatuses: ArchivedStatus[]; statuses: ClientStatus[]; fields: ClientField[]; archivedFields: ArchivedField[] };
 export type SettingsConfig = { types: ClientType[]; globalFields: ClientField[]; archivedGlobalFields: ArchivedField[] };
@@ -193,6 +193,7 @@ function StageList({ stages }: { stages: ClientStage[] }) {
             <span className="min-w-0 flex-1 truncate">{st.name}</span>
             {st.isStarting && <StarIcon className="size-3 text-amber-500" aria-label="Starting stage" />}
             {st.isTerminal && <span className="text-[0.6rem] uppercase text-muted-foreground/70">end</span>}
+            {!st.customerVisible && <EyeOffIcon className="size-3 text-muted-foreground/60" aria-label="Hidden from customer" />}
           </div>
           {st.gates.length > 0 && (
             <span className="pl-5 text-[0.65rem] text-muted-foreground">{st.gates.join(" · ")}</span>

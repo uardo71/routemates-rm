@@ -11,6 +11,7 @@ const P = (o: Partial<HygieneProjectRow> = {}): HygieneProjectRow => ({
 });
 const data = (hygiene: HygieneRows, today = MONDAY): AlertData => ({
   today, projects: [], invoices: [], timecards: [], expenses: [], assignments: [], opportunities: [], milestones: [], certifications: [],
+  changeRequests: [], vendorPayments: [], taxPayments: [],
   delivery: { baseUrl: "https://psa.example", workspaces: [], planTasks: [], raidItems: [], projects: [] },
   hygiene,
 });

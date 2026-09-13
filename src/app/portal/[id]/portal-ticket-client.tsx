@@ -10,10 +10,12 @@ import { Conversation, type CommentNode } from "../../(app)/tickets/conversation
 import { addPortalCommentAction, setPortalStatusAction, deletePortalAttachmentAction, editPortalCommentAction, deletePortalCommentAction } from "../portal-actions";
 
 type HistoryItem = { id: string; kind: string; authorName: string; createdAt: string };
+export type PortalStage = { name: string | null; description: string | null; index: number | null; total: number | null; rejected: boolean };
 export type PortalTicket = {
   id: string; number: string; title: string; description: string;
   typeName: string; typeColor: string | null; typeIcon: string | null;
   statusName: string; statusColor: string | null; createdAt: string;
+  stage: PortalStage | null;
   fields: { name: string; display: string; archived: boolean }[];
   settable: { id: string; name: string; color: string | null }[];
   history: HistoryItem[];
@@ -58,6 +60,8 @@ export function PortalTicketClient({ t, conversation }: { t: PortalTicket; conve
         </div>
       )}
 
+      {t.stage && <StageProgress stage={t.stage} />}
+
       <div className="rounded-xl border bg-card p-4">
         <h2 className="mb-2 text-sm font-semibold">Description</h2>
         {t.description ? <p className="whitespace-pre-wrap text-sm leading-relaxed">{t.description}</p> : <p className="text-sm text-muted-foreground">No description.</p>}
@@ -89,6 +93,46 @@ export function PortalTicketClient({ t, conversation }: { t: PortalTicket; conve
         )}
         <Conversation comments={conversation} canInternal={false} postAction={post} deleteAttachmentAction={deletePortalAttachmentAction} editAction={editPortalCommentAction} deleteCommentAction={deletePortalCommentAction} emptyLabel="No replies yet — add one below." />
       </div>
+    </div>
+  );
+}
+
+/** A STAGE-mode ticket's progress — the customer-visible stage list, replacing what used to be one
+ *  frozen status chip for the ticket's whole life. `stage.name` is null when nothing customer-visible
+ *  exists yet (e.g. the ticket is on the very first, internal-only stage) — shown as a plain waiting
+ *  message rather than a bar with nothing to point at. */
+function StageProgress({ stage }: { stage: PortalStage }) {
+  if (stage.rejected) {
+    return (
+      <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-4">
+        <h2 className="text-sm font-semibold text-destructive">{stage.name}</h2>
+        {stage.description && <p className="mt-1 text-sm text-muted-foreground">{stage.description}</p>}
+      </div>
+    );
+  }
+  if (!stage.name) {
+    return (
+      <div className="rounded-xl border bg-card p-4">
+        <p className="text-sm text-muted-foreground">Being reviewed — we&apos;ll update this once it moves to the next step.</p>
+      </div>
+    );
+  }
+  return (
+    <div className="rounded-xl border bg-card p-4">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="text-sm font-semibold">{stage.name}</h2>
+        {stage.index != null && stage.total != null && (
+          <span className="text-xs text-muted-foreground">Step {stage.index} of {stage.total}</span>
+        )}
+      </div>
+      {stage.index != null && stage.total != null && stage.total > 1 && (
+        <div className="mt-2 flex gap-1">
+          {Array.from({ length: stage.total }, (_, i) => (
+            <span key={i} className={cn("h-1.5 flex-1 rounded-full", i < stage.index! ? "bg-primary" : "bg-muted")} />
+          ))}
+        </div>
+      )}
+      {stage.description && <p className="mt-2 text-sm text-muted-foreground">{stage.description}</p>}
     </div>
   );
 }
